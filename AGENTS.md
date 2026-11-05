@@ -81,8 +81,12 @@ hireme/
 
 ---
 
-## 5. Deployment Guidelines
-- Application is deployed to **Vercel**.
-- Commands:
-  - Build: `npm run build`
-  - Dev: `npm run dev`
+## 5. Development Workflow & Pull Request Standards
+- **No Direct Production Deploys**: Do not deploy changes directly to production for routine feature or design tasks.
+- **Branching Strategy**:
+  - Always develop new features or bug fixes in dedicated branches (e.g., `feature/<feature-name>`, `fix/<issue-name>`).
+  - Maintain clean, conventional git commit messages (e.g., `feat: ...`, `fix: ...`).
+- **Pull Request Protocol**:
+  - Open structured Pull Requests with clear descriptions and summary bullet points.
+  - Ensure all local verification passes (`npm run build`) before submitting the PR.
+  - Production deployments should only happen upon explicit merge or release instructions.
