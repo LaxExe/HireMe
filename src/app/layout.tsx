@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
+import { AuthProvider } from "@/context/AuthContext";
 
 export const metadata: Metadata = {
   title: "HireMe",
@@ -14,13 +15,15 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
-      <body className="min-h-screen flex flex-col bg-[#fafafa] text-neutral-900 antialiased selection:bg-neutral-200">
-        <Navbar />
-        <main className="flex-1 max-w-5xl w-full mx-auto px-4 sm:px-6 py-12 sm:py-20 animate-fadeIn">
-          {children}
-        </main>
-        <Footer />
+    <html lang="en" className="h-full">
+      <body className="min-h-full flex flex-col bg-[#fafafa] text-neutral-900 antialiased selection:bg-neutral-200">
+        <AuthProvider>
+          <Navbar />
+          <main className="flex-1 flex flex-col max-w-5xl w-full mx-auto px-4 sm:px-6">
+            {children}
+          </main>
+          <Footer />
+        </AuthProvider>
       </body>
     </html>
   );
