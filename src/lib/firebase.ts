@@ -1,5 +1,6 @@
 import { initializeApp, getApps, getApp, FirebaseApp } from "firebase/app";
 import { getFirestore, Firestore } from "firebase/firestore";
+import { getAuth, Auth } from "firebase/auth";
 
 const firebaseConfig = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY || "AIzaSyDummyKeyForInitializationPlaceholder00",
@@ -20,5 +21,6 @@ export const isFirebaseConfigured = Boolean(
 // Initialize Firebase safely (singleton pattern)
 const app: FirebaseApp = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
 const db: Firestore = getFirestore(app);
+const auth: Auth = getAuth(app);
 
-export { app, db };
+export { app, db, auth };
