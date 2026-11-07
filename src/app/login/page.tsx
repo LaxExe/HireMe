@@ -19,7 +19,7 @@ export default function LoginPage() {
 
   useEffect(() => {
     if (user) {
-      router.push("/dashboard");
+      router.push("/experience");
     }
   }, [user, router]);
 
@@ -81,7 +81,7 @@ export default function LoginPage() {
       } else {
         await signIn(email, password);
       }
-      router.push("/dashboard");
+      router.push("/experience");
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Authentication failed.";
       setError(message.replace("Firebase: ", ""));

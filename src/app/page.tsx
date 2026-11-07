@@ -14,7 +14,7 @@ export default function Home() {
         hireme
       </h1>
       <Link
-        href={user ? "/dashboard" : "/login"}
+        href={user ? "/experience" : "/login"}
         className="inline-flex items-center gap-2 px-5 py-2.5 bg-neutral-900 hover:bg-neutral-800 text-white text-xs font-medium rounded-full shadow-subtle hover:shadow-subtle-hover active:scale-95 transition-all duration-150"
       >
         <span>{user ? "Open Workspace" : "Get Started"}</span>
