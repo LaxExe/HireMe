@@ -59,9 +59,22 @@ export interface Contact {
   links: ContactLink[];
 }
 
+export interface CalibrationConfig {
+  /** Maximum character length of a single full line in LaTeX. */
+  oneLineMax: number;
+  /** Maximum character length of a full two-line bullet in LaTeX. */
+  twoLineMax: number;
+}
+
+export const DEFAULT_CALIBRATION: CalibrationConfig = {
+  oneLineMax: 108,
+  twoLineMax: 216,
+};
+
 export interface MasterResume {
   version: 1;
   updatedAt: string;
+  calibration?: CalibrationConfig;
   contact: Contact;
   education: Education[];
   skills: SkillCategory[];
@@ -73,6 +86,7 @@ export function emptyResume(): MasterResume {
   return {
     version: 1,
     updatedAt: new Date().toISOString(),
+    calibration: { ...DEFAULT_CALIBRATION },
     contact: { name: "", location: "", phone: "", email: "", links: [] },
     education: [],
     skills: [],

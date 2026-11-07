@@ -1,4 +1,5 @@
-import type { Bullet } from "./types";
+import type { Bullet, CalibrationConfig } from "./types";
+import { DEFAULT_CALIBRATION } from "./types";
 
 export const uid = (prefix = "n") =>
   `${prefix}_${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-4)}`;
@@ -115,27 +116,110 @@ export function makeBullet(text: string, known: string[]): Bullet {
   return { id: uid("b"), text, ...analyzeBullet(text, known) };
 }
 
-const CHARS_PER_LINE = 112;
+export type FitStatus =
+  | "empty"
+  | "ideal-1"
+  | "short-1"
+  | "ideal-2"
+  | "orphan-2"
+  | "overflow";
 
-export type FitStatus = "empty" | "ideal" | "short" | "orphan" | "long";
-
-/** Estimate how well a bullet fills its lines on the resume template. */
-export function bulletFit(markup: string): {
+export interface BulletFitResult {
   length: number;
-  lines: number;
-  ratio: number;
   status: FitStatus;
-} {
+  targetLines: 1 | 2 | 3;
+  line1Progress: number; // 0 to 1
+  line2Progress: number; // 0 to 1
+  overallRatio: number; // 0 to 1
+  label: string;
+  tooltip: string;
+  badge: "1L" | "2L" | ">2L" | "—";
+  tone: "neutral" | "green" | "amber" | "red";
+}
+
+/**
+ * Evaluates how well a bullet fills 1 or 2 lines based on calibrated LaTeX character limits.
+ *
+ * Status thresholds:
+ * - 1-liner: 82%+ fill = green (full line); <82% = amber (short line).
+ * - 2-liner: line 2 fill 65%+ = green (full 2 lines); <65% = amber (orphan word/short line 2).
+ * - >2-line max = red (overflow).
+ */
+export function bulletFit(
+  markup: string,
+  config: CalibrationConfig = DEFAULT_CALIBRATION
+): BulletFitResult {
   const length = plainText(markup).trim().length;
-  if (length === 0) return { length, lines: 0, ratio: 0, status: "empty" };
-  const lines = Math.ceil(length / CHARS_PER_LINE);
-  const lastFill = (length - (lines - 1) * CHARS_PER_LINE) / CHARS_PER_LINE;
-  const ratio = Math.min(length / (CHARS_PER_LINE * 2), 1);
-  let status: FitStatus = "ideal";
-  if (lines >= 3) status = "long";
-  else if (lines === 1 && lastFill < 0.75) status = "short";
-  else if (lines === 2 && lastFill < 0.6) status = "orphan";
-  return { length, lines, ratio, status };
+  const oneLineMax = Math.max(10, config.oneLineMax || DEFAULT_CALIBRATION.oneLineMax);
+  const twoLineMax = Math.max(oneLineMax + 10, config.twoLineMax || DEFAULT_CALIBRATION.twoLineMax);
+
+  if (length === 0) {
+    return {
+      length: 0,
+      status: "empty",
+      targetLines: 1,
+      line1Progress: 0,
+      line2Progress: 0,
+      overallRatio: 0,
+      label: "Empty",
+      tooltip: "No bullet text",
+      badge: "—",
+      tone: "neutral",
+    };
+  }
+
+  const line2Capacity = Math.max(1, twoLineMax - oneLineMax);
+
+  if (length <= oneLineMax) {
+    const p1 = length / oneLineMax;
+    const isIdeal = p1 >= 0.82;
+    const pct = Math.round(p1 * 100);
+    return {
+      length,
+      status: isIdeal ? "ideal-1" : "short-1",
+      targetLines: 1,
+      line1Progress: Math.min(1, p1),
+      line2Progress: 0,
+      overallRatio: Math.min(1, length / twoLineMax),
+      label: isIdeal ? "1 line full" : "Short 1-line",
+      tooltip: `${length}/${oneLineMax} chars (${pct}% of line 1) · ${isIdeal ? "clean 1-liner" : "underfilled 1-liner"}`,
+      badge: "1L",
+      tone: isIdeal ? "green" : "amber",
+    };
+  }
+
+  if (length <= twoLineMax) {
+    const line2Chars = length - oneLineMax;
+    const p2 = line2Chars / line2Capacity;
+    const isIdeal = p2 >= 0.65;
+    const pct2 = Math.round(p2 * 100);
+    return {
+      length,
+      status: isIdeal ? "ideal-2" : "orphan-2",
+      targetLines: 2,
+      line1Progress: 1,
+      line2Progress: Math.min(1, p2),
+      overallRatio: Math.min(1, length / twoLineMax),
+      label: isIdeal ? "2 lines full" : "Orphan line 2",
+      tooltip: `${length}/${twoLineMax} chars · line 2 is ${pct2}% filled (${line2Chars}/${line2Capacity} chars) · ${isIdeal ? "clean 2-liner" : "orphan line wrap"}`,
+      badge: "2L",
+      tone: isIdeal ? "green" : "amber",
+    };
+  }
+
+  // Overflow past 2 lines
+  return {
+    length,
+    status: "overflow",
+    targetLines: 3,
+    line1Progress: 1,
+    line2Progress: 1,
+    overallRatio: 1,
+    label: "> 2 lines (overflow)",
+    tooltip: `${length}/${twoLineMax} chars (${length - twoLineMax} chars over 2-line max)`,
+    badge: ">2L",
+    tone: "red",
+  };
 }
 
 export function knownTools(skillNames: string[], techStacks: string[][]): string[] {

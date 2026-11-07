@@ -3,30 +3,89 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Pencil, Plus, Trash2 } from "lucide-react";
 import type { Bullet } from "@/lib/resume/types";
-import { bulletFit, makeBullet, parseMarkup, analyzeBullet, FitStatus } from "@/lib/resume/utils";
+import { bulletFit, makeBullet, parseMarkup, analyzeBullet } from "@/lib/resume/utils";
+import { useCalibration } from "@/context/CalibrationContext";
 import Chip from "./Chip";
 
-const barColor: Record<FitStatus, string> = {
-  empty: "bg-neutral-200",
-  ideal: "bg-emerald-500",
-  short: "bg-amber-400",
-  orphan: "bg-amber-400",
-  long: "bg-red-500",
-};
+function FitMeter({ text, detailed = false }: { text: string; detailed?: boolean }) {
+  const { calibration } = useCalibration();
+  const fit = bulletFit(text, calibration);
 
-function FitMeter({ text }: { text: string }) {
-  const fit = bulletFit(text);
+  const badgeStyles = {
+    neutral: "bg-neutral-100 text-neutral-500 border-neutral-200",
+    green: "bg-emerald-50 text-emerald-700 border-emerald-200",
+    amber: "bg-amber-50 text-amber-700 border-amber-200",
+    red: "bg-red-50 text-red-700 border-red-200",
+  };
+
+  const line1BarColor =
+    fit.tone === "red"
+      ? "bg-red-500"
+      : fit.targetLines === 1
+      ? fit.tone === "green"
+        ? "bg-emerald-500"
+        : "bg-amber-400"
+      : "bg-neutral-400";
+
+  const line2BarColor =
+    fit.tone === "red"
+      ? "bg-red-500"
+      : fit.tone === "green"
+      ? "bg-emerald-500"
+      : "bg-amber-400";
+
   return (
-    <div className="flex items-center gap-2 flex-shrink-0">
-      <div className="w-12 h-1 rounded-full bg-neutral-200 overflow-hidden">
-        <div
-          className={`h-full rounded-full transition-all duration-150 ${barColor[fit.status]}`}
-          style={{ width: `${fit.ratio * 100}%` }}
-        />
-      </div>
-      <span className="text-[10px] font-mono text-neutral-500 tabular-nums w-7 text-right">
-        {fit.length}
+    <div className="flex items-center gap-2 flex-shrink-0" title={fit.tooltip}>
+      {/* Target Line Badge */}
+      <span
+        className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-medium border ${badgeStyles[fit.tone]}`}
+      >
+        {fit.badge}
       </span>
+
+      {/* Two-stage Line Meter */}
+      <div className="flex items-center gap-1 w-14 sm:w-16" title={fit.tooltip}>
+        {/* Line 1 segment */}
+        <div className="flex-1 h-1.5 rounded-full bg-neutral-200 overflow-hidden">
+          <div
+            className={`h-full rounded-full transition-all duration-150 ${line1BarColor}`}
+            style={{ width: `${Math.min(100, fit.line1Progress * 100)}%` }}
+          />
+        </div>
+        {/* Line 2 segment */}
+        <div className="flex-1 h-1.5 rounded-full bg-neutral-200 overflow-hidden">
+          <div
+            className={`h-full rounded-full transition-all duration-150 ${line2BarColor}`}
+            style={{ width: `${Math.min(100, fit.line2Progress * 100)}%` }}
+          />
+        </div>
+      </div>
+
+      {/* Monospace Character Count */}
+      <span className="text-[11px] font-mono text-neutral-500 tabular-nums">
+        {fit.length}
+        {detailed && (
+          <span className="text-neutral-400">
+            /{fit.targetLines === 1 ? calibration.oneLineMax : calibration.twoLineMax}
+          </span>
+        )}
+      </span>
+
+      {detailed && (
+        <span
+          className={`text-[11px] font-medium hidden sm:inline ${
+            fit.tone === "green"
+              ? "text-emerald-600"
+              : fit.tone === "amber"
+              ? "text-amber-600"
+              : fit.tone === "red"
+              ? "text-red-600"
+              : "text-neutral-500"
+          }`}
+        >
+          {fit.label}
+        </span>
+      )}
     </div>
   );
 }
@@ -71,9 +130,9 @@ function BulletEditor({
         }}
         className="w-full resize-none text-xs leading-relaxed text-neutral-900 bg-transparent focus:outline-none"
       />
-      <div className="flex items-center justify-between pt-2 border-t border-[#ebebeb]">
-        <FitMeter text={text} />
-        <div className="flex items-center gap-2">
+      <div className="flex items-center justify-between pt-2 border-t border-[#ebebeb] gap-3 flex-wrap">
+        <FitMeter text={text} detailed />
+        <div className="flex items-center gap-2 flex-shrink-0">
           <button
             type="button"
             onClick={onCancel}
