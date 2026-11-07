@@ -71,6 +71,17 @@ export default function ResumeTree({ resume }: { resume: MasterResume }) {
             <Node key={p.id} label={p.name} count={p.bullets.length} target={`proj-${p.id}`} />
           ))}
         </Branch>
+
+        {resume.awards && resume.awards.length > 0 && (
+          <>
+            <Node label="awards" count={resume.awards.length} target="sec-awards" strong />
+            <Branch>
+              {resume.awards.map((a) => (
+                <Node key={a.id} label={a.title} target={`award-${a.id}`} />
+              ))}
+            </Branch>
+          </>
+        )}
       </Branch>
     </nav>
   );

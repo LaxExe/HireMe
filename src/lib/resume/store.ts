@@ -8,7 +8,10 @@ function readLocal(uid: string): MasterResume | null {
   if (typeof window === "undefined") return null;
   try {
     const raw = localStorage.getItem(localKey(uid));
-    return raw ? (JSON.parse(raw) as MasterResume) : null;
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as MasterResume;
+    if (!parsed.awards) parsed.awards = [];
+    return parsed;
   } catch {
     return null;
   }
@@ -21,7 +24,11 @@ export async function loadMasterResume(uid: string): Promise<MasterResume | null
       const snap = await getDoc(doc(db, "masterResumes", uid));
       if (snap.exists()) {
         const data = snap.data().data;
-        if (typeof data === "string") return JSON.parse(data) as MasterResume;
+        if (typeof data === "string") {
+          const parsed = JSON.parse(data) as MasterResume;
+          if (!parsed.awards) parsed.awards = [];
+          return parsed;
+        }
       }
     } catch (e) {
       console.warn("Firestore master resume read failed, using local DB:", e);

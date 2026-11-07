@@ -59,6 +59,13 @@ export interface Contact {
   links: ContactLink[];
 }
 
+export interface Award {
+  id: string;
+  title: string;
+  date: string;
+  description: string;
+}
+
 export interface CalibrationConfig {
   /** Maximum character length of a single full line in LaTeX. */
   oneLineMax: number;
@@ -80,6 +87,7 @@ export interface MasterResume {
   skills: SkillCategory[];
   experience: Job[];
   projects: Project[];
+  awards: Award[];
 }
 
 export function emptyResume(): MasterResume {
@@ -92,5 +100,6 @@ export function emptyResume(): MasterResume {
     skills: [],
     experience: [],
     projects: [],
+    awards: [],
   };
 }

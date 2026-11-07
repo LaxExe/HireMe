@@ -14,6 +14,7 @@ import { ContactSection, EducationSection } from "@/components/resume/ContactAnd
 import SkillsSection from "@/components/resume/SkillsSection";
 import ExperienceSection from "@/components/resume/ExperienceSection";
 import ProjectsSection from "@/components/resume/ProjectsSection";
+import AwardsSection from "@/components/resume/AwardsSection";
 
 export default function ExperiencePage() {
   const router = useRouter();
@@ -139,6 +140,10 @@ export default function ExperiencePage() {
                   projects={resume.projects}
                   known={known}
                   onChange={(projects) => update({ projects })}
+                />
+                <AwardsSection
+                  awards={resume.awards ?? []}
+                  onChange={(awards) => update({ awards })}
                 />
               </div>
             </div>
