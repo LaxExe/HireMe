@@ -5,6 +5,13 @@ export default function Footer() {
     <footer className="border-t border-[#ebebeb] bg-[#fafafa] py-6 text-neutral-500 text-xs">
       <div className="max-w-5xl mx-auto px-4 sm:px-6 flex items-center justify-between">
         <div className="flex items-center gap-2">
+          <img
+            src="/logo.png"
+            alt="HireMe"
+            width={16}
+            height={16}
+            className="w-4 h-4 rounded shadow-2xs"
+          />
           <span className="font-semibold text-neutral-900 lowercase tracking-tight">
             hireme
           </span>
