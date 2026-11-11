@@ -24,16 +24,9 @@ export default function Navbar() {
           {/* Brand */}
           <Link
             href={user ? "/experience" : "/"}
-            className="flex items-center gap-2.5 cursor-pointer select-none group"
+            className="cursor-pointer select-none"
           >
-            <img
-              src="/logo.png"
-              alt="HireMe"
-              width={28}
-              height={28}
-              className="w-7 h-7 rounded-lg shadow-2xs group-hover:scale-105 active:scale-95 transition-all duration-150"
-            />
-            <span className="font-semibold text-base sm:text-lg tracking-tight text-neutral-900 lowercase group-hover:opacity-80 transition-opacity">
+            <span className="font-semibold text-base sm:text-lg tracking-tight text-neutral-900 lowercase hover:opacity-80 transition-opacity">
               hireme
             </span>
           </Link>
