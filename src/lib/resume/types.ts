@@ -78,16 +78,51 @@ export const DEFAULT_CALIBRATION: CalibrationConfig = {
   twoLineMax: 216,
 };
 
+export type ResumeSectionKey =
+  | "contact"
+  | "education"
+  | "skills"
+  | "experience"
+  | "projects"
+  | "awards";
+
 export interface MasterResume {
   version: 1;
   updatedAt: string;
   calibration?: CalibrationConfig;
+  /** Sections detected in the imported resume template. */
+  sections?: ResumeSectionKey[];
   contact: Contact;
   education: Education[];
   skills: SkillCategory[];
   experience: Job[];
   projects: Project[];
   awards: Award[];
+}
+
+export function hasResumeSection(resume: MasterResume, key: ResumeSectionKey): boolean {
+  const count =
+    key === "contact"
+      ? resume.contact.name ||
+        resume.contact.email ||
+        resume.contact.phone ||
+        resume.contact.location ||
+        resume.contact.links.length > 0
+        ? 1
+        : 0
+      : key === "education"
+      ? resume.education.length
+      : key === "skills"
+      ? resume.skills.length
+      : key === "experience"
+      ? resume.experience.length
+      : key === "projects"
+      ? resume.projects.length
+      : (resume.awards ?? []).length;
+
+  if (count > 0) return true;
+  if (resume.sections) return resume.sections.includes(key);
+  return key === "contact";
 }
 
 export function emptyResume(): MasterResume {
