@@ -11,10 +11,11 @@ import {
   ArrowRight,
   ShieldAlert,
   Sparkles,
-  Download,
+  Pencil,
+  ExternalLink,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
-import { loadMasterResume, saveMasterResume } from "@/lib/resume/store";
+import { loadMasterResume } from "@/lib/resume/store";
 import { isEmptyResume } from "@/lib/resume/latex";
 import {
   matchJobDescriptionWithResume,
@@ -22,7 +23,9 @@ import {
 } from "@/lib/resume/keywordMatch";
 import {
   runLarpAlignmentPipeline,
-  applyLarpMutationsToResume,
+  evaluateBelievabilityAndRecommend,
+  updateBulletProposalWithCustomMarkup,
+  updateMalleableOptionWithCustomMarkup,
   PYLON_TEST_JD,
   type LarpAlignmentRun,
 } from "@/lib/resume/larpEngine";
@@ -37,7 +40,11 @@ export default function OperationsPage() {
   const [resume, setResume] = useState<MasterResume | null>(null);
   const [resumeReady, setResumeReady] = useState(false);
 
+  const [roleName, setRoleName] = useState("");
+  const [roleUrl, setRoleUrl] = useState("");
   const [jobDescription, setJobDescription] = useState("");
+  const [draftRoleName, setDraftRoleName] = useState("");
+  const [draftRoleUrl, setDraftRoleUrl] = useState("");
   const [draftJd, setDraftJd] = useState("");
   const [isPromptOpen, setIsPromptOpen] = useState(false);
 
@@ -48,8 +55,9 @@ export default function OperationsPage() {
   const [selectedMalleableOption, setSelectedMalleableOption] = useState<Record<string, string>>(
     {}
   );
+  const [editingBulletId, setEditingBulletId] = useState<string | null>(null);
+  const [editingMalleableOptId, setEditingMalleableOptId] = useState<string | null>(null);
   const [applySkillsSwap, setApplySkillsSwap] = useState(true);
-  const [appliedBanner, setAppliedBanner] = useState(false);
   const [queuedSlotBanner, setQueuedSlotBanner] = useState<{
     count: number;
     latestTitle: string;
@@ -70,9 +78,25 @@ export default function OperationsPage() {
       typeof window !== "undefined"
         ? localStorage.getItem(`hireme_operations_jd_${user.uid}`) || ""
         : "";
+    const savedRoleName =
+      typeof window !== "undefined"
+        ? localStorage.getItem(`hireme_operations_role_name_${user.uid}`) || ""
+        : "";
+    const savedRoleUrl =
+      typeof window !== "undefined"
+        ? localStorage.getItem(`hireme_operations_role_url_${user.uid}`) || ""
+        : "";
     if (savedJd) {
       setJobDescription(savedJd);
       setDraftJd(savedJd);
+    }
+    if (savedRoleName) {
+      setRoleName(savedRoleName);
+      setDraftRoleName(savedRoleName);
+    }
+    if (savedRoleUrl) {
+      setRoleUrl(savedRoleUrl);
+      setDraftRoleUrl(savedRoleUrl);
     }
 
     loadMasterResume(user.uid).then((loaded) => {
@@ -96,21 +120,28 @@ export default function OperationsPage() {
 
   const hasValidResume = Boolean(resume && !isEmptyResume(resume));
 
-  const saveJd = (text: string) => {
+  const saveJd = (text: string, nextRoleName = draftRoleName, nextRoleUrl = draftRoleUrl) => {
     const clean = text.trim();
+    const cleanRole = nextRoleName.trim();
+    const cleanUrl = nextRoleUrl.trim();
     setJobDescription(clean);
+    setRoleName(cleanRole);
+    setRoleUrl(cleanUrl);
     if (typeof window !== "undefined") {
       localStorage.setItem(`hireme_operations_jd_${user.uid}`, clean);
+      localStorage.setItem(`hireme_operations_role_name_${user.uid}`, cleanRole);
+      localStorage.setItem(`hireme_operations_role_url_${user.uid}`, cleanUrl);
     }
     setIsPromptOpen(false);
     setMatchResult(null);
     setLarpRun(null);
-    setAppliedBanner(false);
     setMissingResumePrompt(false);
   };
 
   const handleOpenAddJd = () => {
     setDraftJd(jobDescription);
+    setDraftRoleName(roleName);
+    setDraftRoleUrl(roleUrl);
     setIsPromptOpen(true);
     setMissingResumePrompt(false);
   };
@@ -131,8 +162,9 @@ export default function OperationsPage() {
       }
     }
     setSelectedMalleableOption(initialOptMap);
+    setEditingBulletId(null);
+    setEditingMalleableOptId(null);
     setApplySkillsSwap(true);
-    setAppliedBanner(false);
     setQueuedSlotBanner(null);
   };
 
@@ -141,9 +173,15 @@ export default function OperationsPage() {
     if (!targetJd) return;
 
     if (isPromptOpen) {
+      const cleanRole = draftRoleName.trim();
+      const cleanUrl = draftRoleUrl.trim();
       setJobDescription(targetJd);
+      setRoleName(cleanRole);
+      setRoleUrl(cleanUrl);
       if (typeof window !== "undefined") {
         localStorage.setItem(`hireme_operations_jd_${user.uid}`, targetJd);
+        localStorage.setItem(`hireme_operations_role_name_${user.uid}`, cleanRole);
+        localStorage.setItem(`hireme_operations_role_url_${user.uid}`, cleanUrl);
       }
       setIsPromptOpen(false);
     }
@@ -166,7 +204,6 @@ export default function OperationsPage() {
       else next.add(bulletId);
       return next;
     });
-    setAppliedBanner(false);
   };
 
   const handleToggleMalleable = (malleableId: string) => {
@@ -176,7 +213,48 @@ export default function OperationsPage() {
       else next.add(malleableId);
       return next;
     });
-    setAppliedBanner(false);
+  };
+
+  const handleCustomBulletProposalTextChange = (bulletId: string, newMarkup: string) => {
+    setLarpRun((prev) => {
+      if (!prev) return prev;
+      const nextProposals = prev.bulletProposals.map((bp) =>
+        bp.bulletId === bulletId
+          ? updateBulletProposalWithCustomMarkup(bp, newMarkup, resume?.calibration)
+          : bp
+      );
+      return {
+        ...prev,
+        bulletProposals: nextProposals,
+        aiRecommendation: evaluateBelievabilityAndRecommend(
+          prev.malleableBullets,
+          nextProposals
+        ),
+      };
+    });
+  };
+
+  const handleCustomMalleableOptionTextChange = (
+    slotId: string,
+    optionId: string,
+    newMarkup: string
+  ) => {
+    setLarpRun((prev) => {
+      if (!prev) return prev;
+      const nextMalleable = prev.malleableBullets.map((mb) =>
+        mb.id === slotId
+          ? updateMalleableOptionWithCustomMarkup(mb, optionId, newMarkup, resume?.calibration)
+          : mb
+      );
+      return {
+        ...prev,
+        malleableBullets: nextMalleable,
+        aiRecommendation: evaluateBelievabilityAndRecommend(
+          nextMalleable,
+          prev.bulletProposals
+        ),
+      };
+    });
   };
 
   const handleSelectOnlyTopRecommended = () => {
@@ -189,29 +267,13 @@ export default function OperationsPage() {
       setAcceptedMalleable(new Set());
       setAcceptedBullets(new Set([topId]));
     }
-    setAppliedBanner(false);
-  };
-
-  const handleApplyToMasterResume = async () => {
-    if (!resume || !larpRun) return;
-    const updated = applyLarpMutationsToResume(
-      resume,
-      larpRun,
-      acceptedBullets,
-      applySkillsSwap,
-      acceptedMalleable,
-      selectedMalleableOption
-    );
-    setResume(updated);
-    await saveMasterResume(user.uid, updated);
-    // Re-score keyword match against updated resume
-    setMatchResult(matchJobDescriptionWithResume(jobDescription, updated));
-    setAppliedBanner(true);
   };
 
   const handleQueueIntoPreviewSlot = () => {
     if (!resume || !larpRun) return;
     const item = enqueuePreviewItem(user.uid, {
+      roleName,
+      roleUrl,
       jobDescription,
       baseResume: resume,
       larpRun,
@@ -287,17 +349,21 @@ export default function OperationsPage() {
         </div>
       )}
 
-      {/* Paste Job Description Prompt */}
+      {/* Paste Job Description + Role Name & URL Prompt */}
       {isPromptOpen ? (
-        <div className="bg-white rounded-xl border border-[#ebebeb] shadow-subtle p-5 space-y-3 animate-scaleIn">
+        <div className="bg-white rounded-xl border border-[#ebebeb] shadow-subtle p-5 space-y-3.5 animate-scaleIn">
           <div className="flex items-center justify-between gap-2 flex-wrap">
             <h2 className="text-xs font-semibold tracking-tight text-neutral-900">
-              Paste Job Description
+              Add Role & Job Description
             </h2>
             <div className="flex items-center gap-2">
               <button
                 type="button"
-                onClick={() => setDraftJd(PYLON_TEST_JD)}
+                onClick={() => {
+                  setDraftRoleName("Pylon — Software Engineer (Full-Stack)");
+                  setDraftRoleUrl("https://usepylon.com/careers");
+                  setDraftJd(PYLON_TEST_JD);
+                }}
                 className="text-[11px] font-mono text-neutral-500 hover:text-neutral-900 bg-[#fafafa] hover:bg-neutral-100 border border-[#ebebeb] px-2 py-0.5 rounded transition-colors active:scale-95 cursor-pointer"
               >
                 Load Pylon Test JD
@@ -307,13 +373,48 @@ export default function OperationsPage() {
               </span>
             </div>
           </div>
-          <textarea
-            value={draftJd}
-            autoFocus
-            onChange={(e) => setDraftJd(e.target.value)}
-            placeholder="Paste the full job description, requirements, and qualifications here..."
-            className="w-full h-56 p-3 text-xs leading-relaxed bg-[#fafafa] border border-[#ebebeb] rounded-lg focus:outline-none focus:border-neutral-900 focus:bg-white transition-colors resize-none"
-          />
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="space-y-1">
+              <label className="block text-[11px] font-mono uppercase text-neutral-500">
+                Role Name / Company
+              </label>
+              <input
+                type="text"
+                value={draftRoleName}
+                onChange={(e) => setDraftRoleName(e.target.value)}
+                placeholder="e.g. Pylon — Full-Stack Software Engineer"
+                className="w-full px-3 py-2 text-xs bg-[#fafafa] border border-[#ebebeb] rounded-lg focus:outline-none focus:border-neutral-900 focus:bg-white transition-colors"
+              />
+            </div>
+
+            <div className="space-y-1">
+              <label className="block text-[11px] font-mono uppercase text-neutral-500">
+                Role Posting URL
+              </label>
+              <input
+                type="url"
+                value={draftRoleUrl}
+                onChange={(e) => setDraftRoleUrl(e.target.value)}
+                placeholder="https://company.com/careers/job-id"
+                className="w-full px-3 py-2 text-xs font-mono bg-[#fafafa] border border-[#ebebeb] rounded-lg focus:outline-none focus:border-neutral-900 focus:bg-white transition-colors"
+              />
+            </div>
+          </div>
+
+          <div className="space-y-1">
+            <label className="block text-[11px] font-mono uppercase text-neutral-500">
+              Job Description
+            </label>
+            <textarea
+              value={draftJd}
+              autoFocus
+              onChange={(e) => setDraftJd(e.target.value)}
+              placeholder="Paste the full job description, requirements, and qualifications here..."
+              className="w-full h-52 p-3 text-xs leading-relaxed bg-[#fafafa] border border-[#ebebeb] rounded-lg focus:outline-none focus:border-neutral-900 focus:bg-white transition-colors resize-none"
+            />
+          </div>
+
           <div className="flex items-center justify-end gap-2 pt-1">
             <button
               type="button"
@@ -325,10 +426,10 @@ export default function OperationsPage() {
             <button
               type="button"
               disabled={!draftJd.trim()}
-              onClick={() => saveJd(draftJd)}
+              onClick={() => saveJd(draftJd, draftRoleName, draftRoleUrl)}
               className="px-3.5 py-1.5 text-xs font-medium text-neutral-700 bg-white hover:bg-neutral-50 border border-[#ebebeb] rounded-full disabled:opacity-40 shadow-2xs active:scale-95 transition-all cursor-pointer"
             >
-              Save Description
+              Save Details
             </button>
             <button
               type="button"
@@ -352,7 +453,7 @@ export default function OperationsPage() {
               No job description loaded
             </p>
             <p className="text-xs text-neutral-500">
-              Add a job description to classify skills across the 4-Tier Defensibility Spec and align your resume bullets without overflowing LaTeX lines.
+              Add a role name, URL, and job description to classify skills across the 4-Tier Defensibility Spec and align your resume bullets.
             </p>
           </div>
           <button
@@ -367,13 +468,24 @@ export default function OperationsPage() {
       ) : (
         /* Loaded Job Description + Match Results + LARP Alignment Engine */
         <div className="space-y-6">
-          {/* Active Job Description Card */}
+          {/* Active Job Description + Inline Role Name & URL Card */}
           <div className="bg-white rounded-xl border border-[#ebebeb] shadow-subtle p-4 space-y-3">
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2 min-w-0">
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <div className="flex items-center gap-2 min-w-0 flex-wrap">
                 <span className="text-xs font-semibold text-neutral-900">
-                  Job Description
+                  {roleName || "Target Role & Job Description"}
                 </span>
+                {roleUrl && (
+                  <a
+                    href={roleUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 font-mono text-[11px] text-neutral-600 hover:text-neutral-900 underline decoration-[#ebebeb] underline-offset-2"
+                  >
+                    <ExternalLink className="w-3 h-3" />
+                    <span className="truncate max-w-[240px]">{roleUrl}</span>
+                  </a>
+                )}
                 <span className="font-mono text-[10px] text-neutral-400 bg-neutral-100 px-1.5 py-0.5 rounded">
                   {jobDescription.length} chars
                 </span>
@@ -384,7 +496,7 @@ export default function OperationsPage() {
                   onClick={handleOpenAddJd}
                   className="px-2.5 py-1 text-xs font-medium text-neutral-600 hover:text-neutral-900 bg-[#fafafa] hover:bg-neutral-100 border border-[#ebebeb] rounded-md transition-colors active:scale-95 cursor-pointer"
                 >
-                  Edit
+                  Edit Role & JD
                 </button>
                 <button
                   type="button"
@@ -396,6 +508,47 @@ export default function OperationsPage() {
                 </button>
               </div>
             </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              <div className="flex items-center gap-2 bg-[#fafafa] border border-[#ebebeb] rounded-lg px-2.5 py-1.5">
+                <span className="font-mono text-[10px] uppercase text-neutral-400 flex-shrink-0">
+                  Role Name:
+                </span>
+                <input
+                  type="text"
+                  value={roleName}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setRoleName(v);
+                    if (typeof window !== "undefined") {
+                      localStorage.setItem(`hireme_operations_role_name_${user.uid}`, v);
+                    }
+                  }}
+                  placeholder="Enter role title & company (e.g. Pylon — SWE)..."
+                  className="w-full text-xs text-neutral-900 bg-transparent focus:outline-none"
+                />
+              </div>
+
+              <div className="flex items-center gap-2 bg-[#fafafa] border border-[#ebebeb] rounded-lg px-2.5 py-1.5">
+                <span className="font-mono text-[10px] uppercase text-neutral-400 flex-shrink-0">
+                  Role URL:
+                </span>
+                <input
+                  type="url"
+                  value={roleUrl}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setRoleUrl(v);
+                    if (typeof window !== "undefined") {
+                      localStorage.setItem(`hireme_operations_role_url_${user.uid}`, v);
+                    }
+                  }}
+                  placeholder="https://company.com/careers/..."
+                  className="w-full text-xs font-mono text-neutral-900 bg-transparent focus:outline-none"
+                />
+              </div>
+            </div>
+
             <p className="text-xs text-neutral-600 line-clamp-3 leading-relaxed bg-[#fafafa] border border-[#ebebeb] rounded-lg p-3 font-sans whitespace-pre-line">
               {jobDescription}
             </p>
@@ -608,7 +761,6 @@ export default function OperationsPage() {
                       checked={applySkillsSwap}
                       onChange={(e) => {
                         setApplySkillsSwap(e.target.checked);
-                        setAppliedBanner(false);
                       }}
                       className="rounded border-neutral-300 text-neutral-900 focus:ring-0"
                     />
@@ -753,40 +905,75 @@ export default function OperationsPage() {
                               </p>
                             </div>
 
-                            <div className="rounded-lg bg-emerald-50/30 border border-emerald-200/70 p-3">
-                              <span className="block font-mono text-[10px] text-emerald-700 uppercase mb-1">
-                                Rewritten to Fit {prop.budget.candFit.badge} Area ({prop.budget.candChars}/
-                                {prop.budget.candLines === 1
-                                  ? resume?.calibration?.oneLineMax ?? 108
-                                  : resume?.calibration?.twoLineMax ?? 216}{" "}
-                                chars · {prop.budget.candWidth} NCU)
-                              </span>
-                              <p className="text-neutral-800">
-                                {prop.wordStats.tokens.map((tok, idx) => {
-                                  const clean = tok.word.replace(/\*\*/g, "");
-                                  const isBold = tok.word.includes("**");
-                                  return (
-                                    <React.Fragment key={idx}>
-                                      {idx > 0 && " "}
-                                      <span
-                                        className={
-                                          tok.changed
-                                            ? "bg-emerald-100/90 text-emerald-950 px-1 py-0.5 rounded font-medium"
-                                            : ""
-                                        }
-                                      >
-                                        {isBold ? (
-                                          <strong className="font-semibold text-neutral-900">
-                                            {clean}
-                                          </strong>
-                                        ) : (
-                                          clean
-                                        )}
-                                      </span>
-                                    </React.Fragment>
-                                  );
-                                })}
-                              </p>
+                            <div
+                              onClick={() => setEditingBulletId(prop.bulletId)}
+                              className="rounded-lg bg-emerald-50/30 border border-emerald-200/70 hover:border-emerald-400 p-3 cursor-text transition-colors"
+                            >
+                              <div className="flex items-center justify-between gap-2 mb-1">
+                                <span className="block font-mono text-[10px] text-emerald-700 uppercase">
+                                  Rewritten to Fit {prop.budget.candFit.badge} Area ({prop.budget.candChars}/
+                                  {prop.budget.candLines === 1
+                                    ? resume?.calibration?.oneLineMax ?? 108
+                                    : resume?.calibration?.twoLineMax ?? 216}{" "}
+                                  chars · {prop.budget.candWidth} NCU)
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setEditingBulletId(
+                                      editingBulletId === prop.bulletId ? null : prop.bulletId
+                                    );
+                                  }}
+                                  className="inline-flex items-center gap-1 font-mono text-[10px] text-emerald-800 hover:text-neutral-900 bg-white/80 border border-emerald-200 px-1.5 py-0.5 rounded cursor-pointer"
+                                >
+                                  <Pencil className="w-2.5 h-2.5" />
+                                  <span>{editingBulletId === prop.bulletId ? "Done" : "Edit"}</span>
+                                </button>
+                              </div>
+
+                              {editingBulletId === prop.bulletId ? (
+                                <textarea
+                                  autoFocus
+                                  rows={2}
+                                  value={prop.mutatedMarkup}
+                                  onClick={(e) => e.stopPropagation()}
+                                  onChange={(e) =>
+                                    handleCustomBulletProposalTextChange(prop.bulletId, e.target.value)
+                                  }
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Escape") setEditingBulletId(null);
+                                  }}
+                                  className="w-full text-xs font-mono text-neutral-900 bg-white border border-emerald-400 rounded-md p-2 focus:outline-none resize-none"
+                                />
+                              ) : (
+                                <p className="text-neutral-800">
+                                  {prop.wordStats.tokens.map((tok, idx) => {
+                                    const clean = tok.word.replace(/\*\*/g, "");
+                                    const isBold = tok.word.includes("**");
+                                    return (
+                                      <React.Fragment key={idx}>
+                                        {idx > 0 && " "}
+                                        <span
+                                          className={
+                                            tok.changed
+                                              ? "bg-emerald-100/90 text-emerald-950 px-1 py-0.5 rounded font-medium"
+                                              : ""
+                                          }
+                                        >
+                                          {isBold ? (
+                                            <strong className="font-semibold text-neutral-900">
+                                              {clean}
+                                            </strong>
+                                          ) : (
+                                            clean
+                                          )}
+                                        </span>
+                                      </React.Fragment>
+                                    );
+                                  })}
+                                </p>
+                              )}
                             </div>
                           </div>
                         </div>
@@ -884,8 +1071,9 @@ export default function OperationsPage() {
                                 <div className="space-y-1.5">
                                   {mb.options.map((opt, optIdx) => {
                                     const isChosenOpt = opt.id === (activeOpt?.id ?? "");
+                                    const isEditingOpt = editingMalleableOptId === opt.id;
                                     return (
-                                      <label
+                                      <div
                                         key={opt.id}
                                         onClick={() => {
                                           setSelectedMalleableOption((prev) => ({
@@ -895,7 +1083,6 @@ export default function OperationsPage() {
                                           if (!acceptedMalleable.has(mb.id)) {
                                             setAcceptedMalleable((prev) => new Set(prev).add(mb.id));
                                           }
-                                          setAppliedBanner(false);
                                         }}
                                         className={`block rounded-lg border p-2.5 cursor-pointer transition-colors ${
                                           isChosenOpt
@@ -916,25 +1103,92 @@ export default function OperationsPage() {
                                               Option {optIdx + 1} · {opt.styleLabel}
                                             </span>
                                           </div>
-                                          <span className="font-mono text-[10px] text-neutral-500">
-                                            {opt.chars}/{opt.maxChars} chars · {opt.fit.badge}
-                                          </span>
+                                          <div className="flex items-center gap-2">
+                                            <span className="font-mono text-[10px] text-neutral-500">
+                                              {opt.chars}/{opt.maxChars} chars · {opt.fit.badge}
+                                            </span>
+                                            <button
+                                              type="button"
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                setSelectedMalleableOption((prev) => ({
+                                                  ...prev,
+                                                  [mb.id]: opt.id,
+                                                }));
+                                                if (!acceptedMalleable.has(mb.id)) {
+                                                  setAcceptedMalleable((prev) =>
+                                                    new Set(prev).add(mb.id)
+                                                  );
+                                                }
+                                                setEditingMalleableOptId(
+                                                  isEditingOpt ? null : opt.id
+                                                );
+                                              }}
+                                              className="inline-flex items-center gap-1 font-mono text-[10px] text-neutral-600 hover:text-neutral-900 bg-white border border-[#ebebeb] px-1.5 py-0.5 rounded cursor-pointer"
+                                            >
+                                              <Pencil className="w-2.5 h-2.5" />
+                                              <span>{isEditingOpt ? "Done" : "Edit"}</span>
+                                            </button>
+                                          </div>
                                         </div>
-                                        <p className="text-xs text-neutral-900 leading-relaxed pl-5">
-                                          {parseMarkup(opt.markup).map((seg, idx) =>
-                                            seg.bold ? (
-                                              <strong key={idx} className="font-semibold text-neutral-900">
-                                                {seg.text}
-                                              </strong>
-                                            ) : (
-                                              <span key={idx}>{seg.text}</span>
-                                            )
-                                          )}
-                                        </p>
+
+                                        {isEditingOpt ? (
+                                          <div className="pl-5 pt-1">
+                                            <textarea
+                                              autoFocus
+                                              rows={2}
+                                              value={opt.markup}
+                                              onClick={(e) => e.stopPropagation()}
+                                              onChange={(e) =>
+                                                handleCustomMalleableOptionTextChange(
+                                                  mb.id,
+                                                  opt.id,
+                                                  e.target.value
+                                                )
+                                              }
+                                              onKeyDown={(e) => {
+                                                if (e.key === "Escape")
+                                                  setEditingMalleableOptId(null);
+                                              }}
+                                              className="w-full text-xs font-mono text-neutral-900 bg-white border border-emerald-400 rounded-md p-2 focus:outline-none resize-none"
+                                            />
+                                          </div>
+                                        ) : (
+                                          <p
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              setSelectedMalleableOption((prev) => ({
+                                                ...prev,
+                                                [mb.id]: opt.id,
+                                              }));
+                                              if (!acceptedMalleable.has(mb.id)) {
+                                                setAcceptedMalleable((prev) =>
+                                                  new Set(prev).add(mb.id)
+                                                );
+                                              }
+                                              setEditingMalleableOptId(opt.id);
+                                            }}
+                                            className="text-xs text-neutral-900 leading-relaxed pl-5 cursor-text"
+                                          >
+                                            {parseMarkup(opt.markup).map((seg, idx) =>
+                                              seg.bold ? (
+                                                <strong
+                                                  key={idx}
+                                                  className="font-semibold text-neutral-900"
+                                                >
+                                                  {seg.text}
+                                                </strong>
+                                              ) : (
+                                                <span key={idx}>{seg.text}</span>
+                                              )
+                                            )}
+                                          </p>
+                                        )}
+
                                         <p className="text-[11px] text-neutral-500 font-mono pl-5 mt-1">
                                           {opt.easyExplanation}
                                         </p>
-                                      </label>
+                                      </div>
                                     );
                                   })}
                                 </div>
@@ -988,6 +1242,37 @@ export default function OperationsPage() {
                         {larpRun.aiRecommendation.interviewTalkingPoint}
                       </div>
 
+                      {/* Multi-Iteration Verification Passes */}
+                      {larpRun.aiRecommendation.verificationPasses &&
+                        larpRun.aiRecommendation.verificationPasses.length > 0 && (
+                          <div className="space-y-1.5 pt-1">
+                            <span className="block font-mono text-[10px] text-neutral-400 uppercase">
+                              AI Multi-Check & Context Iteration Log ({larpRun.aiRecommendation.iterationsRun}{" "}
+                              passes verified)
+                            </span>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                              {larpRun.aiRecommendation.verificationPasses.map((vp) => (
+                                <div
+                                  key={vp.passNumber}
+                                  className="rounded-lg bg-white border border-[#ebebeb] p-2.5 text-xs space-y-1"
+                                >
+                                  <div className="flex items-center justify-between gap-2">
+                                    <span className="font-mono text-[10px] font-semibold text-neutral-900">
+                                      {vp.name}
+                                    </span>
+                                    <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 uppercase">
+                                      {vp.status}
+                                    </span>
+                                  </div>
+                                  <p className="text-[11px] text-neutral-500 leading-relaxed">
+                                    {vp.detail}
+                                  </p>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
                       <div className="space-y-1.5 pt-1">
                         <span className="block font-mono text-[10px] text-neutral-400 uppercase">
                           All Proposed Changes Ranked by Live-Interview Believability
@@ -1032,20 +1317,15 @@ export default function OperationsPage() {
                   </div>
                 )}
 
-                {/* Apply & Queue to Preview Slot Bar */}
+                {/* Queue to Preview Slot Bar */}
                 <div className="flex items-center justify-between gap-3 pt-3 border-t border-[#ebebeb] flex-wrap">
                   <div className="flex items-center gap-3 flex-wrap">
-                    {appliedBanner && (
-                      <span className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-700">
-                        <Check className="w-3.5 h-3.5" />
-                        <span>Applied to your Master Resume in Experience!</span>
-                      </span>
-                    )}
                     {queuedSlotBanner && (
                       <span className="inline-flex items-center gap-2 text-xs font-medium text-neutral-900 bg-neutral-100 border border-[#ebebeb] px-3 py-1 rounded-full">
                         <Check className="w-3.5 h-3.5 text-emerald-600" />
                         <span>
-                          Added to Preview Queue ({queuedSlotBanner.count} in queue)
+                          Queued &ldquo;{queuedSlotBanner.latestTitle}&rdquo; ({queuedSlotBanner.count} in
+                          Preview Queue)
                         </span>
                         <button
                           type="button"
@@ -1058,14 +1338,6 @@ export default function OperationsPage() {
                     )}
                   </div>
                   <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={handleApplyToMasterResume}
-                      className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-medium text-neutral-800 bg-white hover:bg-neutral-50 border border-[#ebebeb] rounded-full shadow-2xs active:scale-95 transition-all cursor-pointer"
-                    >
-                      <Sparkles className="w-3.5 h-3.5" />
-                      <span>Apply to Master Resume</span>
-                    </button>
                     <button
                       type="button"
                       onClick={handleQueueIntoPreviewSlot}

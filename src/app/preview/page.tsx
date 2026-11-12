@@ -9,15 +9,23 @@ import {
   Download,
   FileText,
   ArrowRight,
+  ExternalLink,
+  Pencil,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import {
   loadPreviewQueue,
+  loadPreviewQueueAsync,
   updatePreviewQueueItem,
   deletePreviewQueueItem,
   type PreviewQueueItem,
 } from "@/lib/resume/previewQueue";
-import { applyLarpMutationsToResume } from "@/lib/resume/larpEngine";
+import {
+  applyLarpMutationsToResume,
+  evaluateBelievabilityAndRecommend,
+  updateBulletProposalWithCustomMarkup,
+  updateMalleableOptionWithCustomMarkup,
+} from "@/lib/resume/larpEngine";
 import { compileResumePdfBlobUrl, downloadResumePdf } from "@/lib/resume/exportPdf";
 import { parseMarkup } from "@/lib/resume/utils";
 
@@ -27,6 +35,8 @@ export default function PreviewPage() {
 
   const [queue, setQueue] = useState<PreviewQueueItem[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [editingBulletId, setEditingBulletId] = useState<string | null>(null);
+  const [editingMalleableOptId, setEditingMalleableOptId] = useState<string | null>(null);
   const [visualizedUrlBySlot, setVisualizedUrlBySlot] = useState<Record<string, string>>({});
   const [visualizingId, setVisualizingId] = useState<string | null>(null);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
@@ -39,11 +49,26 @@ export default function PreviewPage() {
 
   useEffect(() => {
     if (!user) return;
-    const loaded = loadPreviewQueue(user.uid);
-    setQueue(loaded);
-    if (loaded.length > 0) {
-      setSelectedId((prev) => (prev && loaded.some((i) => i.id === prev) ? prev : loaded[0].id));
+    let cancelled = false;
+    const syncLoaded = loadPreviewQueue(user.uid);
+    if (syncLoaded.length > 0) {
+      setQueue(syncLoaded);
+      setSelectedId((prev) =>
+        prev && syncLoaded.some((i) => i.id === prev) ? prev : syncLoaded[0].id
+      );
     }
+    loadPreviewQueueAsync(user.uid).then((asyncLoaded) => {
+      if (cancelled) return;
+      setQueue(asyncLoaded);
+      if (asyncLoaded.length > 0) {
+        setSelectedId((prev) =>
+          prev && asyncLoaded.some((i) => i.id === prev) ? prev : asyncLoaded[0].id
+        );
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [user]);
 
   if (loading || !user) {
@@ -61,6 +86,9 @@ export default function PreviewPage() {
       Pick<
         PreviewQueueItem,
         | "title"
+        | "roleName"
+        | "roleUrl"
+        | "larpRun"
         | "acceptedBulletIds"
         | "acceptedMalleableIds"
         | "selectedMalleableOptionBySlotId"
@@ -101,6 +129,55 @@ export default function PreviewPage() {
       selectedMalleableOptionBySlotId: nextMap,
       acceptedMalleableIds: Array.from(set),
     });
+  };
+
+  const handleEditBulletProposalInPreview = (bulletId: string, newMarkup: string) => {
+    if (!activeItem) return;
+    const nextProposals = activeItem.larpRun.bulletProposals.map((bp) =>
+      bp.bulletId === bulletId
+        ? updateBulletProposalWithCustomMarkup(
+            bp,
+            newMarkup,
+            activeItem.baseResume.calibration
+          )
+        : bp
+    );
+    const nextLarpRun = {
+      ...activeItem.larpRun,
+      bulletProposals: nextProposals,
+      aiRecommendation: evaluateBelievabilityAndRecommend(
+        activeItem.larpRun.malleableBullets,
+        nextProposals
+      ),
+    };
+    updateActiveItem({ larpRun: nextLarpRun });
+  };
+
+  const handleEditMalleableOptionInPreview = (
+    slotId: string,
+    optionId: string,
+    newMarkup: string
+  ) => {
+    if (!activeItem) return;
+    const nextMalleable = activeItem.larpRun.malleableBullets.map((mb) =>
+      mb.id === slotId
+        ? updateMalleableOptionWithCustomMarkup(
+            mb,
+            optionId,
+            newMarkup,
+            activeItem.baseResume.calibration
+          )
+        : mb
+    );
+    const nextLarpRun = {
+      ...activeItem.larpRun,
+      malleableBullets: nextMalleable,
+      aiRecommendation: evaluateBelievabilityAndRecommend(
+        nextMalleable,
+        activeItem.larpRun.bulletProposals
+      ),
+    };
+    updateActiveItem({ larpRun: nextLarpRun });
   };
 
   const handleSelectOnlyTopRecommended = () => {
@@ -162,7 +239,7 @@ export default function PreviewPage() {
     setDownloadingId(item.id);
     try {
       const tailored = buildTailoredResumeForSlot(item);
-      await downloadResumePdf(tailored, item.title || "Tailored_Resume");
+      await downloadResumePdf(tailored, item.roleName || item.title || "Tailored_Resume");
     } finally {
       setDownloadingId(null);
     }
@@ -177,7 +254,7 @@ export default function PreviewPage() {
             preview
           </h1>
           <p className="text-xs text-neutral-500 mt-0.5">
-            Select proposed edits per queued slot and visualize the compiled PDF right on screen
+            Select or customize proposed edits per queued role slot and visualize the compiled PDF on screen
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -205,9 +282,10 @@ export default function PreviewPage() {
               No tailored resume slots queued yet
             </h2>
             <p className="text-xs text-neutral-500 leading-relaxed">
-              Run a keyword & alignment check on the Operations page and click{" "}
-              <span className="font-mono text-neutral-800">Queue to Preview Slot</span> to add
-              entries here.
+              Add a role name, URL, and job description on Operations, run{" "}
+              <span className="font-mono text-neutral-800">Check Keyword Match</span>, and click{" "}
+              <span className="font-mono text-neutral-800">Queue to Preview Slot</span> to send
+              your tailored resume slot here.
             </p>
           </div>
           <button
@@ -220,7 +298,7 @@ export default function PreviewPage() {
           </button>
         </div>
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-[260px_minmax(0,1fr)] gap-6 items-start">
+        <div className="grid grid-cols-1 lg:grid-cols-[270px_minmax(0,1fr)] gap-6 items-start">
           {/* Left Sidebar: Queued Preview Slots */}
           <aside className="bg-white rounded-xl border border-[#ebebeb] shadow-subtle p-3 space-y-2">
             <div className="flex items-center justify-between px-1 pb-1 border-b border-[#ebebeb]">
@@ -230,7 +308,7 @@ export default function PreviewPage() {
               <span className="font-mono text-[10px] text-neutral-500">{queue.length}</span>
             </div>
 
-            <div className="space-y-1.5 max-h-[520px] overflow-y-auto">
+            <div className="space-y-1.5 max-h-[560px] overflow-y-auto">
               {queue.map((item, idx) => {
                 const isSelected = item.id === activeItem.id;
                 const isVisualized = Boolean(visualizedUrlBySlot[item.id]);
@@ -256,9 +334,14 @@ export default function PreviewPage() {
                             #{queue.length - idx}
                           </span>
                           <p className="text-xs font-semibold text-neutral-900 truncate">
-                            {item.title}
+                            {item.roleName || item.title}
                           </p>
                         </div>
+                        {item.roleUrl && (
+                          <p className="font-mono text-[10px] text-neutral-400 truncate mt-0.5">
+                            {item.roleUrl}
+                          </p>
+                        )}
                         <p className="font-mono text-[10px] text-neutral-500 mt-1">
                           {totalSelectedEdits} edits active
                           {isVisualized ? " · PDF ready" : ""}
@@ -282,21 +365,49 @@ export default function PreviewPage() {
             </div>
           </aside>
 
-          {/* Right Main Area: Edit Selector + In-Screen PDF Visualizer */}
+          {/* Right Main Area: Role Header + Edit Selector + In-Screen PDF Visualizer */}
           <div className="space-y-5 min-w-0">
-            {/* Top Action Bar for Active Slot */}
             <div className="bg-white rounded-xl border border-[#ebebeb] shadow-subtle p-5 space-y-4">
-              <div className="flex items-center justify-between gap-3 flex-wrap border-b border-[#ebebeb] pb-4">
-                <div className="min-w-0 flex-1">
+              {/* Role Name + URL + Visualize Action Bar */}
+              <div className="flex items-start justify-between gap-3 flex-wrap border-b border-[#ebebeb] pb-4">
+                <div className="min-w-0 flex-1 space-y-1.5">
                   <input
                     type="text"
-                    value={activeItem.title}
-                    onChange={(e) => updateActiveItem({ title: e.target.value })}
+                    value={activeItem.roleName || activeItem.title}
+                    onChange={(e) =>
+                      updateActiveItem({ roleName: e.target.value, title: e.target.value })
+                    }
+                    placeholder="Role Name / Company..."
                     className="text-sm font-semibold text-neutral-900 bg-transparent border-b border-transparent focus:border-neutral-400 focus:outline-none w-full"
                   />
-                  <p className="text-[11px] font-mono text-neutral-400 mt-0.5">
-                    Queued {new Date(activeItem.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} · Toggle any edit below, then click Visualize PDF
-                  </p>
+
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <input
+                      type="url"
+                      value={activeItem.roleUrl || ""}
+                      onChange={(e) => updateActiveItem({ roleUrl: e.target.value })}
+                      placeholder="https://company.com/careers/..."
+                      className="text-[11px] font-mono text-neutral-600 bg-[#fafafa] border border-[#ebebeb] rounded px-2 py-0.5 w-64 max-w-full focus:outline-none focus:border-neutral-400"
+                    />
+                    {activeItem.roleUrl && (
+                      <a
+                        href={activeItem.roleUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1 font-mono text-[11px] text-neutral-700 hover:text-neutral-900 underline decoration-[#ebebeb] underline-offset-2"
+                      >
+                        <ExternalLink className="w-3 h-3" />
+                        <span>Open Posting</span>
+                      </a>
+                    )}
+                    <span className="text-[11px] font-mono text-neutral-400">
+                      · Queued{" "}
+                      {new Date(activeItem.createdAt).toLocaleTimeString([], {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                    </span>
+                  </div>
                 </div>
 
                 <div className="flex items-center gap-2 flex-wrap">
@@ -328,7 +439,7 @@ export default function PreviewPage() {
                     disabled={downloadingId === activeItem.id}
                     onClick={() => handleOptionalDownload(activeItem)}
                     className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-neutral-700 bg-white hover:bg-neutral-50 border border-[#ebebeb] rounded-full shadow-2xs active:scale-95 transition-all cursor-pointer disabled:opacity-40"
-                    title="Download PDF file if needed"
+                    title="Optional PDF download"
                   >
                     <Download className="w-3.5 h-3.5" />
                     <span>Download</span>
@@ -354,32 +465,32 @@ export default function PreviewPage() {
                 </div>
               )}
 
-              {/* 2. Subtle Existing-Bullet Edits */}
+              {/* 2. Subtle Existing-Bullet Edits (Click to Toggle or Inline Edit) */}
               {activeItem.larpRun.bulletProposals.length > 0 && (
                 <div className="space-y-2 pt-2 border-t border-[#ebebeb]">
                   <span className="block font-mono text-[10px] uppercase tracking-wider text-neutral-400">
                     Existing Bullet Edits ({activeItem.acceptedBulletIds.length} of{" "}
-                    {activeItem.larpRun.bulletProposals.length} selected)
+                    {activeItem.larpRun.bulletProposals.length} selected · click text to edit)
                   </span>
                   <div className="space-y-2">
                     {activeItem.larpRun.bulletProposals.map((prop) => {
                       const checked = activeItem.acceptedBulletIds.includes(prop.bulletId);
+                      const isEditing = editingBulletId === prop.bulletId;
                       return (
-                        <label
+                        <div
                           key={prop.bulletId}
-                          onClick={() => handleToggleBullet(prop.bulletId)}
-                          className={`block rounded-xl border p-3 cursor-pointer transition-colors ${
+                          className={`rounded-xl border p-3 transition-colors ${
                             checked
                               ? "border-neutral-900 bg-white"
                               : "border-[#ebebeb] bg-[#fafafa] opacity-70"
                           }`}
                         >
-                          <div className="flex items-center justify-between gap-2 flex-wrap mb-1">
-                            <div className="flex items-center gap-2">
+                          <div className="flex items-center justify-between gap-2 flex-wrap mb-1.5">
+                            <label className="inline-flex items-center gap-2 cursor-pointer select-none">
                               <input
                                 type="checkbox"
                                 checked={checked}
-                                onChange={() => {}}
+                                onChange={() => handleToggleBullet(prop.bulletId)}
                                 className="rounded border-neutral-300 text-neutral-900 focus:ring-0"
                               />
                               <span className="text-xs font-semibold text-neutral-900">
@@ -393,23 +504,57 @@ export default function PreviewPage() {
                                   +{kw}
                                 </span>
                               ))}
+                            </label>
+
+                            <div className="flex items-center gap-2">
+                              <span className="font-mono text-[10px] text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded">
+                                {prop.budget.candFit.badge} · {prop.budget.candChars} chars
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setEditingBulletId(isEditing ? null : prop.bulletId)
+                                }
+                                className="inline-flex items-center gap-1 font-mono text-[10px] text-neutral-600 hover:text-neutral-900 bg-[#fafafa] border border-[#ebebeb] px-1.5 py-0.5 rounded cursor-pointer"
+                              >
+                                <Pencil className="w-2.5 h-2.5" />
+                                <span>{isEditing ? "Done" : "Edit"}</span>
+                              </button>
                             </div>
-                            <span className="font-mono text-[10px] text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded">
-                              {prop.budget.candFit.badge} · {prop.budget.candChars} chars
-                            </span>
                           </div>
-                          <p className="text-xs text-neutral-800 pl-5 leading-relaxed">
-                            {parseMarkup(prop.mutatedMarkup).map((seg, idx) =>
-                              seg.bold ? (
-                                <strong key={idx} className="font-semibold text-neutral-900">
-                                  {seg.text}
-                                </strong>
-                              ) : (
-                                <span key={idx}>{seg.text}</span>
-                              )
-                            )}
-                          </p>
-                        </label>
+
+                          {isEditing ? (
+                            <div className="pl-5 pt-1">
+                              <textarea
+                                autoFocus
+                                rows={2}
+                                value={prop.mutatedMarkup}
+                                onChange={(e) =>
+                                  handleEditBulletProposalInPreview(prop.bulletId, e.target.value)
+                                }
+                                onKeyDown={(e) => {
+                                  if (e.key === "Escape") setEditingBulletId(null);
+                                }}
+                                className="w-full text-xs font-mono text-neutral-900 bg-white border border-emerald-400 rounded-md p-2 focus:outline-none resize-none"
+                              />
+                            </div>
+                          ) : (
+                            <p
+                              onClick={() => setEditingBulletId(prop.bulletId)}
+                              className="text-xs text-neutral-800 pl-5 leading-relaxed cursor-text"
+                            >
+                              {parseMarkup(prop.mutatedMarkup).map((seg, idx) =>
+                                seg.bold ? (
+                                  <strong key={idx} className="font-semibold text-neutral-900">
+                                    {seg.text}
+                                  </strong>
+                                ) : (
+                                  <span key={idx}>{seg.text}</span>
+                                )
+                              )}
+                            </p>
+                          )}
+                        </div>
                       );
                     })}
                   </div>
@@ -421,7 +566,7 @@ export default function PreviewPage() {
                 <div className="space-y-2.5 pt-2 border-t border-[#ebebeb]">
                   <span className="block font-mono text-[10px] uppercase tracking-wider text-neutral-400">
                     Malleable 1-Line LARP Bullets ({activeItem.acceptedMalleableIds.length} of{" "}
-                    {activeItem.larpRun.malleableBullets.length} selected)
+                    {activeItem.larpRun.malleableBullets.length} selected · click option text to edit)
                   </span>
                   <div className="space-y-2.5">
                     {activeItem.larpRun.malleableBullets.map((mb) => {
@@ -467,6 +612,7 @@ export default function PreviewPage() {
                             <div className="space-y-1.5 pl-5">
                               {mb.options.map((opt, optIdx) => {
                                 const isOptSelected = opt.id === chosenOptId;
+                                const isEditingOpt = editingMalleableOptId === opt.id;
                                 return (
                                   <div
                                     key={opt.id}
@@ -481,24 +627,61 @@ export default function PreviewPage() {
                                       <span className="font-mono text-[10px] font-semibold text-neutral-900">
                                         Option {optIdx + 1} · {opt.styleLabel}
                                       </span>
-                                      <span className="font-mono text-[10px] text-neutral-500">
-                                        {opt.chars}/{opt.maxChars} chars · {opt.fit.badge}
-                                      </span>
+                                      <div className="flex items-center gap-2">
+                                        <span className="font-mono text-[10px] text-neutral-500">
+                                          {opt.chars}/{opt.maxChars} chars · {opt.fit.badge}
+                                        </span>
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleSelectMalleableOption(mb.id, opt.id);
+                                            setEditingMalleableOptId(
+                                              isEditingOpt ? null : opt.id
+                                            );
+                                          }}
+                                          className="inline-flex items-center gap-1 font-mono text-[10px] text-neutral-600 hover:text-neutral-900 bg-white border border-[#ebebeb] px-1.5 py-0.5 rounded cursor-pointer"
+                                        >
+                                          <Pencil className="w-2.5 h-2.5" />
+                                          <span>{isEditingOpt ? "Done" : "Edit"}</span>
+                                        </button>
+                                      </div>
                                     </div>
-                                    <p className="text-xs text-neutral-900 leading-relaxed">
-                                      {parseMarkup(opt.markup).map((seg, idx) =>
-                                        seg.bold ? (
-                                          <strong
-                                            key={idx}
-                                            className="font-semibold text-neutral-900"
-                                          >
-                                            {seg.text}
-                                          </strong>
-                                        ) : (
-                                          <span key={idx}>{seg.text}</span>
-                                        )
-                                      )}
-                                    </p>
+
+                                    {isEditingOpt ? (
+                                      <textarea
+                                        autoFocus
+                                        rows={2}
+                                        value={opt.markup}
+                                        onClick={(e) => e.stopPropagation()}
+                                        onChange={(e) =>
+                                          handleEditMalleableOptionInPreview(
+                                            mb.id,
+                                            opt.id,
+                                            e.target.value
+                                          )
+                                        }
+                                        onKeyDown={(e) => {
+                                          if (e.key === "Escape") setEditingMalleableOptId(null);
+                                        }}
+                                        className="w-full mt-1 text-xs font-mono text-neutral-900 bg-white border border-emerald-400 rounded-md p-2 focus:outline-none resize-none"
+                                      />
+                                    ) : (
+                                      <p className="text-xs text-neutral-900 leading-relaxed">
+                                        {parseMarkup(opt.markup).map((seg, idx) =>
+                                          seg.bold ? (
+                                            <strong
+                                              key={idx}
+                                              className="font-semibold text-neutral-900"
+                                            >
+                                              {seg.text}
+                                            </strong>
+                                          ) : (
+                                            <span key={idx}>{seg.text}</span>
+                                          )
+                                        )}
+                                      </p>
+                                    )}
                                   </div>
                                 );
                               })}
@@ -516,7 +699,7 @@ export default function PreviewPage() {
             <div className="bg-white rounded-xl border border-[#ebebeb] shadow-subtle overflow-hidden">
               <div className="px-4 py-3 border-b border-[#ebebeb] flex items-center justify-between bg-[#fafafa]">
                 <span className="font-mono text-[11px] font-semibold text-neutral-800">
-                  On-Screen PDF Visualizer · {activeItem.title}
+                  On-Screen PDF Visualizer · {activeItem.roleName || activeItem.title}
                 </span>
                 {visualizedUrlBySlot[activeItem.id] && (
                   <span className="font-mono text-[10px] text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded">
@@ -528,13 +711,13 @@ export default function PreviewPage() {
               {visualizedUrlBySlot[activeItem.id] ? (
                 <iframe
                   src={visualizedUrlBySlot[activeItem.id]}
-                  title={`PDF Preview - ${activeItem.title}`}
+                  title={`PDF Preview - ${activeItem.roleName || activeItem.title}`}
                   className="w-full h-[880px] border-0 bg-neutral-100"
                 />
               ) : (
                 <div className="h-[420px] flex flex-col items-center justify-center p-8 text-center space-y-3">
                   <p className="text-xs text-neutral-500 max-w-sm">
-                    Select the edits and phrasing option you want above, then click{" "}
+                    Select or edit the proposed bullets above, then click{" "}
                     <span className="font-semibold text-neutral-900">Visualize PDF</span> to render
                     your tailored resume right here on screen without downloading a file.
                   </p>
