@@ -1,3 +1,4 @@
+import { reconstructLatexResume } from "./latex";
 import {
   DEFAULT_RESUME_FORMAT,
   hasResumeSection,
@@ -8,13 +9,16 @@ import {
 import { parseMarkup } from "./utils";
 
 type FontVariant = "regular" | "bold" | "italic" | "boldItalic";
+type VectorIconKind = "pin" | "phone" | "mail" | "linkedin" | "github" | "globe" | "link";
 
 interface StyledSpan {
   text: string;
   font: FontVariant;
-  gray?: number; // 0 = black, 0.35 = muted
+  gray?: number;
   underline?: boolean;
   linkUrl?: string;
+  iconBefore?: VectorIconKind;
+  iconAfter?: VectorIconKind;
 }
 
 interface LinkAnnotation {
@@ -31,8 +35,7 @@ interface PageStream {
 }
 
 /**
- * Standard Adobe AFM character widths (1/1000 em) for Helvetica ( Regular & Bold )
- * so line wrapping and right-alignment match PDF viewer Type1 rendering.
+ * Standard Adobe AFM character widths (1/1000 em) for Helvetica (Regular & Bold).
  */
 const HELVETICA_WIDTHS: Record<string, [number, number]> = {
   " ": [278, 278],
@@ -166,9 +169,6 @@ function fontResourceName(font: FontVariant): string {
   }
 }
 
-/**
- * Convert Unicode string into WinAnsi (CP1252) escaped PDF literal string `(...)`.
- */
 function toPdfLiteralString(input: string): string {
   const normalized = input
     .replace(/≈/g, "~")
@@ -182,15 +182,15 @@ function toPdfLiteralString(input: string): string {
     if (ch === "(" || ch === ")" || ch === "\\") {
       out += "\\" + ch;
     } else if (ch === "•") {
-      out += "\\225"; // 0x95 in octal
+      out += "\\225";
     } else if (ch === "–") {
-      out += "\\226"; // 0x96 in octal
+      out += "\\226";
     } else if (ch === "—") {
-      out += "\\227"; // 0x97 in octal
+      out += "\\227";
     } else if (ch === "·") {
-      out += "\\267"; // 0xB7 in octal
+      out += "\\267";
     } else if (ch === "×") {
-      out += "\\327"; // 0xD7 in octal
+      out += "\\327";
     } else if (code >= 32 && code <= 126) {
       out += ch;
     } else if (code >= 160 && code <= 255) {
@@ -208,8 +208,83 @@ function num(n: number): string {
 }
 
 /**
- * Tokenize styled spans into word tokens so we can wrap multi-span rich text across lines.
+ * Draw compact vector icons matching FontAwesome 5 resume glyphs (\faLink, \faGithub, \faMapMarker*, etc.)
+ * for the offline fallback PDF renderer.
  */
+function drawVectorIcon(
+  ops: string[],
+  kind: VectorIconKind,
+  x: number,
+  y: number,
+  sizePt: number,
+  gray = 0.08
+): number {
+  const s = sizePt * 0.78;
+  const by = y + sizePt * 0.04;
+  ops.push(`q ${num(gray)} G ${num(gray)} g 0.75 w 1 J 1 j`);
+
+  if (kind === "link") {
+    // Chain link icon (\faLink)
+    const r = s * 0.22;
+    ops.push(
+      `${num(x + s * 0.12)} ${num(by + s * 0.15)} ${num(s * 0.42)} ${num(r * 1.4)} re S`,
+      `${num(x + s * 0.42)} ${num(by + s * 0.45)} ${num(s * 0.42)} ${num(r * 1.4)} re S`,
+      `${num(x + s * 0.32)} ${num(by + s * 0.32)} m ${num(x + s * 0.62)} ${num(by + s * 0.58)} l S`
+    );
+  } else if (kind === "github") {
+    // GitHub mark silhouette (\faGithub)
+    const cx = x + s * 0.48;
+    const cy = by + s * 0.48;
+    const r = s * 0.42;
+    const k = r * 0.552;
+    ops.push(
+      `${num(cx)} ${num(cy + r)} m ` +
+        `${num(cx + k)} ${num(cy + r)} ${num(cx + r)} ${num(cy + k)} ${num(cx + r)} ${num(cy)} c ` +
+        `${num(cx + r)} ${num(cy - k)} ${num(cx + k)} ${num(cy - r)} ${num(cx)} ${num(cy - r)} c ` +
+        `${num(cx - k)} ${num(cy - r)} ${num(cx - r)} ${num(cy - k)} ${num(cx - r)} ${num(cy)} c ` +
+        `${num(cx - r)} ${num(cy + k)} ${num(cx - k)} ${num(cy + r)} ${num(cx)} ${num(cy + r)} c f`,
+      `1 g ${num(cx - r * 0.45)} ${num(cy - r * 0.15)} ${num(r * 0.9)} ${num(r * 0.55)} re f`
+    );
+  } else if (kind === "pin") {
+    const cx = x + s * 0.42;
+    const cy = by + s * 0.62;
+    const r = s * 0.28;
+    ops.push(
+      `${num(cx - r)} ${num(cy)} m ${num(cx)} ${num(by + 0.5)} l ${num(cx + r)} ${num(cy)} l f`,
+      `${num(cx - r)} ${num(cy - r * 0.5)} ${num(r * 2)} ${num(r * 1.2)} re f`
+    );
+  } else if (kind === "mail") {
+    const w = s * 0.92;
+    const h = s * 0.64;
+    ops.push(
+      `${num(x)} ${num(by + s * 0.12)} ${num(w)} ${num(h)} re S`,
+      `${num(x)} ${num(by + s * 0.12 + h)} m ${num(x + w / 2)} ${num(by + s * 0.12 + h * 0.35)} l ${num(
+        x + w
+      )} ${num(by + s * 0.12 + h)} l S`
+    );
+  } else if (kind === "phone") {
+    ops.push(
+      `${num(x + s * 0.15)} ${num(by + s * 0.78)} m ${num(x + s * 0.35)} ${num(by + s * 0.42)} l ${num(
+        x + s * 0.75
+      )} ${num(by + s * 0.12)} l S`
+    );
+  } else if (kind === "linkedin") {
+    const w = s * 0.85;
+    ops.push(`${num(x)} ${num(by + s * 0.08)} ${num(w)} ${num(w)} re S`);
+  } else if (kind === "globe") {
+    const w = s * 0.82;
+    ops.push(
+      `${num(x + w * 0.05)} ${num(by + s * 0.08)} ${num(w)} ${num(w)} re S`,
+      `${num(x + w * 0.05)} ${num(by + s * 0.08 + w / 2)} m ${num(x + w * 1.05)} ${num(
+        by + s * 0.08 + w / 2
+      )} l S`
+    );
+  }
+
+  ops.push("Q");
+  return s + 2.5;
+}
+
 interface WordToken {
   text: string;
   font: FontVariant;
@@ -250,7 +325,6 @@ function wrapTokens(tokens: WordToken[], maxWidthPt: number): WordToken[][] {
       continue;
     }
     if (currentLine.length > 0 && currentWidth + tok.widthPt > maxWidthPt && !isSpace) {
-      // Trim trailing whitespace token from current line
       while (currentLine.length > 0 && /^\s+$/.test(currentLine[currentLine.length - 1].text)) {
         currentLine.pop();
       }
@@ -282,8 +356,7 @@ function markupToSpans(markup: string, baseGray = 0.08): StyledSpan[] {
 }
 
 /**
- * Generates a vector PDF 1.4 binary buffer faithfully reproducing the uploaded LaTeX format
- * and incorporating all edits made in the Experience editor.
+ * Fallback client-side vector PDF 1.4 generator if offline.
  */
 export function generateResumePdfBytes(resume: MasterResume): Uint8Array {
   const fmt: ResumeFormat = resume.format ?? DEFAULT_RESUME_FORMAT;
@@ -332,39 +405,52 @@ export function generateResumePdfBytes(resume: MasterResume): Uint8Array {
     sizePt: number,
     gray = bodyGray,
     underline = false,
-    linkUrl?: string
+    linkUrl?: string,
+    iconBefore?: VectorIconKind,
+    iconAfter?: VectorIconKind
   ): number => {
-    if (!text) return 0;
-    const w = measureTextPt(text, font, sizePt);
-    curPage.ops.push(
-      `BT ${num(gray)} g ${fontResourceName(font)} ${num(sizePt)} Tf ${num(x)} ${num(y)} Td ${toPdfLiteralString(
-        text
-      )} Tj ET`
-    );
-    if (underline) {
-      const uy = y - 1.5;
-      curPage.ops.push(
-        `${num(gray)} G 0.45 w ${num(x)} ${num(uy)} m ${num(x + w)} ${num(uy)} l S`
-      );
+    let curX = x;
+    const startX = x;
+    if (iconBefore) {
+      curX += drawVectorIcon(curPage.ops, iconBefore, curX, y, sizePt, gray);
     }
-    if (linkUrl) {
+    if (text) {
+      const w = measureTextPt(text, font, sizePt);
+      curPage.ops.push(
+        `BT ${num(gray)} g ${fontResourceName(font)} ${num(sizePt)} Tf ${num(curX)} ${num(
+          y
+        )} Td ${toPdfLiteralString(text)} Tj ET`
+      );
+      if (underline) {
+        const uy = y - 1.5;
+        curPage.ops.push(
+          `${num(gray)} G 0.45 w ${num(curX)} ${num(uy)} m ${num(curX + w)} ${num(uy)} l S`
+        );
+      }
+      curX += w;
+    }
+    if (iconAfter) {
+      curX += 2.5;
+      curX += drawVectorIcon(curPage.ops, iconAfter, curX, y, sizePt, gray);
+    }
+    const totalW = curX - startX;
+    if (linkUrl && totalW > 0) {
       const fullUrl =
         linkUrl.startsWith("http") || linkUrl.startsWith("mailto:")
           ? linkUrl
           : `https://${linkUrl}`;
       curPage.links.push({
-        x,
+        x: startX,
         y: y - 2,
-        w,
+        w: totalW,
         h: sizePt + 3,
         url: fullUrl,
       });
     }
-    return w;
+    return totalW;
   };
 
   const drawTokenLine = (tokens: WordToken[], startX: number, y: number, sizePt: number) => {
-    // Merge adjacent tokens that share identical styling & no link boundary so kerning is smooth
     let x = startX;
     for (const tok of tokens) {
       const w = drawTextSpan(
@@ -381,7 +467,6 @@ export function generateResumePdfBytes(resume: MasterResume): Uint8Array {
     }
   };
 
-  /* ------------------------------- 1. Header ------------------------------- */
   if (hasResumeSection(resume, "contact")) {
     const { contact } = resume;
     if (contact.name) {
@@ -397,13 +482,22 @@ export function generateResumePdfBytes(resume: MasterResume): Uint8Array {
       cursorY -= 5;
     }
 
-    // Build contact items
     const contactItems: StyledSpan[] = [];
     if (contact.location) {
-      contactItems.push({ text: contact.location, font: "regular", gray: bodyGray });
+      contactItems.push({
+        text: contact.location,
+        font: "regular",
+        gray: bodyGray,
+        iconBefore: fmt.headerStyle.showIcons ? "pin" : undefined,
+      });
     }
     if (contact.phone) {
-      contactItems.push({ text: contact.phone, font: "regular", gray: bodyGray });
+      contactItems.push({
+        text: contact.phone,
+        font: "regular",
+        gray: bodyGray,
+        iconBefore: fmt.headerStyle.showIcons ? "phone" : undefined,
+      });
     }
     if (contact.email) {
       contactItems.push({
@@ -412,6 +506,7 @@ export function generateResumePdfBytes(resume: MasterResume): Uint8Array {
         gray: bodyGray,
         underline: fmt.headerStyle.underlineLinks,
         linkUrl: `mailto:${contact.email}`,
+        iconBefore: fmt.headerStyle.showIcons ? "mail" : undefined,
       });
     }
     for (const link of contact.links) {
@@ -423,43 +518,58 @@ export function generateResumePdfBytes(resume: MasterResume): Uint8Array {
         gray: bodyGray,
         underline: fmt.headerStyle.underlineLinks,
         linkUrl: link.url || label,
+        iconBefore: fmt.headerStyle.showIcons
+          ? link.kind === "linkedin"
+            ? "linkedin"
+            : link.kind === "github"
+            ? "github"
+            : "globe"
+          : undefined,
       });
     }
 
     if (contactItems.length > 0) {
-      const sepChar =
-        fmt.headerStyle.separator === "bar"
-          ? "  |  "
-          : fmt.headerStyle.separator === "bullet"
-          ? "  •  "
-          : "  ·  ";
+      const contactPt = smallPt;
+      ensureSpace(contactPt * lineFactor);
+      cursorY -= contactPt * lineFactor;
 
-      const lineSpans: StyledSpan[] = [];
+      const sepText = fmt.headerStyle.separator === "bar" ? "  |  " : "  ·  ";
+      const sepW = measureTextPt(sepText, "regular", contactPt);
+      const iconExtra = fmt.headerStyle.showIcons ? contactPt * 0.78 + 2.5 : 0;
+      const totalLineW = contactItems.reduce(
+        (acc, item, idx) =>
+          acc +
+          (idx > 0 ? sepW : 0) +
+          measureTextPt(item.text, item.font, contactPt) +
+          (item.iconBefore ? iconExtra : 0),
+        0
+      );
+
+      let cx =
+        fmt.headerStyle.alignment === "center"
+          ? marginLeft + Math.max(0, (contentWidth - totalLineW) / 2)
+          : marginLeft;
+
       contactItems.forEach((item, idx) => {
         if (idx > 0) {
-          lineSpans.push({ text: sepChar, font: "regular", gray: mutedGray });
+          cx += drawTextSpan(sepText, cx, cursorY, "regular", contactPt, mutedGray);
         }
-        lineSpans.push(item);
+        cx += drawTextSpan(
+          item.text,
+          cx,
+          cursorY,
+          item.font,
+          contactPt,
+          item.gray,
+          item.underline,
+          item.linkUrl,
+          item.iconBefore
+        );
       });
-
-      const contactPt = smallPt;
-      const tokens = tokenizeSpans(lineSpans, contactPt);
-      const wrapped = wrapTokens(tokens, contentWidth);
-      for (const line of wrapped) {
-        ensureSpace(contactPt * lineFactor);
-        cursorY -= contactPt * lineFactor;
-        const lineW = line.reduce((acc, t) => acc + t.widthPt, 0);
-        const startX =
-          fmt.headerStyle.alignment === "center"
-            ? marginLeft + Math.max(0, (contentWidth - lineW) / 2)
-            : marginLeft;
-        drawTokenLine(line, startX, cursorY, contactPt);
-      }
       cursorY -= 4;
     }
   }
 
-  /* -------------------------- Section Header Helper ------------------------- */
   const drawSectionHeading = (rawTitle: string) => {
     const title = fmt.sectionStyle.uppercase ? rawTitle.toUpperCase() : rawTitle;
     const spaceAbove = fmt.sectionStyle.spaceAbovePt ?? 7;
@@ -490,7 +600,6 @@ export function generateResumePdfBytes(resume: MasterResume): Uint8Array {
     cursorY -= spaceBelow;
   };
 
-  /* -------------------------- Subheading Pair Helper ------------------------- */
   const drawTwoLineSubheading = (
     line1Left: StyledSpan[],
     line1Right: string,
@@ -504,11 +613,21 @@ export function generateResumePdfBytes(resume: MasterResume): Uint8Array {
 
     ensureSpace((row1Pt + row2Pt) * lineFactor + 6);
 
-    // Line 1
     cursorY -= row1Pt * lineFactor;
     let x1 = marginLeft;
     for (const sp of line1Left) {
-      x1 += drawTextSpan(sp.text, x1, cursorY, sp.font, row1Pt, sp.gray ?? bodyGray, sp.underline, sp.linkUrl);
+      x1 += drawTextSpan(
+        sp.text,
+        x1,
+        cursorY,
+        sp.font,
+        row1Pt,
+        sp.gray ?? bodyGray,
+        sp.underline,
+        sp.linkUrl,
+        sp.iconBefore,
+        sp.iconAfter
+      );
     }
     if (line1Right) {
       const rw1 = measureTextPt(line1Right, rightFont, row1Pt);
@@ -522,11 +641,21 @@ export function generateResumePdfBytes(resume: MasterResume): Uint8Array {
       );
     }
 
-    // Line 2
     cursorY -= row2Pt * 1.15;
     let x2 = marginLeft;
     for (const sp of line2Left) {
-      x2 += drawTextSpan(sp.text, x2, cursorY, sp.font, row2Pt, sp.gray ?? bodyGray, sp.underline, sp.linkUrl);
+      x2 += drawTextSpan(
+        sp.text,
+        x2,
+        cursorY,
+        sp.font,
+        row2Pt,
+        sp.gray ?? bodyGray,
+        sp.underline,
+        sp.linkUrl,
+        sp.iconBefore,
+        sp.iconAfter
+      );
     }
     if (line2Right) {
       const rw2 = measureTextPt(line2Right, rightFont, row2Pt);
@@ -541,7 +670,6 @@ export function generateResumePdfBytes(resume: MasterResume): Uint8Array {
     }
   };
 
-  /* ---------------------------- Bullet List Helper --------------------------- */
   const drawBullets = (bullets: { text: string }[]) => {
     if (bullets.length === 0) return;
     const bulletPt = fmt.bulletStyle.smallText ? smallPt : basePt;
@@ -574,7 +702,6 @@ export function generateResumePdfBytes(resume: MasterResume): Uint8Array {
     }
   };
 
-  /* ------------------------- Section Renderers ------------------------- */
   const renderSection = (key: ResumeSectionKey) => {
     if (!hasResumeSection(resume, key)) return;
 
@@ -593,6 +720,9 @@ export function generateResumePdfBytes(resume: MasterResume): Uint8Array {
           ],
           edu.dates
         );
+        if (edu.bullets && edu.bullets.length > 0) {
+          drawBullets(edu.bullets);
+        }
       });
     } else if (key === "skills" && resume.skills.length > 0) {
       drawSectionHeading(fmt.sectionStyle.titles.skills || "Technical Skills");
@@ -639,8 +769,9 @@ export function generateResumePdfBytes(resume: MasterResume): Uint8Array {
         const companySpan: StyledSpan = {
           text: job.company,
           font: fmt.entryStyle.companyFirst || fmt.entryStyle.line2Bold ? "bold" : "regular",
-          underline: Boolean(job.companyUrl),
           linkUrl: job.companyUrl || undefined,
+          iconAfter:
+            job.companyUrl && fmt.entryStyle.showLinkIcons ? "link" : undefined,
         };
         const titleSpan: StyledSpan = {
           text: job.title,
@@ -667,8 +798,13 @@ export function generateResumePdfBytes(resume: MasterResume): Uint8Array {
           {
             text: proj.name,
             font: "bold",
-            underline: Boolean(proj.url),
             linkUrl: proj.url || undefined,
+            iconAfter:
+              proj.url && fmt.entryStyle.showLinkIcons
+                ? proj.linkIcon === "\\faLink"
+                  ? "link"
+                  : "github"
+                : undefined,
           },
         ];
         if (proj.techStack.length > 0) {
@@ -694,7 +830,9 @@ export function generateResumePdfBytes(resume: MasterResume): Uint8Array {
             rowPt,
             sp.gray ?? bodyGray,
             sp.underline,
-            sp.linkUrl
+            sp.linkUrl,
+            sp.iconBefore,
+            sp.iconAfter
           );
         }
 
@@ -769,16 +907,14 @@ export function generateResumePdfBytes(resume: MasterResume): Uint8Array {
     renderSection(key);
   }
 
-  /* ----------------------- 2. Assemble PDF 1.4 Objects ----------------------- */
   const objects: string[] = [];
   const addObj = (body: string): number => {
     objects.push(body);
-    return objects.length; // 1-based object ID
+    return objects.length;
   };
 
-  // Reserve 1 = Catalog, 2 = Pages
-  addObj(""); // placeholder for 1
-  addObj(""); // placeholder for 2
+  addObj("");
+  addObj("");
 
   const isSerif = fmt.fontFamily === "serif";
   const f1Id = addObj(
@@ -857,9 +993,11 @@ export function generateResumePdfBytes(resume: MasterResume): Uint8Array {
 }
 
 /**
- * Trigger a browser download of the resume as `<name>.pdf`.
+ * Compiles the reconstructed LaTeX document via TeX Live (`pdflatex` / `lualatex`)
+ * for a 100% identical LaTeX PDF (with FontAwesome 5 icons, exact spacing, margins, and fonts),
+ * falling back to the client-side vector PDF generator only if offline.
  */
-export function downloadResumePdf(resume: MasterResume, rawName: string): void {
+export async function downloadResumePdf(resume: MasterResume, rawName: string): Promise<void> {
   const cleanName =
     rawName
       .trim()
@@ -867,12 +1005,58 @@ export function downloadResumePdf(resume: MasterResume, rawName: string): void {
       .replace(/[^a-zA-Z0-9._-\s]/g, "")
       .trim() || "Resume";
 
-  const bytes = generateResumePdfBytes(resume);
-  const blob = new Blob([bytes.buffer as ArrayBuffer], { type: "application/pdf" });
+  const latexSource = reconstructLatexResume(resume);
+  let pdfBytes: Uint8Array | null = null;
+
+  try {
+    const res = await fetch("/api/resume/compile-pdf", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ latex: latexSource }),
+    });
+    if (res.ok) {
+      const buf = await res.arrayBuffer();
+      const arr = new Uint8Array(buf);
+      if (arr.length > 4 && arr[0] === 0x25 && arr[1] === 0x50 && arr[2] === 0x44 && arr[3] === 0x46) {
+        pdfBytes = arr;
+      }
+    }
+  } catch (e) {
+    console.warn("TeX Live compilation unavailable, using local vector PDF generator:", e);
+  }
+
+  if (!pdfBytes) {
+    pdfBytes = generateResumePdfBytes(resume);
+  }
+
+  const blob = new Blob([pdfBytes.buffer as ArrayBuffer], { type: "application/pdf" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
   a.download = `${cleanName}.pdf`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1500);
+}
+
+/**
+ * Download the reconstructed `.tex` file with all current edits and ordering.
+ */
+export function downloadResumeTex(resume: MasterResume, rawName: string): void {
+  const cleanName =
+    rawName
+      .trim()
+      .replace(/\.(pdf|tex)$/i, "")
+      .replace(/[^a-zA-Z0-9._-\s]/g, "")
+      .trim() || "Resume";
+
+  const latexSource = reconstructLatexResume(resume);
+  const blob = new Blob([latexSource], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${cleanName}.tex`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);

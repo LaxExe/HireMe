@@ -11,15 +11,21 @@ export interface Job {
   title: string;
   company: string;
   companyUrl: string;
+  /** Preserved FontAwesome icon macro from LaTeX, e.g. `\faLink` or `\faExternalLink*`. */
+  companyIcon?: string;
   location: string;
   dates: string;
   bullets: Bullet[];
+  /** True if parsed from a separate Leadership & Extracurriculars section. */
+  isLeadership?: boolean;
 }
 
 export interface Project {
   id: string;
   name: string;
   url: string;
+  /** Preserved FontAwesome icon macro from LaTeX, e.g. `\faGithub` or `\faLink`. */
+  linkIcon?: string;
   techStack: string[];
   meta: string;
   bullets: Bullet[];
@@ -31,6 +37,7 @@ export interface Education {
   location: string;
   degree: string;
   dates: string;
+  bullets?: Bullet[];
 }
 
 export interface Skill {
@@ -49,6 +56,8 @@ export interface ContactLink {
   kind: "linkedin" | "github" | "website" | "other";
   label: string;
   url: string;
+  /** Preserved FontAwesome icon macro from LaTeX, e.g. `\faLinkedin`, `\faGlobe`, `\faGithub`. */
+  icon?: string;
 }
 
 export interface Contact {
@@ -108,6 +117,7 @@ export interface ResumeFormat {
     separator: "cdot" | "bar" | "bullet";
   };
   sectionStyle: {
+    macroName?: string;
     uppercase: boolean;
     bold: boolean;
     size: "large" | "Large" | "normalsize";
@@ -116,6 +126,7 @@ export interface ResumeFormat {
     spaceAbovePt: number;
     spaceBelowPt: number;
     titles: Partial<Record<ResumeSectionKey, string>>;
+    leadershipTitle?: string;
     order: ResumeSectionKey[];
   };
   entryStyle: {
@@ -163,6 +174,7 @@ export const DEFAULT_RESUME_FORMAT: ResumeFormat = {
     separator: "cdot",
   },
   sectionStyle: {
+    macroName: "section",
     uppercase: false,
     bold: true,
     size: "large",
@@ -171,11 +183,11 @@ export const DEFAULT_RESUME_FORMAT: ResumeFormat = {
     spaceAbovePt: 6,
     spaceBelowPt: 3,
     titles: {
-      education: "Education",
-      skills: "Technical Skills",
-      experience: "Experience",
-      projects: "Projects",
-      awards: "Scholarships & Awards",
+      education: "EDUCATION",
+      skills: "TECHNICAL SKILLS",
+      experience: "EXPERIENCE",
+      projects: "PROJECTS",
+      awards: "SCHOLARSHIPS & AWARDS",
     },
     order: ["education", "skills", "experience", "projects", "awards"],
   },
@@ -191,7 +203,7 @@ export const DEFAULT_RESUME_FORMAT: ResumeFormat = {
   },
   skillStyle: {
     layout: "compact-lines",
-    colonInsideBold: true,
+    colonInsideBold: false,
     smallText: true,
   },
   bulletStyle: {

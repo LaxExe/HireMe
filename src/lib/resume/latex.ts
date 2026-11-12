@@ -10,8 +10,8 @@ import type {
   ResumeSectionKey,
   SkillCategory,
 } from "./types";
-import { DEFAULT_RESUME_FORMAT, emptyResume } from "./types";
-import { analyzeBullet, knownTools, plainText, splitItems, uid } from "./utils";
+import { DEFAULT_RESUME_FORMAT, emptyResume, hasResumeSection } from "./types";
+import { analyzeBullet, knownTools, parseMarkup, plainText, splitItems, uid } from "./utils";
 
 /* ---------------------------------- low level ---------------------------------- */
 
@@ -87,6 +87,12 @@ function firstHref(raw?: string): { url: string; text: string } | null {
   return { url: args[0].trim(), text: args[1] };
 }
 
+function extractFaIcon(raw?: string): string | undefined {
+  if (!raw) return undefined;
+  const m = /(\\fa[A-Za-z0-9]+\*?)/.exec(raw);
+  return m ? m[1] : undefined;
+}
+
 /**
  * Convert a LaTeX fragment to readable text with preserved `**bold**` markup.
  */
@@ -160,6 +166,25 @@ function splitDates(dates: string): string {
   return dates.replace(/\s*[–—-]+\s*/g, " – ").trim();
 }
 
+/** Split comma-separated items while respecting parentheses, keeping slashes intact (e.g. C++/C). */
+function splitCommaPreservingSlashes(input: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let cur = "";
+  for (const ch of input) {
+    if (ch === "(" || ch === "[") depth++;
+    else if (ch === ")" || ch === "]") depth = Math.max(0, depth - 1);
+    if (depth === 0 && ch === ",") {
+      if (cur.trim()) out.push(cur.trim());
+      cur = "";
+    } else {
+      cur += ch;
+    }
+  }
+  if (cur.trim()) out.push(cur.trim());
+  return out;
+}
+
 /* ---------------------------------- dimensions --------------------------------- */
 
 function dimToInches(raw: string, baseFontPt = 11): number | null {
@@ -183,6 +208,7 @@ function dimToPoints(raw: string, baseFontPt = 11): number | null {
 /* ----------------------------------- sections ---------------------------------- */
 
 interface SectionRegion {
+  macroName: string;
   name: string;
   key: string;
   start: number;
@@ -197,7 +223,7 @@ interface SectionRegion {
  */
 function findSections(body: string): SectionRegion[] {
   const sections: SectionRegion[] = [];
-  const secRe = /\\(?:(?:res|cv|r|my)?section\*?|(?<!sub)heading\*?)(?![A-Za-z])/gi;
+  const secRe = /\\((?:res|cv|r|my)?section\*?|(?<!sub)heading\*?)(?![A-Za-z])/gi;
   let m: RegExpExecArray | null;
   while ((m = secRe.exec(body))) {
     const after = m.index + m[0].length;
@@ -206,6 +232,7 @@ function findSections(body: string): SectionRegion[] {
     const rawName = toPlain(g.content);
     if (!rawName) continue;
     sections.push({
+      macroName: m[1],
       name: rawName,
       key: rawName.toUpperCase(),
       start: m.index,
@@ -359,6 +386,9 @@ function parseResumeFormat(
   else fmt.headerStyle.separator = "cdot";
 
   // 6. Section heading style
+  if (sections.length > 0) {
+    fmt.sectionStyle.macroName = sections[0].macroName;
+  }
   fmt.sectionStyle.uppercase = /\\MakeUppercase|\\uppercase|\\scshape/.test(preamble);
   fmt.sectionStyle.hasRule = /\\titlerule|\\hrule/.test(preamble);
   const hruleHeight = /\\hrule\s+height\s+([0-9.]+pt)/.exec(preamble);
@@ -383,6 +413,9 @@ function parseResumeFormat(
   const orderedKeys: ResumeSectionKey[] = [];
   const sectionTitles: Partial<Record<ResumeSectionKey, string>> = {};
   for (const sec of sections) {
+    if (/LEADERSHIP|EXTRACURRICULAR|ACTIVIT|VOLUNTEER/.test(sec.key)) {
+      fmt.sectionStyle.leadershipTitle = sec.name;
+    }
     const k = classifySectionKey(sec.key);
     if (k) {
       if (!orderedKeys.includes(k)) {
@@ -410,7 +443,7 @@ function parseResumeFormat(
       line2Bold: false,
       rightItalic: false,
       rightMuted: /\\textcolor\{muted\}/.test(src),
-      showLinkIcons: /\\faLink|\\faGithub/.test(src),
+      showLinkIcons: /\\faLink|\\faGithub|\\faExternalLink/.test(src),
       projectTechStyle: /\\textcolor\{muted\}/.test(src) ? "muted" : "italic",
       entrySpacingPt: 4,
     };
@@ -421,7 +454,7 @@ function parseResumeFormat(
       line2Bold: true,
       rightItalic: /\\hfill\s*\\textit/.test(src),
       rightMuted: /\\textcolor\{muted\}/.test(src),
-      showLinkIcons: /\\faLink|\\faGithub/.test(src),
+      showLinkIcons: /\\faLink|\\faGithub|\\faExternalLink/.test(src),
       projectTechStyle: /\$\|\$\s*\\textit/.test(src) ? "italic" : "muted",
       entrySpacingPt: 5,
     };
@@ -439,7 +472,8 @@ function parseResumeFormat(
 
   // 9. Bullet style
   const hasResumeItem = /\\resumeItem/.test(src);
-  fmt.bulletStyle.smallText = hasResumeItem || /\\newcommand\{\\resumeItem\}\[1\]\{\\item\\small/.test(preamble);
+  fmt.bulletStyle.smallText =
+    hasResumeItem || /\\newcommand\{\\resumeItem\}\[1\]\{\\item\\small/.test(preamble);
 
   const leftMarginMatch = /leftmargin\s*=\s*([^,\]]+)/.exec(src);
   if (leftMarginMatch) {
@@ -469,10 +503,12 @@ function parseContact(headerRegion: string): Contact {
   const contact: Contact = { name: "", location: "", phone: "", email: "", links: [] };
 
   // 1. Detect Name
-  const tbRe = /\\textbf\s*\{([^}]+)\}/g;
+  const tbRe = /\\textbf\s*\{/g;
   let tb: RegExpExecArray | null;
   while ((tb = tbRe.exec(headerRegion))) {
-    const clean = toPlain(tb[1]);
+    const g = readGroup(headerRegion, tb.index + tb[0].length - 1);
+    if (!g) continue;
+    const clean = toPlain(g.content);
     if (clean && clean.length > 2 && !/@/.test(clean) && !/\d{3}/.test(clean) && !contact.name) {
       contact.name = clean;
       break;
@@ -492,28 +528,36 @@ function parseContact(headerRegion: string): Contact {
   const phoneMatch = /(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}/.exec(headerRegion);
   if (phoneMatch) contact.phone = phoneMatch[0].trim();
 
-  // 4. Detect Explicit \href Links
-  const hrefRe = /\\href\s*\{([^}]+)\}\s*\{([^}]+)\}/g;
+  // 4. Detect Explicit \href Links using balanced brace reader
+  const hrefRe = /\\href(?![A-Za-z])/g;
   let hm: RegExpExecArray | null;
   const seenUrls = new Set<string>();
   while ((hm = hrefRe.exec(headerRegion))) {
-    const url = hm[1].trim();
-    const label = toPlain(hm[2]) || url;
+    const { args } = readGroups(headerRegion, hm.index + hm[0].length, 2);
+    if (args.length < 2) continue;
+    const url = args[0].trim();
+    const label = toPlain(args[1]) || url;
     if (url.startsWith("mailto:")) continue;
     seenUrls.add(url);
+
+    // Check preceding 28 characters for a FontAwesome icon like \faLinkedin or \faGlobe
+    const lookbehind = headerRegion.slice(Math.max(0, hm.index - 28), hm.index);
+    const iconMatches = lookbehind.match(/\\fa[A-Za-z0-9]+\*?/g);
+    const icon = iconMatches ? iconMatches[iconMatches.length - 1] : undefined;
+
     let kind: ContactLink["kind"] = "other";
     if (/linkedin\.com/i.test(url)) kind = "linkedin";
     else if (/github\.com/i.test(url)) kind = "github";
     else if (
       /^[a-zA-Z0-9.-]+\.(?:io|ca|com|org|dev|me)/i.test(label) ||
-      /portfolio|website/i.test(label)
+      /portfolio|website|github\.io/i.test(url)
     )
       kind = "website";
-    contact.links.push({ id: uid("l"), kind, label, url });
+    contact.links.push({ id: uid("l"), kind, label, url, icon });
   }
 
   // 5. Detect Plain URLs without \href
-  const sanitizedForLinks = headerRegion.replace(/\\href\{mailto:[^}]+\}\{[^}]+\}/g, "");
+  const sanitizedForLinks = replaceCmd(headerRegion, "href", 2, () => "");
   const plainLinks =
     sanitizedForLinks.match(
       /(?:github\.com\/[a-zA-Z0-9_.-]+|linkedin\.com\/in\/[a-zA-Z0-9_.-]+|[a-zA-Z0-9_-]+\.(?:io|ca|com|org|dev|me)\b[^\s\\$]*)/gi
@@ -540,7 +584,9 @@ function parseContact(headerRegion: string): Contact {
 }
 
 /** Extract bullets supporting \resumeItem{...} and standard \item environments. */
-function extractBullets(rawBlock: string): { id: string; text: string; tools: string[]; metrics: string[] }[] {
+function extractBullets(
+  rawBlock: string
+): { id: string; text: string; tools: string[]; metrics: string[] }[] {
   const bullets: { id: string; text: string; tools: string[]; metrics: string[] }[] = [];
 
   // Style A: \resumeItem{...}
@@ -581,12 +627,12 @@ function parseSkills(content: string): SkillCategory[] {
   for (const block of itemBlocks) {
     const tb = /\\textbf\s*\{([^}]+)\}/.exec(block);
     if (!tb) continue;
-    const rawCatName = toPlain(tb[1]).replace(/[:&]/g, "").trim();
+    const rawCatName = toPlain(tb[1]).replace(/[:&]/g, (m) => (m === ":" ? "" : "&")).trim();
     if (!rawCatName || rawCatName.length < 2) continue;
 
     const after = block.slice(tb.index + tb[0].length);
     const cleanList = toPlain(after).replace(/^[:\s&{}]+/, "").trim();
-    const skills = splitItems(cleanList);
+    const skills = splitCommaPreservingSlashes(cleanList);
     if (skills.length > 0) {
       categories.push({
         id: uid("c"),
@@ -625,6 +671,7 @@ function parseEducation(content: string): Education[] {
   // Style B: Raw LaTeX (Institution \hfill Location \\ Degree \hfill Dates)
   const itemizeIdx = content.indexOf("\\begin{itemize}");
   const headerPart = itemizeIdx >= 0 ? content.slice(0, itemizeIdx) : content;
+  const bulletsPart = itemizeIdx >= 0 ? content.slice(itemizeIdx) : "";
 
   const lines = headerPart
     .split(/\\\\|\n/)
@@ -635,12 +682,14 @@ function parseEducation(content: string): Education[] {
     const l1 = lines[0].split(/\\hfill|&/).map(toPlain);
     const l2 = lines[1].split(/\\hfill|&/).map(toPlain);
     if (l1[0] && l2[0]) {
+      const eduBullets = bulletsPart ? extractBullets(bulletsPart) : [];
       educations.push({
         id: uid("e"),
         institution: l1[0],
         location: l1[1] || "",
         degree: l2[0],
         dates: l2[1] || "",
+        bullets: eduBullets.length > 0 ? eduBullets : undefined,
       });
     }
   }
@@ -648,7 +697,7 @@ function parseEducation(content: string): Education[] {
 }
 
 /** Parse Experience & Leadership jobs across macro-based and raw LaTeX structures. */
-function parseExperience(content: string): Job[] {
+function parseExperience(content: string, isLeadership = false): Job[] {
   const jobs: Job[] = [];
 
   // Style A: \resumeSubheading{Title}{Dates}{Company}{Loc}
@@ -668,14 +717,17 @@ function parseExperience(content: string): Job[] {
       const { args } = readGroups(block, after, 4);
       if (args.length >= 4) {
         const href = firstHref(args[2]);
+        const companyIcon = extractFaIcon(args[2]);
         jobs.push({
           id: uid("j"),
           title: toPlain(args[0]),
           dates: splitDates(toPlain(args[1])),
           company: toPlain(args[2]),
           companyUrl: href?.url ?? "",
+          companyIcon,
           location: toPlain(args[3]),
           bullets: extractBullets(block),
+          isLeadership: isLeadership || undefined,
         });
       }
     }
@@ -715,15 +767,18 @@ function parseExperience(content: string): Job[] {
       const dates = isLine1Role ? l1[1] || "" : l2[1] || "";
 
       const href = firstHref(lines[0]) || firstHref(lines[1]);
+      const companyIcon = extractFaIcon(lines[0]) || extractFaIcon(lines[1]);
 
       jobs.push({
         id: uid("j"),
         title,
         company,
         companyUrl: href?.url ?? "",
+        companyIcon,
         location,
         dates: splitDates(dates),
         bullets: extractBullets(bulletsRaw),
+        isLeadership: isLeadership || undefined,
       });
     }
   }
@@ -755,11 +810,13 @@ function parseProjects(content: string): Project[] {
         const left = split >= 0 ? args[0].slice(0, split) : args[0];
         const right = split >= 0 ? args[0].slice(split) : "";
         const href = firstHref(left);
+        const linkIcon = extractFaIcon(left);
         projects.push({
           id: uid("p"),
           name: toPlain(left),
           url: href?.url ?? "",
-          techStack: splitItems(toPlain(right).replace(/^[|$]+/, "").trim()),
+          linkIcon,
+          techStack: splitCommaPreservingSlashes(toPlain(right).replace(/^[|$]+/, "").trim()),
           meta: toPlain(args[1]),
           bullets: extractBullets(block),
         });
@@ -793,11 +850,13 @@ function parseProjects(content: string): Project[] {
       const techPart = barSplit[1] || "";
 
       const href = firstHref(namePart);
+      const linkIcon = extractFaIcon(namePart);
       projects.push({
         id: uid("p"),
         name: toPlain(namePart),
         url: href?.url ?? "",
-        techStack: splitItems(toPlain(techPart)),
+        linkIcon,
+        techStack: splitCommaPreservingSlashes(toPlain(techPart)),
         meta: splitDates(metaDates),
         bullets: extractBullets(bulletsRaw),
       });
@@ -841,7 +900,10 @@ export function parseLatexResume(source: string): MasterResume {
 
   const docStart = src.indexOf("\\begin{document}");
   const preamble = docStart >= 0 ? src.slice(0, docStart) : "";
-  const body = docStart >= 0 ? src.slice(docStart + "\\begin{document}".length) : src;
+  const afterBegin = docStart >= 0 ? src.slice(docStart + "\\begin{document}".length) : src;
+  // Stop at \end{document} so stashed drafts after \end{document} are not mixed into sections
+  const docEnd = afterBegin.indexOf("\\end{document}");
+  const body = docEnd >= 0 ? afterBegin.slice(0, docEnd) : afterBegin;
 
   // Discover all sections
   const sections = findSections(body);
@@ -868,7 +930,7 @@ export function parseLatexResume(source: string): MasterResume {
       resume.skills.push(...items);
       if (items.length > 0) detected.add("skills");
     } else if (/EXPERIENCE|WORK|EMPLOYMENT|PROFESSIONAL/.test(key)) {
-      const items = parseExperience(content);
+      const items = parseExperience(content, false);
       resume.experience.push(...items);
       if (items.length > 0) detected.add("experience");
     } else if (/PROJECT/.test(key)) {
@@ -876,8 +938,7 @@ export function parseLatexResume(source: string): MasterResume {
       resume.projects.push(...items);
       if (items.length > 0) detected.add("projects");
     } else if (/LEADERSHIP|EXTRACURRICULAR|ACTIVIT|VOLUNTEER/.test(key)) {
-      // Leadership roles are integrated into experience to preserve tool, metric, and line calibration scoring
-      const items = parseExperience(content);
+      const items = parseExperience(content, true);
       resume.experience.push(...items);
       if (items.length > 0) detected.add("experience");
     } else if (/AWARD|HONOR|SCHOLARSHIP|ACHIEVEMENT/.test(key)) {
@@ -891,8 +952,8 @@ export function parseLatexResume(source: string): MasterResume {
 
   // Derive tools & metrics across the full vocabulary of skills and projects
   const known = knownTools(
-    resume.skills.flatMap((c) => c.skills.map((s) => s.name)),
-    resume.projects.map((p) => p.techStack)
+    resume.skills.flatMap((c) => c.skills.flatMap((s) => splitItems(s.name))),
+    resume.projects.map((p) => p.techStack.flatMap((t) => splitItems(t)))
   );
 
   for (const container of [...resume.experience, ...resume.projects]) {
@@ -914,4 +975,446 @@ export function isEmptyResume(r: MasterResume): boolean {
       (r.awards?.length || 0) ===
       0 && !r.contact.name
   );
+}
+
+/* -------------------------- Exact LaTeX Reconstruction -------------------------- */
+
+const DEFAULT_SUBHEADING_PREAMBLE = String.raw`\documentclass[letterpaper,11pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage[scaled=0.95]{helvet}
+\renewcommand{\familydefault}{\sfdefault}
+\usepackage{latexsym}
+\usepackage[empty]{fullpage}
+\usepackage{titlesec}
+\usepackage{marvosym}
+\usepackage[dvipsnames]{xcolor}
+\usepackage{verbatim}
+\usepackage{enumitem}
+\usepackage[hidelinks]{hyperref}
+\usepackage{fancyhdr}
+\usepackage[english]{babel}
+\usepackage{tabularx}
+\usepackage{fontawesome5}
+\input{glyphtounicode}
+
+\definecolor{muted}{gray}{0.35}
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyfoot{}
+\renewcommand{\headrulewidth}{0pt}
+\renewcommand{\footrulewidth}{0pt}
+
+\addtolength{\oddsidemargin}{-0.5in}
+\addtolength{\evensidemargin}{-0.5in}
+\addtolength{\textwidth}{1in}
+\addtolength{\topmargin}{-0.5in}
+\addtolength{\textheight}{1.0in}
+
+\urlstyle{same}
+
+\raggedbottom
+\raggedright
+\setlength{\tabcolsep}{0in}
+\linespread{1.05}
+
+\titleformat{\section}{
+  \vspace{-4pt}\raggedright\large\bfseries
+}{}{0em}{}[\color{black}\titlerule \vspace{-5pt}]
+
+\pdfgentounicode=1
+
+\newcommand{\resumeItem}[1]{
+  \item\small{
+    {#1 \vspace{-1pt}}
+  }
+}
+
+\newcommand{\resumeSubheading}[4]{
+  \vspace{-2pt}\item
+    \begin{tabular*}{0.97\textwidth}[t]{l@{\extracolsep{\fill}}r}
+      \textbf{#1} & \textcolor{muted}{\small #2} \\
+      \small #3 & \textcolor{muted}{\small #4} \\
+    \end{tabular*}\vspace{-6pt}
+}
+
+\newcommand{\resumeProjectHeading}[2]{
+    \item
+    \begin{tabular*}{0.97\textwidth}{l@{\extracolsep{\fill}}r}
+      \small#1 & \textcolor{muted}{\small #2} \\
+    \end{tabular*}\vspace{-6pt}
+}
+
+\renewcommand\labelitemii{$\vcenter{\hbox{\tiny$\bullet$}}$}
+
+\newcommand{\resumeSubHeadingListStart}{\begin{itemize}[leftmargin=0.15in, label={}]}
+\newcommand{\resumeSubHeadingListEnd}{\end{itemize}}
+\newcommand{\resumeItemListStart}{\begin{itemize}[itemsep=2pt, topsep=3pt]}
+\newcommand{\resumeItemListEnd}{\end{itemize}\vspace{-3pt}}
+`;
+
+const DEFAULT_RESSECTION_PREAMBLE = String.raw`\documentclass[10pt,a4paper]{article}
+
+\usepackage[a4paper, top=1.2cm, bottom=1.2cm, left=1.5cm, right=1.5cm]{geometry}
+\usepackage{fontspec}
+\usepackage[english, bidi=basic, provide=*]{babel}
+\babelprovide[import, onchar=ids fonts]{english}
+\babelfont{rm}{Noto Sans}
+\usepackage{enumitem}
+\usepackage[hidelinks]{hyperref}
+
+\pagestyle{empty}
+\setlength{\parindent}{0pt}
+\setlist[itemize]{nosep, leftmargin=1.5em, topsep=2pt}
+
+\newcommand{\ressection}[1]{%
+  \vspace{8pt}%
+  {\large\textbf{\MakeUppercase{#1}}}\par\vspace{2pt}%
+  \hrule height 0.6pt\vspace{5pt}%
+}
+`;
+
+export function escapeLatexText(text: string): string {
+  if (!text) return "";
+  return text
+    .replace(/\\/g, "\\textbackslash{}")
+    .replace(/&/g, "\\&")
+    .replace(/%/g, "\\%")
+    .replace(/\$/g, "\\$")
+    .replace(/#/g, "\\#")
+    .replace(/_/g, "\\_")
+    .replace(/\{/g, "\\{")
+    .replace(/\}/g, "\\}")
+    .replace(/~/g, "$\\sim$")
+    .replace(/—/g, "---")
+    .replace(/–/g, "--")
+    .replace(/·/g, "$\\cdot$")
+    .replace(/×/g, "$\\times$")
+    .replace(/≈/g, "$\\approx$");
+}
+
+export function markupToLatex(markup: string): string {
+  return parseMarkup(markup)
+    .map((seg) => {
+      const escaped = escapeLatexText(seg.text);
+      return seg.bold ? `\\textbf{${escaped}}` : escaped;
+    })
+    .join("");
+}
+
+function datesToLatex(dates: string): string {
+  if (!dates) return "";
+  return escapeLatexText(dates.replace(/\s*[–-]\s*/g, " -- "));
+}
+
+/**
+ * Reconstructs the complete, compilable `.tex` document from `MasterResume`,
+ * preserving the exact uploaded preamble, macros, icons (\faGithub, \faLink, \faMapMarker*, etc.),
+ * margins, line spacing, fonts, bolding, and current item ordering.
+ */
+export function reconstructLatexResume(resume: MasterResume): string {
+  const fmt = resume.format ?? DEFAULT_RESUME_FORMAT;
+  const isSubheadingMacro = fmt.entryStyle.layout === "subheading-macro";
+
+  // Extract verbatim preamble from rawLatex if available
+  let preamble = "";
+  if (resume.rawLatex) {
+    const idx = resume.rawLatex.indexOf("\\begin{document}");
+    if (idx >= 0) {
+      preamble = resume.rawLatex.slice(0, idx);
+    }
+  }
+  if (!preamble.trim()) {
+    preamble = isSubheadingMacro ? DEFAULT_SUBHEADING_PREAMBLE : DEFAULT_RESSECTION_PREAMBLE;
+  }
+
+  const hasFaPackage = /fontawesome/i.test(preamble);
+  const showHeaderIcons = fmt.headerStyle.showIcons && hasFaPackage;
+  const showEntryIcons = fmt.entryStyle.showLinkIcons && hasFaPackage;
+  const secMacro =
+    fmt.sectionStyle.macroName ||
+    (/\\newcommand\{\\ressection\}/.test(preamble) ? "ressection" : "section");
+
+  const lines: string[] = [];
+  lines.push(preamble.trimEnd());
+  lines.push("");
+  lines.push("\\begin{document}");
+  lines.push("");
+
+  /* ------------------------------- 1. Header ------------------------------- */
+  if (hasResumeSection(resume, "contact")) {
+    const { contact } = resume;
+    lines.push("\\begin{center}");
+    if (contact.name) {
+      const sizeCmd = `\\${fmt.headerStyle.nameSize || "Huge"}`;
+      if (isSubheadingMacro) {
+        lines.push(`    \\textbf{${sizeCmd} ${escapeLatexText(contact.name)}} \\\\ \\vspace{6pt}`);
+      } else {
+        lines.push(`    {${sizeCmd} \\textbf{${escapeLatexText(contact.name)}}}\\\\[4pt]`);
+      }
+    }
+
+    const parts: string[] = [];
+    if (contact.location) {
+      parts.push(
+        showHeaderIcons
+          ? `\\faMapMarker*~${escapeLatexText(contact.location)}`
+          : escapeLatexText(contact.location)
+      );
+    }
+    if (contact.phone) {
+      parts.push(
+        showHeaderIcons
+          ? `\\faPhone~${escapeLatexText(contact.phone)}`
+          : escapeLatexText(contact.phone)
+      );
+    }
+    if (contact.email) {
+      const emailDisplay = fmt.headerStyle.underlineLinks
+        ? `\\underline{${escapeLatexText(contact.email)}}`
+        : escapeLatexText(contact.email);
+      const emailHref = `\\href{mailto:${contact.email}}{${emailDisplay}}`;
+      parts.push(showHeaderIcons ? `\\faEnvelope~${emailHref}` : emailHref);
+    }
+    for (const link of contact.links) {
+      const rawUrl = link.url.startsWith("http") ? link.url : `https://${link.url}`;
+      const labelEsc = escapeLatexText(link.label || link.url);
+      const display = fmt.headerStyle.underlineLinks ? `\\underline{${labelEsc}}` : labelEsc;
+
+      if (showHeaderIcons) {
+        const icon =
+          link.icon ||
+          (link.kind === "linkedin" || /linkedin\.com/i.test(rawUrl)
+            ? "\\faLinkedin"
+            : link.kind === "github" ||
+              (/github\.com/i.test(rawUrl) && !/github\.io/i.test(rawUrl))
+            ? "\\faGithub"
+            : "\\faGlobe");
+        parts.push(`${icon}~\\href{${rawUrl}}{${display}}`);
+      } else {
+        // Check if original template used plain text links or \href
+        parts.push(`\\href{${rawUrl}}{${display}}`);
+      }
+    }
+
+    if (parts.length > 0) {
+      const sep = showHeaderIcons ? " \\ $\\cdot$ \\ " : " $\\cdot$ ";
+      const prefix = isSubheadingMacro ? "    \\small " : "    ";
+      lines.push(prefix + parts.join(sep));
+    }
+    lines.push("\\end{center}");
+    if (!isSubheadingMacro) {
+      lines.push("");
+      lines.push("\\vspace{-4pt}");
+    }
+    lines.push("");
+  }
+
+  /* -------------------------- 2. Section Builders -------------------------- */
+  const renderSection = (key: ResumeSectionKey) => {
+    if (!hasResumeSection(resume, key)) return;
+
+    if (key === "education" && resume.education.length > 0) {
+      const title =
+        fmt.sectionStyle.titles.education || (isSubheadingMacro ? "EDUCATION" : "Education");
+      lines.push(`\\${secMacro}{${escapeLatexText(title)}}`);
+      if (isSubheadingMacro) {
+        lines.push("  \\resumeSubHeadingListStart");
+        for (const edu of resume.education) {
+          lines.push("    \\resumeSubheading");
+          lines.push(`      {${escapeLatexText(edu.institution)}}{${escapeLatexText(edu.location)}}`);
+          lines.push(`      {${escapeLatexText(edu.degree)}}{${datesToLatex(edu.dates)}}`);
+        }
+        lines.push("  \\resumeSubHeadingListEnd");
+      } else {
+        resume.education.forEach((edu, idx) => {
+          if (idx > 0) lines.push("\\vspace{5pt}");
+          lines.push(
+            `\\textbf{${escapeLatexText(edu.institution)}} \\hfill \\textit{${escapeLatexText(
+              edu.location
+            )}}\\\\`
+          );
+          lines.push(
+            `\\textbf{${escapeLatexText(edu.degree)}} \\hfill \\textit{${datesToLatex(edu.dates)}}`
+          );
+          if (edu.bullets && edu.bullets.length > 0) {
+            lines.push("\\begin{itemize}");
+            for (const b of edu.bullets) {
+              lines.push(`    \\item ${markupToLatex(b.text)}`);
+            }
+            lines.push("\\end{itemize}");
+          }
+        });
+      }
+      lines.push("");
+    } else if (key === "skills" && resume.skills.length > 0) {
+      const title =
+        fmt.sectionStyle.titles.skills ||
+        (isSubheadingMacro ? "TECHNICAL SKILLS" : "Technical Skills");
+      lines.push(`\\${secMacro}{${escapeLatexText(title)}}`);
+      if (fmt.skillStyle.layout === "compact-lines" || isSubheadingMacro) {
+        lines.push("  \\begin{itemize}[leftmargin=0.15in, label={}]");
+        lines.push("    \\small{\\item{");
+        resume.skills.forEach((cat, idx) => {
+          const skillStr = cat.skills.map((s) => escapeLatexText(s.name)).join(", ");
+          const suffix = idx + 1 < resume.skills.length ? " \\\\" : "";
+          lines.push(
+            `      \\textbf{${escapeLatexText(cat.name)}}{: ${skillStr}}${suffix}`
+          );
+        });
+        lines.push("    }}");
+        lines.push("    \\vspace{-5pt}");
+        lines.push("  \\end{itemize}");
+      } else {
+        lines.push("\\begin{itemize}");
+        for (const cat of resume.skills) {
+          const skillStr = cat.skills.map((s) => escapeLatexText(s.name)).join(", ");
+          lines.push(`    \\item \\textbf{${escapeLatexText(cat.name)}:} ${skillStr}`);
+        }
+        lines.push("\\end{itemize}");
+      }
+      lines.push("");
+    } else if (key === "experience" && resume.experience.length > 0) {
+      const workJobs = resume.experience.filter((j) => !j.isLeadership);
+      const leadershipJobs = resume.experience.filter((j) => j.isLeadership);
+
+      const renderJobGroup = (groupJobs: Job[], secTitle: string) => {
+        if (groupJobs.length === 0) return;
+        lines.push(`\\${secMacro}{${escapeLatexText(secTitle)}}`);
+        if (isSubheadingMacro) {
+          lines.push("  \\resumeSubHeadingListStart");
+          for (const job of groupJobs) {
+            let companyField = escapeLatexText(job.company);
+            if (job.companyUrl) {
+              const rawUrl = job.companyUrl.startsWith("http")
+                ? job.companyUrl
+                : `https://${job.companyUrl}`;
+              const icon = showEntryIcons ? ` ${job.companyIcon || "\\faLink"}` : "";
+              companyField = `\\href{${rawUrl}}{${companyField}${icon}}`;
+            }
+            lines.push("");
+            lines.push("    \\resumeSubheading");
+            lines.push(`      {${escapeLatexText(job.title)}}{${datesToLatex(job.dates)}}`);
+            lines.push(`      {${companyField}}{${escapeLatexText(job.location)}}`);
+            if (job.bullets.length > 0) {
+              lines.push("      \\resumeItemListStart");
+              for (const b of job.bullets) {
+                lines.push(`        \\resumeItem{${markupToLatex(b.text)}}`);
+              }
+              lines.push("      \\resumeItemListEnd");
+            }
+          }
+          lines.push("");
+          lines.push("  \\resumeSubHeadingListEnd");
+        } else {
+          groupJobs.forEach((job, idx) => {
+            if (idx > 0) lines.push("\\vspace{5pt}");
+            lines.push(
+              `\\textbf{${escapeLatexText(job.company)}} \\hfill \\textit{${escapeLatexText(
+                job.location
+              )}}\\\\`
+            );
+            lines.push(
+              `\\textbf{${escapeLatexText(job.title)}} \\hfill \\textit{${datesToLatex(job.dates)}}`
+            );
+            if (job.bullets.length > 0) {
+              lines.push("\\begin{itemize}");
+              for (const b of job.bullets) {
+                lines.push(`    \\item ${markupToLatex(b.text)}`);
+              }
+              lines.push("\\end{itemize}");
+            }
+          });
+        }
+        lines.push("");
+      };
+
+      const expTitle =
+        fmt.sectionStyle.titles.experience || (isSubheadingMacro ? "EXPERIENCE" : "Experience");
+      renderJobGroup(workJobs, expTitle);
+
+      if (leadershipJobs.length > 0) {
+        const leadTitle =
+          fmt.sectionStyle.leadershipTitle || "Leadership & Extracurriculars";
+        renderJobGroup(leadershipJobs, leadTitle);
+      }
+    } else if (key === "projects" && resume.projects.length > 0) {
+      const title =
+        fmt.sectionStyle.titles.projects || (isSubheadingMacro ? "PROJECTS" : "Projects");
+      lines.push(`\\${secMacro}{${escapeLatexText(title)}}`);
+      if (isSubheadingMacro) {
+        lines.push("  \\resumeSubHeadingListStart");
+        for (const proj of resume.projects) {
+          let nameField = escapeLatexText(proj.name);
+          if (proj.url) {
+            const rawUrl = proj.url.startsWith("http") ? proj.url : `https://${proj.url}`;
+            const icon = showEntryIcons ? ` ${proj.linkIcon || "\\faGithub"}` : "";
+            nameField = `\\textbf{\\href{${rawUrl}}{${nameField}${icon}}}`;
+          } else {
+            nameField = `\\textbf{${nameField}}`;
+          }
+          const techStr = proj.techStack.map((t) => escapeLatexText(t)).join(", ");
+          const leftArg = techStr
+            ? `${nameField} $|$ \\textcolor{muted}{${techStr}}`
+            : nameField;
+          lines.push("    \\resumeProjectHeading");
+          lines.push(`      {${leftArg}}{${escapeLatexText(proj.meta)}}`);
+          if (proj.bullets.length > 0) {
+            lines.push("      \\resumeItemListStart");
+            for (const b of proj.bullets) {
+              lines.push(`        \\resumeItem{${markupToLatex(b.text)}}`);
+            }
+            lines.push("      \\resumeItemListEnd");
+          }
+        }
+        lines.push("  \\resumeSubHeadingListEnd");
+      } else {
+        resume.projects.forEach((proj, idx) => {
+          if (idx > 0) lines.push("\\vspace{5pt}");
+          const techStr = proj.techStack.map((t) => escapeLatexText(t)).join(", ");
+          const techPart = techStr ? ` $|$ \\textit{${techStr}}` : "";
+          const metaPart = proj.meta ? ` \\hfill \\textit{${datesToLatex(proj.meta)}}` : "";
+          lines.push(`\\textbf{${escapeLatexText(proj.name)}}${techPart}${metaPart}`);
+          if (proj.bullets.length > 0) {
+            lines.push("\\begin{itemize}");
+            for (const b of proj.bullets) {
+              lines.push(`    \\item ${markupToLatex(b.text)}`);
+            }
+            lines.push("\\end{itemize}");
+          }
+        });
+      }
+      lines.push("");
+    } else if (key === "awards" && (resume.awards ?? []).length > 0) {
+      const title =
+        fmt.sectionStyle.titles.awards ||
+        (isSubheadingMacro ? "SCHOLARSHIPS & AWARDS" : "Scholarships & Awards");
+      lines.push(`\\${secMacro}{${escapeLatexText(title)}}`);
+      lines.push("\\begin{itemize}");
+      for (const award of resume.awards ?? []) {
+        const datePart = award.date ? ` \\hfill \\textit{${datesToLatex(award.date)}}` : "";
+        if (award.description) {
+          lines.push(`    \\item \\textbf{${escapeLatexText(award.title)}}${datePart}\\\\`);
+          lines.push(`    ${escapeLatexText(award.description)}`);
+        } else {
+          lines.push(`    \\item \\textbf{${escapeLatexText(award.title)}}${datePart}`);
+        }
+      }
+      lines.push("\\end{itemize}");
+      lines.push("");
+    }
+  };
+
+  const orderedKeys: ResumeSectionKey[] = [...fmt.sectionStyle.order];
+  for (const fallbackKey of ["education", "skills", "experience", "projects", "awards"] as const) {
+    if (!orderedKeys.includes(fallbackKey)) {
+      orderedKeys.push(fallbackKey);
+    }
+  }
+  for (const key of orderedKeys) {
+    renderSection(key);
+  }
+
+  lines.push("\\end{document}");
+  return lines.join("\n");
 }

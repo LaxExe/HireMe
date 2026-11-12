@@ -10,7 +10,7 @@ import {
   hasResumeSection,
   type MasterResume,
 } from "@/lib/resume/types";
-import { downloadResumePdf } from "@/lib/resume/exportPdf";
+import { downloadResumePdf, downloadResumeTex } from "@/lib/resume/exportPdf";
 import ResumeImporter from "@/components/resume/ResumeImporter";
 import ResumeTree from "@/components/resume/ResumeTree";
 import CalibrationBar from "@/components/resume/CalibrationBar";
@@ -30,6 +30,7 @@ export default function ExperiencePage() {
   const [importing, setImporting] = useState(false);
   const [exportModalOpen, setExportModalOpen] = useState(false);
   const [exportName, setExportName] = useState("");
+  const [exporting, setExporting] = useState(false);
   const skipSave = useRef(true);
 
   useEffect(() => {
@@ -103,11 +104,16 @@ export default function ExperiencePage() {
     setExportModalOpen(true);
   };
 
-  const handleConfirmExport = (e?: React.FormEvent) => {
+  const handleConfirmExport = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if (!resume) return;
-    downloadResumePdf(resume, exportName || "Resume");
-    setExportModalOpen(false);
+    if (!resume || exporting) return;
+    setExporting(true);
+    try {
+      await downloadResumePdf(resume, exportName || "Resume");
+      setExportModalOpen(false);
+    } finally {
+      setExporting(false);
+    }
   };
 
   const showImporter = !resume || importing;
@@ -198,7 +204,7 @@ export default function ExperiencePage() {
         {exportModalOpen && resume && (
           <div
             className="fixed inset-0 z-50 flex items-center justify-center bg-black/25 backdrop-blur-[2px] p-4 animate-fadeIn"
-            onClick={() => setExportModalOpen(false)}
+            onClick={() => !exporting && setExportModalOpen(false)}
           >
             <form
               onSubmit={handleConfirmExport}
@@ -220,13 +226,14 @@ export default function ExperiencePage() {
                   <input
                     type="text"
                     autoFocus
+                    disabled={exporting}
                     value={exportName}
                     onChange={(e) => setExportName(e.target.value)}
                     onKeyDown={(e) => {
-                      if (e.key === "Escape") setExportModalOpen(false);
+                      if (e.key === "Escape" && !exporting) setExportModalOpen(false);
                     }}
                     placeholder="Resume_Name"
-                    className="w-full bg-transparent text-xs font-mono text-neutral-900 focus:outline-none"
+                    className="w-full bg-transparent text-xs font-mono text-neutral-900 focus:outline-none disabled:opacity-50"
                   />
                   <span className="text-xs font-mono text-neutral-400 select-none pl-1">
                     .pdf
@@ -239,33 +246,46 @@ export default function ExperiencePage() {
                   margins {fmt.margins.topIn.toFixed(2)}in / {fmt.margins.leftIn.toFixed(2)}in
                 </span>
                 <span className="font-mono text-[10px] text-neutral-500 bg-[#fafafa] border border-[#ebebeb] rounded px-1.5 py-0.5">
-                  {fmt.sectionStyle.uppercase ? "UPPERCASE" : "Title Case"} headers
+                  linespread {fmt.lineSpread}
                 </span>
+                {fmt.headerStyle.showIcons && (
+                  <span className="font-mono text-[10px] text-neutral-500 bg-[#fafafa] border border-[#ebebeb] rounded px-1.5 py-0.5">
+                    fontawesome5 icons
+                  </span>
+                )}
                 {fmt.sectionStyle.hasRule && (
                   <span className="font-mono text-[10px] text-neutral-500 bg-[#fafafa] border border-[#ebebeb] rounded px-1.5 py-0.5">
                     {fmt.sectionStyle.ruleHeightPt}pt rule
                   </span>
                 )}
-                <span className="font-mono text-[10px] text-neutral-500 bg-[#fafafa] border border-[#ebebeb] rounded px-1.5 py-0.5">
-                  {fmt.bulletStyle.leftMarginIn.toFixed(2)}in bullet indent
-                </span>
               </div>
 
-              <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#ebebeb]">
+              <div className="flex items-center justify-between gap-2 pt-2 border-t border-[#ebebeb]">
                 <button
                   type="button"
-                  onClick={() => setExportModalOpen(false)}
-                  className="px-3.5 py-1.5 text-xs font-medium text-neutral-600 hover:text-neutral-900 transition-colors active:scale-95 cursor-pointer"
+                  disabled={exporting}
+                  onClick={() => downloadResumeTex(resume, exportName || "Resume")}
+                  className="px-3 py-1.5 text-xs font-mono text-neutral-600 hover:text-neutral-900 bg-[#fafafa] hover:bg-neutral-100 border border-[#ebebeb] rounded-full transition-colors active:scale-95 cursor-pointer disabled:opacity-40"
                 >
-                  Cancel
+                  .tex
                 </button>
-                <button
-                  type="submit"
-                  disabled={!exportName.trim()}
-                  className="px-4 py-1.5 text-xs font-medium text-white bg-neutral-900 hover:bg-neutral-800 rounded-full disabled:opacity-40 shadow-subtle active:scale-95 transition-all cursor-pointer"
-                >
-                  Download PDF
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={exporting}
+                    onClick={() => setExportModalOpen(false)}
+                    className="px-3.5 py-1.5 text-xs font-medium text-neutral-600 hover:text-neutral-900 transition-colors active:scale-95 cursor-pointer disabled:opacity-40"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={!exportName.trim() || exporting}
+                    className="px-4 py-1.5 text-xs font-medium text-white bg-neutral-900 hover:bg-neutral-800 rounded-full disabled:opacity-40 shadow-subtle active:scale-95 transition-all cursor-pointer"
+                  >
+                    {exporting ? "Compiling PDF..." : "Download PDF"}
+                  </button>
+                </div>
               </div>
             </form>
           </div>

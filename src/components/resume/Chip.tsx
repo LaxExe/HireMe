@@ -15,14 +15,33 @@ export default function Chip({
   children,
   variant = "tool",
   onRemove,
+  draggable,
+  onDragStart,
+  onDragOver,
+  onDrop,
+  onDragEnd,
+  className = "",
 }: {
   children: React.ReactNode;
   variant?: Variant;
   onRemove?: () => void;
+  draggable?: boolean;
+  onDragStart?: (e: React.DragEvent<HTMLSpanElement>) => void;
+  onDragOver?: (e: React.DragEvent<HTMLSpanElement>) => void;
+  onDrop?: (e: React.DragEvent<HTMLSpanElement>) => void;
+  onDragEnd?: (e: React.DragEvent<HTMLSpanElement>) => void;
+  className?: string;
 }) {
   return (
     <span
-      className={`inline-flex items-center gap-1.5 text-[11px] leading-none px-2 py-1 rounded-full border ${styles[variant]}`}
+      draggable={draggable}
+      onDragStart={onDragStart}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
+      onDragEnd={onDragEnd}
+      className={`inline-flex items-center gap-1.5 text-[11px] leading-none px-2 py-1 rounded-full border transition-all duration-150 ${
+        draggable ? "cursor-grab active:cursor-grabbing select-none" : ""
+      } ${styles[variant]} ${className}`}
     >
       {variant === "tool" && <span className="w-1 h-1 rounded-full bg-[#0068d6] flex-shrink-0" />}
       <span>{children}</span>

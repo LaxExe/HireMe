@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
-import { Pencil, Plus, Trash2 } from "lucide-react";
+import { GripVertical, Pencil, Plus, Trash2 } from "lucide-react";
 import type { Bullet } from "@/lib/resume/types";
 import { bulletFit, makeBullet, parseMarkup, analyzeBullet } from "@/lib/resume/utils";
 import { useCalibration } from "@/context/CalibrationContext";
@@ -157,11 +157,23 @@ function BulletEditor({
 function BulletCard({
   bullet,
   known,
+  isDragging,
+  isDropTarget,
+  onDragStart,
+  onDragOver,
+  onDrop,
+  onDragEnd,
   onChange,
   onDelete,
 }: {
   bullet: Bullet;
   known: string[];
+  isDragging: boolean;
+  isDropTarget: boolean;
+  onDragStart: (e: React.DragEvent<HTMLDivElement>) => void;
+  onDragOver: (e: React.DragEvent<HTMLDivElement>) => void;
+  onDrop: (e: React.DragEvent<HTMLDivElement>) => void;
+  onDragEnd: () => void;
   onChange: (b: Bullet) => void;
   onDelete: () => void;
 }) {
@@ -182,45 +194,67 @@ function BulletCard({
   }
 
   return (
-    <div className="bg-white rounded-lg border border-[#ebebeb] shadow-2xs p-3 space-y-2.5">
-      <p className="text-xs leading-relaxed text-neutral-700">
-        {parseMarkup(bullet.text).map((seg, i) =>
-          seg.bold ? (
-            <strong key={i} className="font-semibold text-neutral-900">
-              {seg.text}
-            </strong>
-          ) : (
-            <span key={i}>{seg.text}</span>
-          )
-        )}
-      </p>
-      <div className="flex items-end justify-between gap-3">
-        <div className="flex flex-wrap gap-1.5 min-w-0">
-          {bullet.tools.map((t) => (
-            <Chip key={`t-${t}`}>{t}</Chip>
-          ))}
-          {bullet.metrics.map((m) => (
-            <Chip key={`m-${m}`} variant="metric">
-              {m}
-            </Chip>
-          ))}
-        </div>
-        <div className="flex items-center gap-2 flex-shrink-0">
-          <FitMeter text={bullet.text} />
-          <button
-            type="button"
-            onClick={() => setEditing(true)}
-            className="p-1 text-neutral-400 hover:text-neutral-900 hover:bg-neutral-100 rounded transition-colors active:scale-95 cursor-pointer"
-          >
-            <Pencil className="w-3.5 h-3.5" />
-          </button>
-          <button
-            type="button"
-            onClick={onDelete}
-            className="p-1 text-neutral-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors active:scale-95 cursor-pointer"
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-          </button>
+    <div
+      draggable
+      onDragStart={onDragStart}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
+      onDragEnd={onDragEnd}
+      className={`bg-white rounded-lg border transition-all duration-150 shadow-2xs p-3 flex items-start gap-2 ${
+        isDragging
+          ? "opacity-40 border-dashed border-neutral-400"
+          : isDropTarget
+          ? "border-neutral-900 ring-1 ring-neutral-900/10"
+          : "border-[#ebebeb]"
+      }`}
+    >
+      <span
+        className="mt-0.5 text-neutral-300 hover:text-neutral-600 cursor-grab active:cursor-grabbing flex-shrink-0 transition-colors"
+        title="Drag to reorder point"
+      >
+        <GripVertical className="w-3.5 h-3.5" />
+      </span>
+
+      <div className="flex-1 min-w-0 space-y-2.5">
+        <p className="text-xs leading-relaxed text-neutral-700">
+          {parseMarkup(bullet.text).map((seg, i) =>
+            seg.bold ? (
+              <strong key={i} className="font-semibold text-neutral-900">
+                {seg.text}
+              </strong>
+            ) : (
+              <span key={i}>{seg.text}</span>
+            )
+          )}
+        </p>
+        <div className="flex items-end justify-between gap-3">
+          <div className="flex flex-wrap gap-1.5 min-w-0">
+            {bullet.tools.map((t) => (
+              <Chip key={`t-${t}`}>{t}</Chip>
+            ))}
+            {bullet.metrics.map((m) => (
+              <Chip key={`m-${m}`} variant="metric">
+                {m}
+              </Chip>
+            ))}
+          </div>
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <FitMeter text={bullet.text} />
+            <button
+              type="button"
+              onClick={() => setEditing(true)}
+              className="p-1 text-neutral-400 hover:text-neutral-900 hover:bg-neutral-100 rounded transition-colors active:scale-95 cursor-pointer"
+            >
+              <Pencil className="w-3.5 h-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={onDelete}
+              className="p-1 text-neutral-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors active:scale-95 cursor-pointer"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -237,6 +271,26 @@ export default function BulletList({
   onChange: (bullets: Bullet[]) => void;
 }) {
   const [adding, setAdding] = useState(false);
+  const [draggedId, setDraggedId] = useState<string | null>(null);
+  const [dropTargetId, setDropTargetId] = useState<string | null>(null);
+
+  const handleDrop = (targetId: string) => {
+    if (!draggedId || draggedId === targetId) {
+      setDraggedId(null);
+      setDropTargetId(null);
+      return;
+    }
+    const srcIdx = bullets.findIndex((b) => b.id === draggedId);
+    const dstIdx = bullets.findIndex((b) => b.id === targetId);
+    if (srcIdx >= 0 && dstIdx >= 0) {
+      const next = [...bullets];
+      const [moved] = next.splice(srcIdx, 1);
+      next.splice(dstIdx, 0, moved);
+      onChange(next);
+    }
+    setDraggedId(null);
+    setDropTargetId(null);
+  };
 
   return (
     <div className="space-y-2">
@@ -245,6 +299,29 @@ export default function BulletList({
           key={b.id}
           bullet={b}
           known={known}
+          isDragging={draggedId === b.id}
+          isDropTarget={dropTargetId === b.id && draggedId !== b.id}
+          onDragStart={(e) => {
+            e.stopPropagation();
+            e.dataTransfer.effectAllowed = "move";
+            setDraggedId(b.id);
+          }}
+          onDragOver={(e) => {
+            if (!draggedId) return;
+            e.preventDefault();
+            e.stopPropagation();
+            if (dropTargetId !== b.id) setDropTargetId(b.id);
+          }}
+          onDrop={(e) => {
+            if (!draggedId) return;
+            e.preventDefault();
+            e.stopPropagation();
+            handleDrop(b.id);
+          }}
+          onDragEnd={() => {
+            setDraggedId(null);
+            setDropTargetId(null);
+          }}
           onChange={(next) => onChange(bullets.map((x) => (x.id === b.id ? next : x)))}
           onDelete={() => onChange(bullets.filter((x) => x.id !== b.id))}
         />
