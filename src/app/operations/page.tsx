@@ -6,13 +6,12 @@ import {
   Check,
   AlertCircle,
   Plus,
-  Search,
-  FileText,
+  Send,
   ArrowRight,
   ShieldAlert,
   Sparkles,
   Pencil,
-  ExternalLink,
+  X,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { loadMasterResume } from "@/lib/resume/store";
@@ -43,10 +42,6 @@ export default function OperationsPage() {
   const [roleName, setRoleName] = useState("");
   const [roleUrl, setRoleUrl] = useState("");
   const [jobDescription, setJobDescription] = useState("");
-  const [draftRoleName, setDraftRoleName] = useState("");
-  const [draftRoleUrl, setDraftRoleUrl] = useState("");
-  const [draftJd, setDraftJd] = useState("");
-  const [isPromptOpen, setIsPromptOpen] = useState(false);
 
   const [matchResult, setMatchResult] = useState<KeywordMatchResult | null>(null);
   const [larpRun, setLarpRun] = useState<LarpAlignmentRun | null>(null);
@@ -70,34 +65,17 @@ export default function OperationsPage() {
     }
   }, [user, loading, router]);
 
+  const clearStoredOperationsDraft = (uidStr: string) => {
+    if (typeof window === "undefined") return;
+    localStorage.removeItem(`hireme_operations_jd_${uidStr}`);
+    localStorage.removeItem(`hireme_operations_role_name_${uidStr}`);
+    localStorage.removeItem(`hireme_operations_role_url_${uidStr}`);
+  };
+
   useEffect(() => {
     if (!user) return;
     let cancelled = false;
-
-    const savedJd =
-      typeof window !== "undefined"
-        ? localStorage.getItem(`hireme_operations_jd_${user.uid}`) || ""
-        : "";
-    const savedRoleName =
-      typeof window !== "undefined"
-        ? localStorage.getItem(`hireme_operations_role_name_${user.uid}`) || ""
-        : "";
-    const savedRoleUrl =
-      typeof window !== "undefined"
-        ? localStorage.getItem(`hireme_operations_role_url_${user.uid}`) || ""
-        : "";
-    if (savedJd) {
-      setJobDescription(savedJd);
-      setDraftJd(savedJd);
-    }
-    if (savedRoleName) {
-      setRoleName(savedRoleName);
-      setDraftRoleName(savedRoleName);
-    }
-    if (savedRoleUrl) {
-      setRoleUrl(savedRoleUrl);
-      setDraftRoleUrl(savedRoleUrl);
-    }
+    clearStoredOperationsDraft(user.uid);
 
     loadMasterResume(user.uid).then((loaded) => {
       if (cancelled) return;
@@ -119,32 +97,6 @@ export default function OperationsPage() {
   }
 
   const hasValidResume = Boolean(resume && !isEmptyResume(resume));
-
-  const saveJd = (text: string, nextRoleName = draftRoleName, nextRoleUrl = draftRoleUrl) => {
-    const clean = text.trim();
-    const cleanRole = nextRoleName.trim();
-    const cleanUrl = nextRoleUrl.trim();
-    setJobDescription(clean);
-    setRoleName(cleanRole);
-    setRoleUrl(cleanUrl);
-    if (typeof window !== "undefined") {
-      localStorage.setItem(`hireme_operations_jd_${user.uid}`, clean);
-      localStorage.setItem(`hireme_operations_role_name_${user.uid}`, cleanRole);
-      localStorage.setItem(`hireme_operations_role_url_${user.uid}`, cleanUrl);
-    }
-    setIsPromptOpen(false);
-    setMatchResult(null);
-    setLarpRun(null);
-    setMissingResumePrompt(false);
-  };
-
-  const handleOpenAddJd = () => {
-    setDraftJd(jobDescription);
-    setDraftRoleName(roleName);
-    setDraftRoleUrl(roleUrl);
-    setIsPromptOpen(true);
-    setMissingResumePrompt(false);
-  };
 
   const executeAnalysisAndLarp = (targetJd: string, currentResume: MasterResume) => {
     const kwResult = matchJobDescriptionWithResume(targetJd, currentResume);
@@ -168,23 +120,9 @@ export default function OperationsPage() {
     setQueuedSlotBanner(null);
   };
 
-  const handleCheckKeywordMatch = () => {
-    const targetJd = isPromptOpen ? draftJd.trim() : jobDescription.trim();
+  const handleSubmitJobDescription = () => {
+    const targetJd = jobDescription.trim();
     if (!targetJd) return;
-
-    if (isPromptOpen) {
-      const cleanRole = draftRoleName.trim();
-      const cleanUrl = draftRoleUrl.trim();
-      setJobDescription(targetJd);
-      setRoleName(cleanRole);
-      setRoleUrl(cleanUrl);
-      if (typeof window !== "undefined") {
-        localStorage.setItem(`hireme_operations_jd_${user.uid}`, targetJd);
-        localStorage.setItem(`hireme_operations_role_name_${user.uid}`, cleanRole);
-        localStorage.setItem(`hireme_operations_role_url_${user.uid}`, cleanUrl);
-      }
-      setIsPromptOpen(false);
-    }
 
     if (!hasValidResume || !resume) {
       setMissingResumePrompt(true);
@@ -286,6 +224,20 @@ export default function OperationsPage() {
         : [],
     });
     const totalCount = loadPreviewQueue(user.uid).length;
+
+    clearStoredOperationsDraft(user.uid);
+    setRoleName("");
+    setRoleUrl("");
+    setJobDescription("");
+    setMatchResult(null);
+    setLarpRun(null);
+    setAcceptedBullets(new Set());
+    setAcceptedMalleable(new Set());
+    setSelectedMalleableOption({});
+    setEditingBulletId(null);
+    setEditingMalleableOptId(null);
+    setApplySkillsSwap(true);
+    setMissingResumePrompt(false);
     setQueuedSlotBanner({ count: totalCount, latestTitle: item.title });
   };
 
@@ -301,29 +253,39 @@ export default function OperationsPage() {
             Defensible Resume Alignment (LARP) & keyword matching engine
           </p>
         </div>
+      </div>
 
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={handleOpenAddJd}
-            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-medium text-neutral-700 bg-white hover:bg-neutral-50 border border-[#ebebeb] rounded-full shadow-2xs active:scale-95 transition-all cursor-pointer"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            <span>Add Job Description</span>
-          </button>
-
-          {(jobDescription.trim() || (isPromptOpen && draftJd.trim())) && (
+      {/* Queued Confirmation Banner (shown after Queue to Preview Slot resets inputs) */}
+      {queuedSlotBanner && (
+        <div className="flex items-center justify-between gap-3 flex-wrap rounded-xl border border-[#ebebeb] bg-white shadow-subtle px-4 py-3 animate-scaleIn">
+          <div className="flex items-center gap-2.5 text-xs text-neutral-800">
+            <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-emerald-600 text-white shrink-0">
+              <Check className="w-3 h-3" />
+            </span>
+            <span>
+              Queued <span className="font-semibold text-neutral-900">&ldquo;{queuedSlotBanner.latestTitle}&rdquo;</span> ({queuedSlotBanner.count} in Preview Queue).
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={handleCheckKeywordMatch}
-              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-medium text-white bg-neutral-900 hover:bg-neutral-800 rounded-full shadow-subtle active:scale-95 transition-all cursor-pointer"
+              onClick={() => router.push("/preview")}
+              className="inline-flex items-center gap-1.5 font-mono text-[11px] font-medium text-white bg-neutral-900 hover:bg-neutral-800 px-3 py-1 rounded-full active:scale-95 transition-all cursor-pointer"
             >
-              <Search className="w-3.5 h-3.5" />
-              <span>Check Keyword Match</span>
+              <span>Open Preview Tab</span>
+              <ArrowRight className="w-3 h-3" />
             </button>
-          )}
+            <button
+              type="button"
+              onClick={() => setQueuedSlotBanner(null)}
+              aria-label="Dismiss notification"
+              className="p-1 rounded-full text-neutral-400 hover:text-neutral-700 hover:bg-neutral-100 cursor-pointer"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Missing Resume Prompt Banner */}
       {missingResumePrompt && (
@@ -352,213 +314,90 @@ export default function OperationsPage() {
         </div>
       )}
 
-      {/* Paste Job Description + Role Name & URL Prompt */}
-      {isPromptOpen ? (
-        <div className="bg-white rounded-xl border border-[#ebebeb] shadow-subtle p-5 space-y-3.5 animate-scaleIn">
-          <div className="flex items-center justify-between gap-2 flex-wrap">
-            <h2 className="text-xs font-semibold tracking-tight text-neutral-900">
-              Add Role & Job Description
-            </h2>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  setDraftRoleName("Pylon — Software Engineer (Full-Stack)");
-                  setDraftRoleUrl("https://usepylon.com/careers");
-                  setDraftJd(PYLON_TEST_JD);
-                }}
-                className="text-[11px] font-mono text-neutral-500 hover:text-neutral-900 bg-[#fafafa] hover:bg-neutral-100 border border-[#ebebeb] px-2 py-0.5 rounded transition-colors active:scale-95 cursor-pointer"
-              >
-                Load Pylon Test JD
-              </button>
-              <span className="text-[11px] font-mono text-neutral-400">
-                {draftJd.trim().length} chars
-              </span>
-            </div>
+      {/* Direct Role & Job Description Input Card */}
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          handleSubmitJobDescription();
+        }}
+        className="bg-white rounded-xl border border-[#ebebeb] shadow-subtle p-5 space-y-3.5"
+      >
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <h2 className="text-xs font-semibold tracking-tight text-neutral-900">
+            Role & Job Description
+          </h2>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setRoleName("Pylon — Software Engineer (Full-Stack)");
+                setRoleUrl("https://usepylon.com/careers");
+                setJobDescription(PYLON_TEST_JD);
+              }}
+              className="text-[11px] font-mono text-neutral-500 hover:text-neutral-900 bg-[#fafafa] hover:bg-neutral-100 border border-[#ebebeb] px-2 py-0.5 rounded transition-colors active:scale-95 cursor-pointer"
+            >
+              Load Pylon Test JD
+            </button>
+            <span className="text-[11px] font-mono text-neutral-400">
+              {jobDescription.trim().length} chars
+            </span>
           </div>
+        </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div className="space-y-1">
-              <label className="block text-[11px] font-mono uppercase text-neutral-500">
-                Role Name / Company
-              </label>
-              <input
-                type="text"
-                value={draftRoleName}
-                onChange={(e) => setDraftRoleName(e.target.value)}
-                placeholder="e.g. Pylon — Full-Stack Software Engineer"
-                className="w-full px-3 py-2 text-xs bg-[#fafafa] border border-[#ebebeb] rounded-lg focus:outline-none focus:border-neutral-900 focus:bg-white transition-colors"
-              />
-            </div>
-
-            <div className="space-y-1">
-              <label className="block text-[11px] font-mono uppercase text-neutral-500">
-                Role Posting URL
-              </label>
-              <input
-                type="url"
-                value={draftRoleUrl}
-                onChange={(e) => setDraftRoleUrl(e.target.value)}
-                placeholder="https://company.com/careers/job-id"
-                className="w-full px-3 py-2 text-xs font-mono bg-[#fafafa] border border-[#ebebeb] rounded-lg focus:outline-none focus:border-neutral-900 focus:bg-white transition-colors"
-              />
-            </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="space-y-1">
+            <label className="block text-[11px] font-mono uppercase text-neutral-500">
+              Role Name / Company
+            </label>
+            <input
+              type="text"
+              value={roleName}
+              onChange={(e) => setRoleName(e.target.value)}
+              placeholder="e.g. Pylon — Full-Stack Software Engineer"
+              className="w-full px-3 py-2 text-xs bg-[#fafafa] border border-[#ebebeb] rounded-lg focus:outline-none focus:border-neutral-900 focus:bg-white transition-colors"
+            />
           </div>
 
           <div className="space-y-1">
             <label className="block text-[11px] font-mono uppercase text-neutral-500">
-              Job Description
+              Role Posting URL
             </label>
-            <textarea
-              value={draftJd}
-              autoFocus
-              onChange={(e) => setDraftJd(e.target.value)}
-              placeholder="Paste the full job description, requirements, and qualifications here..."
-              className="w-full h-52 p-3 text-xs leading-relaxed bg-[#fafafa] border border-[#ebebeb] rounded-lg focus:outline-none focus:border-neutral-900 focus:bg-white transition-colors resize-none"
+            <input
+              type="url"
+              value={roleUrl}
+              onChange={(e) => setRoleUrl(e.target.value)}
+              placeholder="https://company.com/careers/job-id"
+              className="w-full px-3 py-2 text-xs font-mono bg-[#fafafa] border border-[#ebebeb] rounded-lg focus:outline-none focus:border-neutral-900 focus:bg-white transition-colors"
             />
           </div>
-
-          <div className="flex items-center justify-end gap-2 pt-1">
-            <button
-              type="button"
-              onClick={() => setIsPromptOpen(false)}
-              className="px-3.5 py-1.5 text-xs font-medium text-neutral-500 hover:text-neutral-900 transition-colors active:scale-95 cursor-pointer"
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              disabled={!draftJd.trim()}
-              onClick={() => saveJd(draftJd, draftRoleName, draftRoleUrl)}
-              className="px-3.5 py-1.5 text-xs font-medium text-neutral-700 bg-white hover:bg-neutral-50 border border-[#ebebeb] rounded-full disabled:opacity-40 shadow-2xs active:scale-95 transition-all cursor-pointer"
-            >
-              Save Details
-            </button>
-            <button
-              type="button"
-              disabled={!draftJd.trim()}
-              onClick={handleCheckKeywordMatch}
-              className="inline-flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium text-white bg-neutral-900 hover:bg-neutral-800 rounded-full disabled:opacity-40 shadow-subtle active:scale-95 transition-all cursor-pointer"
-            >
-              <Search className="w-3.5 h-3.5" />
-              <span>Check Keyword Match</span>
-            </button>
-          </div>
         </div>
-      ) : !jobDescription ? (
-        /* Empty State */
-        <div className="w-full bg-white rounded-xl border border-[#ebebeb] shadow-subtle min-h-[340px] flex flex-col items-center justify-center p-8 text-center space-y-3">
-          <div className="w-9 h-9 rounded-full bg-neutral-100 border border-[#ebebeb] flex items-center justify-center text-neutral-500">
-            <FileText className="w-4 h-4" />
-          </div>
-          <div className="space-y-1 max-w-sm">
-            <p className="text-xs font-semibold text-neutral-900">
-              No job description loaded
-            </p>
-            <p className="text-xs text-neutral-500">
-              Add a role name, URL, and job description to classify skills across the 4-Tier Defensibility Spec and align your resume bullets.
-            </p>
-          </div>
+
+        <div className="space-y-1">
+          <label className="block text-[11px] font-mono uppercase text-neutral-500">
+            Job Description
+          </label>
+          <textarea
+            value={jobDescription}
+            onChange={(e) => setJobDescription(e.target.value)}
+            placeholder="Paste the full job description, requirements, and qualifications here..."
+            className="w-full h-44 p-3 text-xs leading-relaxed bg-[#fafafa] border border-[#ebebeb] rounded-lg focus:outline-none focus:border-neutral-900 focus:bg-white transition-colors resize-y"
+          />
+        </div>
+
+        <div className="flex items-center justify-end gap-2 pt-1">
           <button
-            type="button"
-            onClick={handleOpenAddJd}
-            className="mt-1 inline-flex items-center gap-1.5 px-4 py-2 text-xs font-medium text-white bg-neutral-900 hover:bg-neutral-800 rounded-full shadow-subtle active:scale-95 transition-all cursor-pointer"
+            type="submit"
+            disabled={!jobDescription.trim()}
+            className="inline-flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium text-white bg-neutral-900 hover:bg-neutral-800 rounded-full disabled:opacity-40 shadow-subtle active:scale-95 transition-all cursor-pointer"
           >
-            <Plus className="w-3.5 h-3.5" />
-            <span>Add Job Description</span>
+            <Send className="w-3.5 h-3.5" />
+            <span>Submit Job Description</span>
           </button>
         </div>
-      ) : (
-        /* Loaded Job Description + Match Results + LARP Alignment Engine */
-        <div className="space-y-6">
-          {/* Active Job Description + Inline Role Name & URL Card */}
-          <div className="bg-white rounded-xl border border-[#ebebeb] shadow-subtle p-4 space-y-3">
-            <div className="flex items-center justify-between gap-3 flex-wrap">
-              <div className="flex items-center gap-2 min-w-0 flex-wrap">
-                <span className="text-xs font-semibold text-neutral-900">
-                  {roleName || "Target Role & Job Description"}
-                </span>
-                {roleUrl && (
-                  <a
-                    href={roleUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex items-center gap-1 font-mono text-[11px] text-neutral-600 hover:text-neutral-900 underline decoration-[#ebebeb] underline-offset-2"
-                  >
-                    <ExternalLink className="w-3 h-3" />
-                    <span className="truncate max-w-[240px]">{roleUrl}</span>
-                  </a>
-                )}
-                <span className="font-mono text-[10px] text-neutral-400 bg-neutral-100 px-1.5 py-0.5 rounded">
-                  {jobDescription.length} chars
-                </span>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={handleOpenAddJd}
-                  className="px-2.5 py-1 text-xs font-medium text-neutral-600 hover:text-neutral-900 bg-[#fafafa] hover:bg-neutral-100 border border-[#ebebeb] rounded-md transition-colors active:scale-95 cursor-pointer"
-                >
-                  Edit Role & JD
-                </button>
-                <button
-                  type="button"
-                  onClick={handleCheckKeywordMatch}
-                  className="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-medium text-white bg-neutral-900 hover:bg-neutral-800 rounded-md shadow-2xs active:scale-95 transition-all cursor-pointer"
-                >
-                  <Search className="w-3 h-3" />
-                  <span>Check Keyword Match</span>
-                </button>
-              </div>
-            </div>
+      </form>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-              <div className="flex items-center gap-2 bg-[#fafafa] border border-[#ebebeb] rounded-lg px-2.5 py-1.5">
-                <span className="font-mono text-[10px] uppercase text-neutral-400 flex-shrink-0">
-                  Role Name:
-                </span>
-                <input
-                  type="text"
-                  value={roleName}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    setRoleName(v);
-                    if (typeof window !== "undefined") {
-                      localStorage.setItem(`hireme_operations_role_name_${user.uid}`, v);
-                    }
-                  }}
-                  placeholder="Enter role title & company (e.g. Pylon — SWE)..."
-                  className="w-full text-xs text-neutral-900 bg-transparent focus:outline-none"
-                />
-              </div>
-
-              <div className="flex items-center gap-2 bg-[#fafafa] border border-[#ebebeb] rounded-lg px-2.5 py-1.5">
-                <span className="font-mono text-[10px] uppercase text-neutral-400 flex-shrink-0">
-                  Role URL:
-                </span>
-                <input
-                  type="url"
-                  value={roleUrl}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    setRoleUrl(v);
-                    if (typeof window !== "undefined") {
-                      localStorage.setItem(`hireme_operations_role_url_${user.uid}`, v);
-                    }
-                  }}
-                  placeholder="https://company.com/careers/..."
-                  className="w-full text-xs font-mono text-neutral-900 bg-transparent focus:outline-none"
-                />
-              </div>
-            </div>
-
-            <p className="text-xs text-neutral-600 line-clamp-3 leading-relaxed bg-[#fafafa] border border-[#ebebeb] rounded-lg p-3 font-sans whitespace-pre-line">
-              {jobDescription}
-            </p>
-          </div>
-
-          {/* Keyword Match & LARP Results */}
-          {matchResult && larpRun && (
+      {/* Keyword Match & LARP Results */}
+      {matchResult && larpRun && (
             <div className="space-y-6 animate-fadeIn">
               {/* Summary Score Bar */}
               <div className="bg-white rounded-xl border border-[#ebebeb] shadow-subtle p-5 space-y-3.5">
@@ -1321,25 +1160,7 @@ export default function OperationsPage() {
                 )}
 
                 {/* Queue to Preview Slot Bar */}
-                <div className="flex items-center justify-between gap-3 pt-3 border-t border-[#ebebeb] flex-wrap">
-                  <div className="flex items-center gap-3 flex-wrap">
-                    {queuedSlotBanner && (
-                      <span className="inline-flex items-center gap-2 text-xs font-medium text-neutral-900 bg-neutral-100 border border-[#ebebeb] px-3 py-1 rounded-full">
-                        <Check className="w-3.5 h-3.5 text-emerald-600" />
-                        <span>
-                          Queued &ldquo;{queuedSlotBanner.latestTitle}&rdquo; ({queuedSlotBanner.count} in
-                          Preview Queue)
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => router.push("/preview")}
-                          className="underline font-semibold hover:text-neutral-600 cursor-pointer ml-1"
-                        >
-                          Open Preview Tab →
-                        </button>
-                      </span>
-                    )}
-                  </div>
+                <div className="flex items-center justify-end gap-3 pt-3 border-t border-[#ebebeb] flex-wrap">
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
@@ -1353,8 +1174,6 @@ export default function OperationsPage() {
                 </div>
               </div>
             </div>
-          )}
-        </div>
       )}
     </div>
   );
