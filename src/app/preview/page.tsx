@@ -11,6 +11,9 @@ import {
   ArrowRight,
   ExternalLink,
   Pencil,
+  Send,
+  Check,
+  Plus,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import {
@@ -22,10 +25,13 @@ import {
 } from "@/lib/resume/previewQueue";
 import {
   applyLarpMutationsToResume,
+  applySelectedSkillsToResumeCategories,
   evaluateBelievabilityAndRecommend,
+  getAvailableSkillCandidates,
   updateBulletProposalWithCustomMarkup,
   updateMalleableOptionWithCustomMarkup,
 } from "@/lib/resume/larpEngine";
+import { pushResumeToAgents } from "@/lib/resume/agentsQueue";
 import { compileResumePdfBlobUrl, downloadResumePdf } from "@/lib/resume/exportPdf";
 import { parseMarkup } from "@/lib/resume/utils";
 
@@ -40,6 +46,12 @@ export default function PreviewPage() {
   const [visualizedUrlBySlot, setVisualizedUrlBySlot] = useState<Record<string, string>>({});
   const [visualizingId, setVisualizingId] = useState<string | null>(null);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [customSkillInput, setCustomSkillInput] = useState("");
+  const [pushedAgentBanner, setPushedAgentBanner] = useState<{
+    slotId: string;
+    fileName: string;
+    roleName: string;
+  } | null>(null);
 
   useEffect(() => {
     if (!loading && !user) {
@@ -93,6 +105,9 @@ export default function PreviewPage() {
         | "acceptedMalleableIds"
         | "selectedMalleableOptionBySlotId"
         | "applySkillsSwap"
+        | "selectedSkillNames"
+        | "customSkillCategoryByName"
+        | "pushedToAgentsAt"
       >
     >
   ) => {
@@ -211,10 +226,71 @@ export default function PreviewPage() {
       item.baseResume,
       item.larpRun,
       new Set(item.acceptedBulletIds),
-      item.applySkillsSwap,
+      item.selectedSkillNames.length > 0,
       new Set(item.acceptedMalleableIds),
-      item.selectedMalleableOptionBySlotId
+      item.selectedMalleableOptionBySlotId,
+      item.selectedSkillNames,
+      item.customSkillCategoryByName
     );
+  };
+
+  const handleToggleSkillName = (skillName: string) => {
+    if (!activeItem) return;
+    const exists = activeItem.selectedSkillNames.some(
+      (s) => s.toLowerCase() === skillName.toLowerCase()
+    );
+    const nextSkills = exists
+      ? activeItem.selectedSkillNames.filter(
+          (s) => s.toLowerCase() !== skillName.toLowerCase()
+        )
+      : [...activeItem.selectedSkillNames, skillName];
+    updateActiveItem({
+      selectedSkillNames: nextSkills,
+      applySkillsSwap: nextSkills.length > 0,
+    });
+  };
+
+  const handleSkillCategoryChange = (skillName: string, categoryId: string) => {
+    if (!activeItem) return;
+    const nextMap = {
+      ...(activeItem.customSkillCategoryByName || {}),
+      [skillName]: categoryId,
+    };
+    updateActiveItem({ customSkillCategoryByName: nextMap });
+  };
+
+  const handleAddCustomSkill = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!activeItem) return;
+    const clean = customSkillInput.trim();
+    if (!clean) return;
+    const exists = activeItem.selectedSkillNames.some(
+      (s) => s.toLowerCase() === clean.toLowerCase()
+    );
+    if (!exists) {
+      const nextSkills = [...activeItem.selectedSkillNames, clean];
+      updateActiveItem({
+        selectedSkillNames: nextSkills,
+        applySkillsSwap: true,
+      });
+    }
+    setCustomSkillInput("");
+  };
+
+  const handlePushToAgents = (item: PreviewQueueItem) => {
+    const tailored = buildTailoredResumeForSlot(item);
+    const entry = pushResumeToAgents(user.uid, {
+      sourcePreviewId: item.id,
+      roleName: item.roleName || item.title,
+      roleUrl: item.roleUrl,
+      tailoredResume: tailored,
+    });
+    updateActiveItem({ pushedToAgentsAt: entry.createdAt });
+    setPushedAgentBanner({
+      slotId: item.id,
+      fileName: entry.fileName,
+      roleName: entry.roleName,
+    });
   };
 
   const handleVisualizeSlot = async (item: PreviewQueueItem) => {
@@ -436,6 +512,15 @@ export default function PreviewPage() {
 
                   <button
                     type="button"
+                    onClick={() => handlePushToAgents(activeItem)}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-medium text-neutral-900 bg-white hover:bg-neutral-100 border border-neutral-900 rounded-full shadow-2xs active:scale-95 transition-all cursor-pointer"
+                  >
+                    <Send className="w-3.5 h-3.5" />
+                    <span>Push to Agents</span>
+                  </button>
+
+                  <button
+                    type="button"
                     disabled={downloadingId === activeItem.id}
                     onClick={() => handleOptionalDownload(activeItem)}
                     className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-neutral-700 bg-white hover:bg-neutral-50 border border-[#ebebeb] rounded-full shadow-2xs active:scale-95 transition-all cursor-pointer disabled:opacity-40"
@@ -447,23 +532,183 @@ export default function PreviewPage() {
                 </div>
               </div>
 
-              {/* 1. Skills Swap Toggle */}
-              {activeItem.larpRun.skillSwaps.length > 0 && (
-                <div className="space-y-2">
-                  <label className="inline-flex items-center gap-2 text-xs font-semibold text-neutral-900 cursor-pointer select-none">
-                    <input
-                      type="checkbox"
-                      checked={activeItem.applySkillsSwap}
-                      onChange={(e) => updateActiveItem({ applySkillsSwap: e.target.checked })}
-                      className="rounded border-neutral-300 text-neutral-900 focus:ring-0"
-                    />
-                    <span>
-                      Include Skills Section Additions (
-                      {activeItem.larpRun.skillSwaps.flatMap((s) => s.added).join(", ")})
+              {((pushedAgentBanner && pushedAgentBanner.slotId === activeItem.id) ||
+                activeItem.pushedToAgentsAt) && (
+                <div className="flex items-center justify-between gap-3 flex-wrap rounded-lg border border-[#ebebeb] bg-[#fafafa] px-3 py-2">
+                  <div className="flex items-center gap-2 text-xs text-neutral-800">
+                    <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-emerald-600 text-white">
+                      <Check className="w-2.5 h-2.5" />
                     </span>
-                  </label>
+                    {pushedAgentBanner && pushedAgentBanner.slotId === activeItem.id ? (
+                      <span>
+                        Pushed{" "}
+                        <span className="font-mono text-[11px] font-medium text-neutral-900">
+                          {pushedAgentBanner.fileName}
+                        </span>{" "}
+                        to Agents
+                      </span>
+                    ) : (
+                      <span>
+                        Pushed to Agents{" "}
+                        <span className="font-mono text-[11px] text-neutral-500">
+                          {new Date(activeItem.pushedToAgentsAt!).toLocaleTimeString([], {
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })}
+                        </span>
+                      </span>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => router.push("/agents")}
+                    className="inline-flex items-center gap-1 font-mono text-[11px] font-medium text-neutral-900 bg-white border border-[#ebebeb] hover:bg-neutral-100 px-2.5 py-1 rounded-full active:scale-95 transition-all cursor-pointer"
+                  >
+                    <span>Open Agents</span>
+                    <ArrowRight className="w-3 h-3" />
+                  </button>
                 </div>
               )}
+
+              {/* 1. Independent Skills Section Additions */}
+              {(() => {
+                const candidates = getAvailableSkillCandidates(
+                  activeItem.baseResume.skills,
+                  activeItem.larpRun.tiers,
+                  activeItem.larpRun.skillSwaps,
+                  activeItem.selectedSkillNames,
+                  activeItem.customSkillCategoryByName
+                );
+                const liveSkillResult = applySelectedSkillsToResumeCategories(
+                  activeItem.baseResume.skills,
+                  activeItem.larpRun.tiers,
+                  activeItem.selectedSkillNames,
+                  activeItem.customSkillCategoryByName
+                );
+
+                return (
+                  <div className="space-y-2.5 pt-2 border-t border-[#ebebeb]">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <span className="font-mono text-[10px] uppercase tracking-wider text-neutral-400">
+                        Skills Section Additions ({activeItem.selectedSkillNames.length} selected)
+                      </span>
+                      {activeItem.selectedSkillNames.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            updateActiveItem({
+                              selectedSkillNames: [],
+                              applySkillsSwap: false,
+                            })
+                          }
+                          className="font-mono text-[10px] text-neutral-500 hover:text-neutral-900 underline decoration-[#ebebeb] cursor-pointer"
+                        >
+                          Clear all
+                        </button>
+                      )}
+                    </div>
+
+                    {candidates.length > 0 ? (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        {candidates.map((cand) => {
+                          const isChecked = activeItem.selectedSkillNames.some(
+                            (s) => s.toLowerCase() === cand.name.toLowerCase()
+                          );
+                          return (
+                            <div
+                              key={cand.name}
+                              className={`flex items-center justify-between gap-2 rounded-lg border px-2.5 py-1.5 transition-all ${
+                                isChecked
+                                  ? "border-neutral-900 bg-[#fafafa]"
+                                  : "border-[#ebebeb] bg-white opacity-80"
+                              }`}
+                            >
+                              <label className="inline-flex items-center gap-2 text-xs text-neutral-900 cursor-pointer select-none min-w-0">
+                                <input
+                                  type="checkbox"
+                                  checked={isChecked}
+                                  onChange={() => handleToggleSkillName(cand.name)}
+                                  className="rounded border-neutral-300 text-neutral-900 focus:ring-0"
+                                />
+                                <span className="font-medium truncate">{cand.name}</span>
+                                {cand.recommendedSwap && (
+                                  <span className="font-mono text-[9px] px-1.5 py-0.5 rounded bg-neutral-900 text-white shrink-0">
+                                    Pick
+                                  </span>
+                                )}
+                              </label>
+
+                              <select
+                                value={cand.targetCategoryId}
+                                onChange={(e) =>
+                                  handleSkillCategoryChange(cand.name, e.target.value)
+                                }
+                                aria-label={`Category for ${cand.name}`}
+                                className="font-mono text-[10px] text-neutral-600 bg-white border border-[#ebebeb] rounded px-1.5 py-0.5 max-w-[130px] focus:outline-none focus:border-neutral-400"
+                              >
+                                {activeItem.baseResume.skills.map((cat) => (
+                                  <option key={cat.id} value={cat.id}>
+                                    {cat.name}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <p className="text-[11px] font-mono text-neutral-400">
+                        No missing non-banned JD skills detected; add custom skills below if needed.
+                      </p>
+                    )}
+
+                    <form onSubmit={handleAddCustomSkill} className="flex items-center gap-2 pt-0.5">
+                      <input
+                        type="text"
+                        value={customSkillInput}
+                        onChange={(e) => setCustomSkillInput(e.target.value)}
+                        placeholder="Add custom skill (e.g. Redis, Vercel)..."
+                        className="flex-1 text-xs text-neutral-900 bg-[#fafafa] border border-[#ebebeb] rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-neutral-400 placeholder:text-neutral-400"
+                      />
+                      <button
+                        type="submit"
+                        disabled={!customSkillInput.trim()}
+                        className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-neutral-700 bg-white hover:bg-neutral-50 border border-[#ebebeb] rounded-lg disabled:opacity-40 active:scale-95 transition-all cursor-pointer"
+                      >
+                        <Plus className="w-3 h-3" />
+                        <span>Add</span>
+                      </button>
+                    </form>
+
+                    {liveSkillResult.changes.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5 pt-1">
+                        {liveSkillResult.changes.map((chg) => (
+                          <span
+                            key={chg.categoryId}
+                            className={`inline-flex items-center gap-1.5 font-mono text-[10px] px-2 py-0.5 rounded border ${
+                              chg.newNcu <= 98.0
+                                ? "bg-emerald-50/70 text-emerald-700 border-emerald-200"
+                                : "bg-amber-50/80 text-amber-700 border-amber-200"
+                            }`}
+                          >
+                            <span>
+                              {chg.categoryName}: +{chg.added.join(", +")}
+                            </span>
+                            {chg.swappedOut.length > 0 && (
+                              <span className="opacity-75">
+                                (swapped {chg.swappedOut.join(", ")})
+                              </span>
+                            )}
+                            <span>
+                              · {chg.newNcu.toFixed(1)}/98 NCU
+                            </span>
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
 
               {/* 2. Subtle Existing-Bullet Edits (Click to Toggle or Inline Edit) */}
               {activeItem.larpRun.bulletProposals.length > 0 && (

@@ -281,6 +281,9 @@ export default function OperationsPage() {
       acceptedMalleableIds: Array.from(acceptedMalleable),
       selectedMalleableOptionBySlotId: selectedMalleableOption,
       applySkillsSwap,
+      selectedSkillNames: applySkillsSwap
+        ? larpRun.skillSwaps.flatMap((s) => s.added)
+        : [],
     });
     const totalCount = loadPreviewQueue(user.uid).length;
     setQueuedSlotBanner({ count: totalCount, latestTitle: item.title });

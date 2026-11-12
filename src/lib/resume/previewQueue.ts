@@ -17,6 +17,9 @@ export interface PreviewQueueItem {
   acceptedMalleableIds: string[];
   selectedMalleableOptionBySlotId: Record<string, string>;
   applySkillsSwap: boolean;
+  selectedSkillNames: string[];
+  customSkillCategoryByName: Record<string, string>;
+  pushedToAgentsAt?: string;
 }
 
 const PREVIEW_QUEUE_KEY = (uidStr: string) => `hireme_preview_queue_${uidStr}`;
@@ -27,6 +30,11 @@ function normalizeQueueItems(parsed: unknown): PreviewQueueItem[] {
   return parsed.map((raw) => {
     const item = raw as Partial<PreviewQueueItem>;
     const roleName = item.roleName || item.title || "Software Engineer Role";
+    const applySkillsSwap = item.applySkillsSwap ?? true;
+    const defaultSkillNames =
+      applySkillsSwap && item.larpRun?.skillSwaps
+        ? item.larpRun.skillSwaps.flatMap((s) => s.added)
+        : [];
     return {
       id: item.id || uid("pv"),
       roleName,
@@ -41,7 +49,12 @@ function normalizeQueueItems(parsed: unknown): PreviewQueueItem[] {
         ? item.acceptedMalleableIds
         : [],
       selectedMalleableOptionBySlotId: item.selectedMalleableOptionBySlotId || {},
-      applySkillsSwap: item.applySkillsSwap ?? true,
+      applySkillsSwap,
+      selectedSkillNames: Array.isArray(item.selectedSkillNames)
+        ? item.selectedSkillNames
+        : defaultSkillNames,
+      customSkillCategoryByName: item.customSkillCategoryByName || {},
+      pushedToAgentsAt: item.pushedToAgentsAt,
     };
   });
 }
@@ -135,6 +148,8 @@ export function enqueuePreviewItem(
     acceptedMalleableIds: string[];
     selectedMalleableOptionBySlotId: Record<string, string>;
     applySkillsSwap: boolean;
+    selectedSkillNames?: string[];
+    customSkillCategoryByName?: Record<string, string>;
   }
 ): PreviewQueueItem {
   const existing = loadPreviewQueue(uidStr);
@@ -143,6 +158,11 @@ export function enqueuePreviewItem(
     params.jobDescription,
     existing.length + 1
   );
+  const defaultSkillNames = params.selectedSkillNames
+    ? [...params.selectedSkillNames]
+    : params.applySkillsSwap
+      ? params.larpRun.skillSwaps.flatMap((s) => s.added)
+      : [];
   const newItem: PreviewQueueItem = {
     id: uid("pv"),
     roleName: resolvedTitle,
@@ -156,6 +176,8 @@ export function enqueuePreviewItem(
     acceptedMalleableIds: [...params.acceptedMalleableIds],
     selectedMalleableOptionBySlotId: { ...params.selectedMalleableOptionBySlotId },
     applySkillsSwap: params.applySkillsSwap,
+    selectedSkillNames: defaultSkillNames,
+    customSkillCategoryByName: { ...(params.customSkillCategoryByName || {}) },
   };
   const updated = [newItem, ...existing];
   savePreviewQueue(uidStr, updated);
@@ -176,13 +198,21 @@ export function updatePreviewQueueItem(
       | "acceptedMalleableIds"
       | "selectedMalleableOptionBySlotId"
       | "applySkillsSwap"
+      | "selectedSkillNames"
+      | "customSkillCategoryByName"
+      | "pushedToAgentsAt"
     >
   >
 ): PreviewQueueItem[] {
   const existing = loadPreviewQueue(uidStr);
-  const updated = existing.map((item) =>
-    item.id === itemId ? { ...item, ...patch } : item
-  );
+  const updated = existing.map((item) => {
+    if (item.id !== itemId) return item;
+    const syncedPatch =
+      patch.selectedSkillNames !== undefined && patch.applySkillsSwap === undefined
+        ? { ...patch, applySkillsSwap: patch.selectedSkillNames.length > 0 }
+        : patch;
+    return { ...item, ...syncedPatch };
+  });
   savePreviewQueue(uidStr, updated);
   return updated;
 }
