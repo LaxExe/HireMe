@@ -1,10 +1,19 @@
-import type { Bullet, MasterResume, SkillCategory } from "./types";
+import type { Bullet, CalibrationConfig, MasterResume, SkillCategory } from "./types";
 import { DEFAULT_CALIBRATION } from "./types";
-import { analyzeBullet, escapeRegExp, knownTools, plainText, splitItems, uid } from "./utils";
+import {
+  analyzeBullet,
+  bulletFit,
+  escapeRegExp,
+  knownTools,
+  plainText,
+  splitItems,
+  uid,
+  type BulletFitResult,
+} from "./utils";
 import { markupToLatex } from "./latex";
 
 /* ============================================================================
- * 1. DETERMINISTIC LATEX VISUAL WIDTH CALCULATOR (NCU)
+ * 1. DETERMINISTIC LATEX VISUAL WIDTH CALCULATOR (NCU) & CALIBRATED LINE FIT
  * ============================================================================ */
 
 const NARROW_CHARS = new Set("iIlj1!|.,:;'`()[] ");
@@ -89,30 +98,50 @@ export interface LineBudgetCheck {
   minAllowedWidth: number;
   slackNcu: number;
   delta: number;
+  origChars: number;
+  candChars: number;
+  origFit: BulletFitResult;
+  candFit: BulletFitResult;
 }
 
 /**
- * Checks whether the candidate fits strictly inside the remaining space of the original
- * line count (`candLines === origLines` and `candWidth <= origLines * singleLineNcu`).
+ * Checks whether the candidate fits within the calibrated 1-line (`oneLineMax`)
+ * or 2-line (`twoLineMax`) area without overflowing.
  */
 export function checkLineBudget(
-  originalLatex: string,
-  candidateLatex: string,
+  originalMarkup: string,
+  candidateMarkup: string,
+  calibration: CalibrationConfig = DEFAULT_CALIBRATION,
   singleLineNcu = 98.0
 ): LineBudgetCheck {
-  const origWidth = computeVisualWidth(originalLatex);
-  const candWidth = computeVisualWidth(candidateLatex);
+  const origLatex = `\\item ${markupToLatex(originalMarkup)}`;
+  const candLatex = `\\item ${markupToLatex(candidateMarkup)}`;
 
-  const origLines = Math.max(1, Math.ceil(origWidth / singleLineNcu));
-  const candLines = Math.max(1, Math.ceil(candWidth / singleLineNcu));
-  const maxAllowedWidth = Number((origLines * singleLineNcu).toFixed(2));
+  const origWidth = computeVisualWidth(origLatex);
+  const candWidth = computeVisualWidth(candLatex);
+
+  const origFit = bulletFit(originalMarkup, calibration);
+  const candFit = bulletFit(candidateMarkup, calibration);
+
+  const origLines = origFit.targetLines === 1 ? 1 : 2;
+  const candLines = candFit.targetLines;
+
+  const maxAllowedChars =
+    candLines === 1 ? calibration.oneLineMax : calibration.twoLineMax;
+  const maxAllowedWidth = Number((candLines * singleLineNcu).toFixed(2));
   const minAllowedWidth = Number(
-    ((origLines - 1) * singleLineNcu + 0.65 * singleLineNcu).toFixed(2)
+    ((candLines - 1) * singleLineNcu + 0.65 * singleLineNcu).toFixed(2)
   );
   const slackNcu = Number((maxAllowedWidth - origWidth).toFixed(2));
 
+  // Valid if it lands in the calibrated 1-line or 2-line area (never >2L overflow, and ideally green 1L or 2L)
+  const valid =
+    candFit.status !== "overflow" &&
+    candFit.length <= maxAllowedChars &&
+    (candFit.tone === "green" || candFit.targetLines <= origLines);
+
   return {
-    valid: candLines === origLines && candWidth <= maxAllowedWidth,
+    valid,
     origWidth,
     candWidth,
     origLines,
@@ -121,11 +150,121 @@ export function checkLineBudget(
     minAllowedWidth,
     slackNcu,
     delta: Number((candWidth - origWidth).toFixed(2)),
+    origChars: origFit.length,
+    candChars: candFit.length,
+    origFit,
+    candFit,
   };
 }
 
 /* ============================================================================
- * 2. WORD-DIFF & MINIMAL EDIT VALIDATOR (<= 5-6 WORDS ADDED/CHANGED)
+ * 2. LINE-FIT TIGHTENER & EXPANDER (FITS BULLET INTO 1-LINE OR 2-LINE AREA)
+ * ============================================================================ */
+
+const COMPRESSION_RULES: [RegExp, string][] = [
+  [/\bDeveloped and maintained\b/gi, "Built"],
+  [/\bDesigned and developed\b/gi, "Built"],
+  [/\bDesigned and optimized\b/gi, "Optimized"],
+  [/\bImplemented core\b/gi, "Built"],
+  [/\bfor patient coverage verification\b/gi, "for coverage checks"],
+  [/\bthat automate data gathering from insurance providers\b/gi, "automating insurer data lookup"],
+  [/\brule-based dispatch logic\b/gi, "dispatch logic"],
+  [/\bon test data by building\b/gi, "by building"],
+  [/\bto predict procedure coverage from prior patient visits\b/gi, "to predict procedure coverage"],
+  [/\brelational (\*\*PostgreSQL\*\*)/gi, "$1"],
+  [/\bto standardize eligibility records across\b/gi, "standardizing eligibility data across"],
+  [/\bAcross (\*\*\d+\*\*) internal services/gi, "across $1 services"],
+  [/\bacross (\*\*\d+\*\*) internal services/gi, "across $1 services"],
+  [/\bover call workflows and dispatch timing by building\b/gi, "over dispatch workflows, building"],
+  [/\bcustomizable dashboards\b/gi, "custom dashboards"],
+  [/\bfrom a (\*\*4-hour\*\*) baseline by architecting a scalable\b/gi, "from $1 via a"],
+  [/\bto clean, validate, and reformat\b/gi, "to clean and format"],
+  [/\band tested on (\*\*100\*\*) trial interactions\b/gi, "across $1 trials"],
+  [/\busing (\*\*LLM\*\*) prompt engineering, persisting structured\b/gi, "with $1 prompts, persisting"],
+  [/\bmaintaining release reliability through an automated\b/gi, "via an automated"],
+  [/\bin order to\b/gi, "to"],
+  [/\bresulting in a\b/gi, "driving a"],
+  [/\bby building\b/gi, "building"],
+  [/\butilizing\b/gi, "using"],
+  [/\bleveraging\b/gi, "using"],
+];
+
+/**
+ * Rewrites/tightens a modified bullet so its character length fits cleanly inside
+ * the user's calibrated 1-line area (`<= oneLineMax`) or 2-line area (`<= twoLineMax`)
+ * without overflowing or leaving an awkward orphan wrap.
+ */
+export function fitBulletToCalibratedLineArea(
+  candidateMarkup: string,
+  calibration: CalibrationConfig = DEFAULT_CALIBRATION
+): string {
+  let current = candidateMarkup.trim();
+  const oneMax = Math.max(1, calibration.oneLineMax || DEFAULT_CALIBRATION.oneLineMax);
+  const twoMax = Math.max(oneMax + 1, calibration.twoLineMax || DEFAULT_CALIBRATION.twoLineMax);
+
+  let fit = bulletFit(current, calibration);
+
+  // Case 1: The bullet is slightly over 1-line max (e.g., 109..136 chars — an accidental 2-line orphan!)
+  // Try compressing filler phrases so it fits cleanly inside the 1-line area (`<= oneMax`, Green `1L`)!
+  if (fit.length > oneMax && fit.length <= oneMax + 28) {
+    let test1L = current;
+    for (const [pattern, replacement] of COMPRESSION_RULES) {
+      if (plainText(test1L).trim().length <= oneMax) break;
+      if (pattern.test(test1L)) {
+        test1L = test1L.replace(pattern, replacement).replace(/\s{2,}/g, " ").trim();
+      }
+    }
+    const after1LFit = bulletFit(test1L, calibration);
+    if (after1LFit.length <= oneMax && after1LFit.tone === "green") {
+      return test1L;
+    }
+  }
+
+  // Case 2: The bullet exceeds `twoLineMax` (> 2 lines overflow).
+  // Apply surgical phrase tightenings until `length <= twoMax` (fits inside 2-line area).
+  if (fit.length > twoMax) {
+    for (const [pattern, replacement] of COMPRESSION_RULES) {
+      if (plainText(current).trim().length <= twoMax) break;
+      if (pattern.test(current)) {
+        current = current.replace(pattern, replacement).replace(/\s{2,}/g, " ").trim();
+      }
+    }
+    fit = bulletFit(current, calibration);
+  }
+
+  // Case 3: The bullet is in the 2-line range (`> oneMax` and `<= twoMax`), but is an `orphan-2`
+  // (line 2 is < 65% filled). If it cannot compress to 1 line, add a concise, context-matching
+  // technical clause so it fills the 2-line area (`ideal-2` Green) cleanly!
+  if (fit.status === "orphan-2") {
+    const minIdeal2 = oneMax + Math.ceil(0.65 * (twoMax - oneMax));
+    const needed = minIdeal2 - fit.length;
+    if (needed > 0 && needed <= 48) {
+      if (/\bPostgreSQL\b/i.test(current) && !/low-latency/i.test(current)) {
+        const expanded = current.replace(
+          /\.$/,
+          " for low-latency data access and schema consistency."
+        );
+        if (bulletFit(expanded, calibration).tone === "green") {
+          return expanded;
+        }
+      }
+      if (/\bSupabase\b|\bFlask\b|\bAPIs\b/i.test(current) && !/automated retries/i.test(current)) {
+        const expanded = current.replace(
+          /\.$/,
+          " with automated schema validation and retry handling."
+        );
+        if (bulletFit(expanded, calibration).tone === "green") {
+          return expanded;
+        }
+      }
+    }
+  }
+
+  return current;
+}
+
+/* ============================================================================
+ * 3. WORD-DIFF TRACKER
  * ============================================================================ */
 
 export interface WordDiffToken {
@@ -146,14 +285,10 @@ function normalizeWordForDiff(w: string): string {
     .toLowerCase();
 }
 
-/**
- * Computes word-level LCS between original and candidate bullets to count
- * the exact number of newly added/swapped words (strictly capped at <= 6 words).
- */
 export function computeWordReframeStats(
   originalMarkup: string,
   candidateMarkup: string,
-  maxWordsCap = 6
+  maxWordsCap = 7
 ): WordReframeStats {
   const origWords = plainText(originalMarkup).trim().split(/\s+/).filter(Boolean);
   const candRawWords = candidateMarkup.trim().split(/\s+/).filter(Boolean);
@@ -201,7 +336,7 @@ export function computeWordReframeStats(
 }
 
 /* ============================================================================
- * 3. THE 4-TIER KEYWORD CLASSIFICATION SPEC (CODE-FIRST, NO PM JARGON)
+ * 4. THE 4-TIER KEYWORD CLASSIFICATION SPEC
  * ============================================================================ */
 
 export interface LarpTierClassification {
@@ -232,7 +367,6 @@ interface CatalogItem {
     | "Frameworks & Libraries"
     | "Databases & Cloud"
     | "Developer Tools & DevOps";
-  /** Which bullet technical contexts this tool can naturally be added to */
   compatibleBulletContexts?: BulletDomainContext[];
 }
 
@@ -322,7 +456,7 @@ const LARP_CATALOG: CatalogItem[] = [
     compatibleBulletContexts: ["cloud-deploy-infra"],
   },
 
-  // TIER 1.5: Skills Section Only (Kept out of bullets to avoid clutter/jargon)
+  // TIER 1.5: Skills Section Only
   { name: "PostgreSQL", aliases: ["postgresql", "postgres"], defaultTierIfMissing: "tier_1_5_skills_only", targetSkillCategory: "Databases & Cloud" },
   { name: "MongoDB", aliases: ["mongodb", "mongo"], defaultTierIfMissing: "tier_1_5_skills_only", targetSkillCategory: "Databases & Cloud" },
   { name: "Supabase", aliases: ["supabase"], defaultTierIfMissing: "tier_1_5_skills_only", targetSkillCategory: "Databases & Cloud" },
@@ -335,7 +469,7 @@ const LARP_CATALOG: CatalogItem[] = [
   { name: "Linux", aliases: ["linux", "unix"], defaultTierIfMissing: "tier_1_5_skills_only", targetSkillCategory: "Developer Tools & DevOps" },
   { name: "REST APIs", aliases: ["rest", "rest api", "rest apis", "restful"], defaultTierIfMissing: "tier_1_5_skills_only", targetSkillCategory: "Developer Tools & DevOps" },
 
-  // TIER 0: Workflow & Agile (Centralized 1-spot injection in a single space-permitting product/team bullet + Skills section)
+  // TIER 0: Workflow & Agile (Centralized 1-spot injection + Skills section)
   {
     name: "Jira",
     aliases: ["jira"],
@@ -387,9 +521,6 @@ function buildResumeCorpus(resume: MasterResume): string {
   return parts.join(" \n ");
 }
 
-/**
- * Step 1: Classify all keywords in the target Job Description into the 5 LARP buckets.
- */
 export function classifyJobDescriptionTiers(
   jobDescription: string,
   resume: MasterResume
@@ -438,7 +569,7 @@ export function classifyJobDescriptionTiers(
 }
 
 /* ============================================================================
- * 4. STEP 2: SKILLS SECTION SMART-SWAPPER (<= 98.0 NCU invariant)
+ * 5. STEP 2: SKILLS SECTION SMART-SWAPPER (<= 98.0 NCU invariant)
  * ============================================================================ */
 
 export interface SkillSwapChange {
@@ -514,7 +645,6 @@ export function smartSwapSkillsSection(
         continue;
       }
 
-      // Line is full: find a low-relevance skill in workingSkills not mentioned in JD to swap out
       let swapIdx = -1;
       for (let i = workingSkills.length - 1; i >= 0; i--) {
         const existingName = workingSkills[i].name;
@@ -560,19 +690,7 @@ export function smartSwapSkillsSection(
 }
 
 /* ============================================================================
- * 5. STEP 3: CONTEXT-AWARE, CENTRALIZED MINIMAL BULLET INJECTION
- * ============================================================================
- * Core Principles:
- * 1. Centralize edits: Each missing Tier 1 technical tool (e.g., AWS, Redis, GraphQL)
- *    is placed in AT MOST ONE bullet across the entire resume — specifically the bullet
- *    where it is most natural to defend and hardest to over-verify.
- * 2. Context awareness: Never inject web/cloud tools into C++/systems/OS-hook/robotics
- *    bullets. Only match bullets whose technical context fits the tool.
- * 3. Space-first check: Only apply an edit to a bullet that ALREADY has enough free
- *    horizontal space on its current line (1L or 2L) to fit the 2-5 word addition without
- *    rewriting the sentence or overflowing onto a new line.
- * 4. Minimal diff: Change only 1-5 words (e.g. appending `on **AWS**`, `with **Redis** caching`,
- *    or `and **GraphQL**` to an existing tool list), keeping 95%+ of the bullet identical.
+ * 6. STEP 3: CONTEXT-AWARE, CENTRALIZED MINIMAL BULLET INJECTION + LINE FIT
  * ============================================================================ */
 
 export interface BulletMutationProposal {
@@ -592,17 +710,12 @@ export interface BulletMutationProposal {
   accepted: boolean;
 }
 
-/**
- * Classifies what a bullet is actually about so we never inject cloud/web tools
- * into C++ OS hooks, embedded systems, or robotics bullets.
- */
 export function classifyBulletContext(
   bulletMarkup: string,
   containerTitle: string
 ): BulletDomainContext {
   const combined = `${containerTitle} ${plainText(bulletMarkup)}`;
 
-  // 1. Check if this is a low-level C++, OS hook, desktop, or robotics/autonomous bullet
   if (
     /\b(?:CGEventTap|WH_KEYBOARD_LL|SymSpell|llama\.cpp|SmolLM2|Qt6|Win32|macOS desktop|ROS\s*2|LiDAR|Gazebo|Foxglove|Pure Pursuit|costmap|odometry|rover|sensor-fusion|Raft consensus|Write-Ahead Log)\b/i.test(
       combined
@@ -611,7 +724,6 @@ export function classifyBulletContext(
     return "systems-cpp-robotics";
   }
 
-  // 2. Check if frontend / dashboard / UI focused
   if (
     /\b(?:React|Next\.js|dashboards?|UI|frontend|Tailwind|components|CSV\/Excel report)\b/i.test(
       combined
@@ -620,7 +732,6 @@ export function classifyBulletContext(
     return "frontend-ui";
   }
 
-  // 3. Check if cloud deployment / CI/CD / serverless focused
   if (
     /\b(?:deployed on|Firebase Cloud Functions|Docker|CI\/CD|GitHub Actions|serverless|container)\b/i.test(
       combined
@@ -629,14 +740,9 @@ export function classifyBulletContext(
     return "cloud-deploy-infra";
   }
 
-  // 4. Default for backend / API / database / Python / service bullets
   return "backend-api-db";
 }
 
-/**
- * Attempts a minimal 1-to-5 word surgical addition of `keyword` into `origMarkup`
- * ONLY if the bullet's context matches and the bullet has enough free space on its current line.
- */
 function tryMinimalKeywordInjection(
   origMarkup: string,
   context: BulletDomainContext,
@@ -648,7 +754,6 @@ function tryMinimalKeywordInjection(
   const trimmed = origMarkup.trim();
 
   if (keyword === "AWS") {
-    // Best spot 1: A bullet that persists/deploys backend services or cloud functions (e.g. Flask/Supabase/Firebase/Python)
     if (/\bto \*\*Supabase\*\*\.$/i.test(trimmed)) {
       return {
         mutatedMarkup: trimmed.replace(/\bto \*\*Supabase\*\*\.$/i, "to **Supabase** on **AWS**."),
@@ -687,10 +792,15 @@ function tryMinimalKeywordInjection(
           fitScore: 88,
         };
       }
-      if (/\b(?:APIs?|services?|pipeline|backend|server|PostgreSQL|FastAPI|Flask|Node\.js)\b/i.test(trimmed) && /\.$/.test(trimmed)) {
+      if (
+        /\b(?:APIs?|services?|pipeline|backend|server|PostgreSQL|FastAPI|Flask|Node\.js)\b/i.test(
+          trimmed
+        ) &&
+        /\.$/.test(trimmed)
+      ) {
         return {
           mutatedMarkup: trimmed.replace(/\.$/, " on **AWS**."),
-          reason: "Appended lightweight AWS hosting context to backend bullet with free line space",
+          reason: "Appended lightweight AWS hosting context to backend bullet",
           fitScore: 84,
         };
       }
@@ -698,7 +808,17 @@ function tryMinimalKeywordInjection(
   }
 
   if (keyword === "Redis") {
-    // Best spot: A bullet about PostgreSQL schemas, database queries, or backend APIs with ample line slack
+    if (/\bDeveloped \*\*REST APIs\*\* and relational \*\*PostgreSQL\*\* schemas to standardize eligibility records across (\*\*\d+\*\*|\d+) internal services\.$/i.test(trimmed)) {
+      // Rewrite this 118-char orphan 2-liner so it fits cleanly inside the 1-line area (<= 108 chars) with Redis!
+      return {
+        mutatedMarkup: trimmed.replace(
+          /\bDeveloped \*\*REST APIs\*\* and relational \*\*PostgreSQL\*\* schemas to standardize eligibility records across (\*\*\d+\*\*|\d+) internal services\.$/i,
+          "Built **REST APIs**, **Redis** cache, and **PostgreSQL** schemas standardizing records across $1 services."
+        ),
+        reason: "Added Redis caching and tightened bullet to fit cleanly inside 1-line area",
+        fitScore: 99,
+      };
+    }
     if (/\bacross (\*\*\d+\*\*|\d+) internal services\.$/i.test(trimmed)) {
       return {
         mutatedMarkup: trimmed.replace(
@@ -739,7 +859,6 @@ function tryMinimalKeywordInjection(
   }
 
   if (keyword === "GraphQL") {
-    // Best spot: Right next to an existing REST APIs mention in a frontend or backend bullet
     if (/\band \*\*REST APIs\*\*\.$/i.test(trimmed)) {
       return {
         mutatedMarkup: trimmed.replace(
@@ -754,7 +873,7 @@ function tryMinimalKeywordInjection(
       return {
         mutatedMarkup: trimmed.replace(
           /\bDeveloped \*\*REST APIs\*\* and\b/i,
-          "Developed **REST** and **GraphQL APIs** with"
+          "Built **REST/GraphQL APIs** and"
         ),
         reason: "Paired GraphQL with REST APIs in backend service bullet",
         fitScore: 94,
@@ -831,7 +950,6 @@ function tryMinimalKeywordInjection(
   }
 
   if (keyword === "Jira" || keyword === "Linear") {
-    // Centralized 1-spot PM tool placement on a product/workflow/service bullet with free line space
     if (/\bGave clients control over call workflows and dispatch timing\b/i.test(trimmed)) {
       return {
         mutatedMarkup: trimmed.replace(
@@ -848,7 +966,7 @@ function tryMinimalKeywordInjection(
           /\bacross (\*\*\d+\*\*|\d+) internal services\.$/i,
           `across $1 internal services tracked in **${keyword}**.`
         ),
-        reason: `Centralized ${keyword} sprint tracking on internal services bullet with free space`,
+        reason: `Centralized ${keyword} sprint tracking on internal services bullet`,
         fitScore: 91,
       };
     }
@@ -859,7 +977,7 @@ function tryMinimalKeywordInjection(
     ) {
       return {
         mutatedMarkup: trimmed.replace(/\.$/, `, tracked in **${keyword}**.`),
-        reason: `Centralized ${keyword} mention on product/feature bullet with free line space`,
+        reason: `Centralized ${keyword} mention on product/feature bullet`,
         fitScore: 86,
       };
     }
@@ -873,7 +991,7 @@ function tryMinimalKeywordInjection(
     ) {
       return {
         mutatedMarkup: trimmed.replace(/\.$/, " in **Agile** sprints."),
-        reason: "Centralized Agile sprint mention on feature delivery bullet with free line space",
+        reason: "Centralized Agile sprint mention on feature delivery bullet",
         fitScore: 85,
       };
     }
@@ -893,7 +1011,7 @@ function tryMinimalKeywordInjection(
 }
 
 /* ============================================================================
- * 6. FULL LARP ALIGNMENT PIPELINE (CENTRALIZED, SPACE-AWARE, MINIMAL)
+ * 7. FULL LARP ALIGNMENT PIPELINE (CENTRALIZED + FITS 1L OR 2L AREA)
  * ============================================================================ */
 
 export interface LarpAlignmentRun {
@@ -904,14 +1022,6 @@ export interface LarpAlignmentRun {
   guardrailVerifiedZeroBanned: boolean;
 }
 
-/**
- * Executes the refined Defensible Resume Alignment (LARP) Pipeline:
- * 1. Classifies JD keywords into the 5 defensibility buckets (blocking Tier 2 Banned).
- * 2. Runs the Skills Section Smart-Swapper (`<= 98.0 NCU` per category line).
- * 3. Globally selects AT MOST 1 best, space-permitting bullet per missing Tier 1 technical tool
- *    (prioritizing easily defensible backend/service/project bullets with ample free line space),
- *    applying a minimal 1-to-5 word addition without rewriting the sentence or overflowing lines.
- */
 export function runLarpAlignmentPipeline(
   jobDescription: string,
   resume: MasterResume
@@ -927,7 +1037,6 @@ export function runLarpAlignmentPipeline(
   const oneLineMaxChars = cal.oneLineMax || 108;
   const twoLineMaxChars = cal.twoLineMax || 216;
 
-  // Collect all candidate bullets with their context and available line slack
   interface CandidateBulletSlot {
     bullet: Bullet;
     containerId: string;
@@ -950,7 +1059,6 @@ export function runLarpAlignmentPipeline(
       const maxAllowedChars = origLines === 1 ? oneLineMaxChars : twoLineMaxChars;
       const charSlack = maxAllowedChars - origPlainLen;
       const context = classifyBulletContext(bullet.text, `${job.title} ${job.company}`);
-      // Prefer earlier/secondary roles or bullets with more slack that are easy to explain
       const defensibilityBonus = jobIdx > 0 ? 5 : 0;
 
       slots.push({
@@ -982,7 +1090,7 @@ export function runLarpAlignmentPipeline(
         containerTitle: proj.name,
         containerKind: "project",
         context,
-        defensibilityBonus: 6, // Small projects are very easy to defend
+        defensibilityBonus: 6,
         origPlainLen,
         maxAllowedChars,
         charSlack,
@@ -990,8 +1098,6 @@ export function runLarpAlignmentPipeline(
     }
   }
 
-  // For each Tier 1 technical tool AND at most 1 centralized Tier 0 PM/workflow term,
-  // find the SINGLE best bullet slot that has enough free space on its current line.
   const usedBulletIds = new Set<string>();
   const bulletProposals: BulletMutationProposal[] = [];
   const bannedLower = tiers.tier_2_banned.map((b) => b.toLowerCase());
@@ -1012,32 +1118,31 @@ export function runLarpAlignmentPipeline(
 
     for (const slot of slots) {
       if (usedBulletIds.has(slot.bullet.id)) continue;
-      // Require at least 8 characters of free space on the current line before even trying
-      if (slot.charSlack < 8) continue;
 
       const attempt = tryMinimalKeywordInjection(slot.bullet.text, slot.context, keyword);
       if (!attempt) continue;
 
-      const newPlainLen = plainText(attempt.mutatedMarkup).trim().length;
-      // Must fit strictly within the bullet's existing calibrated 1-line or 2-line character cap!
-      if (newPlainLen > slot.maxAllowedChars) continue;
+      // Automatically rewrite/tighten the modified bullet so it fits cleanly inside the calibrated 1-line or 2-line area!
+      const fittedMarkup = fitBulletToCalibratedLineArea(attempt.mutatedMarkup, cal);
 
       // Verify zero Tier 2 Banned terms
-      if (bannedLower.some((b) => containsPhrase(plainText(attempt.mutatedMarkup), b))) continue;
+      if (bannedLower.some((b) => containsPhrase(plainText(fittedMarkup), b))) continue;
 
-      const origLatex = `\\item ${markupToLatex(slot.bullet.text)}`;
-      const candLatex = `\\item ${markupToLatex(attempt.mutatedMarkup)}`;
-      const budget = checkLineBudget(origLatex, candLatex, 98.0);
+      const budget = checkLineBudget(slot.bullet.text, fittedMarkup, cal, 98.0);
       if (!budget.valid) continue;
 
-      const wordStats = computeWordReframeStats(slot.bullet.text, attempt.mutatedMarkup, 6);
+      const wordStats = computeWordReframeStats(slot.bullet.text, fittedMarkup, 7);
       if (!wordStats.withinCap) continue;
 
-      const totalScore = attempt.fitScore + slot.defensibilityBonus + Math.min(10, slot.charSlack / 5);
+      // Bonus score if the fitted bullet lands in the Green ideal 1-line or 2-line zone
+      const greenBonus = budget.candFit.tone === "green" ? 12 : 0;
+      const totalScore =
+        attempt.fitScore + slot.defensibilityBonus + greenBonus + Math.min(8, slot.charSlack / 6);
+
       if (!bestProposal || totalScore > bestProposal.score) {
         bestProposal = {
           slot,
-          mutatedMarkup: attempt.mutatedMarkup,
+          mutatedMarkup: fittedMarkup,
           reason: attempt.reason,
           score: totalScore,
           budget,
@@ -1070,7 +1175,6 @@ export function runLarpAlignmentPipeline(
     }
   }
 
-  // Final Guardrail Verification: confirm 0 occurrences of any tier_2_banned term in mutated outputs
   const allMutatedText = [
     ...updatedCategories.flatMap((c) => c.skills.map((s) => s.name)),
     ...bulletProposals.map((p) => plainText(p.mutatedMarkup)),
@@ -1089,9 +1193,6 @@ export function runLarpAlignmentPipeline(
   };
 }
 
-/**
- * Applies the user-accepted skill swaps and bullet mutations to produce an updated `MasterResume`.
- */
 export function applyLarpMutationsToResume(
   resume: MasterResume,
   alignment: LarpAlignmentRun,

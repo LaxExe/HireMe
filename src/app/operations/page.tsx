@@ -679,12 +679,15 @@ export default function OperationsPage() {
                                 </span>
                               ))}
                               <span className="font-mono text-[10px] px-2 py-0.5 rounded bg-emerald-50 border border-emerald-200 text-emerald-700">
-                                +{prop.wordStats.reframedWords} words added
+                                {prop.budget.candFit.badge} · {prop.budget.candFit.label} ({prop.budget.candChars}/
+                                {prop.budget.candLines === 1
+                                  ? resume?.calibration?.oneLineMax ?? 108
+                                  : resume?.calibration?.twoLineMax ?? 216}{" "}
+                                chars)
                               </span>
                               <span className="font-mono text-[10px] px-2 py-0.5 rounded bg-neutral-100 border border-[#ebebeb] text-neutral-600">
-                                {prop.budget.origWidth} → {prop.budget.candWidth} NCU (
-                                {prop.budget.origLines}L → {prop.budget.candLines}L ·{" "}
-                                {prop.budget.slackNcu} NCU slack had room)
+                                {prop.budget.origChars} → {prop.budget.candChars} chars · {prop.budget.origWidth} →{" "}
+                                {prop.budget.candWidth} NCU
                               </span>
                             </div>
                           </div>
@@ -696,7 +699,7 @@ export default function OperationsPage() {
                           <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 text-xs leading-relaxed">
                             <div className="rounded-lg bg-[#fafafa] border border-[#ebebeb] p-3">
                               <span className="block font-mono text-[10px] text-neutral-400 uppercase mb-1">
-                                Original ({prop.budget.origWidth} NCU · {prop.budget.origLines}L)
+                                Original ({prop.budget.origChars} chars · {prop.budget.origFit.badge} · {prop.budget.origWidth} NCU)
                               </span>
                               <p className="text-neutral-600">
                                 {parseMarkup(prop.originalMarkup).map((seg, idx) =>
@@ -713,7 +716,11 @@ export default function OperationsPage() {
 
                             <div className="rounded-lg bg-emerald-50/30 border border-emerald-200/70 p-3">
                               <span className="block font-mono text-[10px] text-emerald-700 uppercase mb-1">
-                                Aligned ({prop.budget.candWidth} NCU · {prop.budget.candLines}L)
+                                Rewritten to Fit {prop.budget.candFit.badge} Area ({prop.budget.candChars}/
+                                {prop.budget.candLines === 1
+                                  ? resume?.calibration?.oneLineMax ?? 108
+                                  : resume?.calibration?.twoLineMax ?? 216}{" "}
+                                chars · {prop.budget.candWidth} NCU)
                               </span>
                               <p className="text-neutral-800">
                                 {prop.wordStats.tokens.map((tok, idx) => {
