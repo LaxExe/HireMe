@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <rect x="0" y="0" width="512" height="512" rx="112" fill="#171717" />
+  <rect x="4" y="4" width="504" height="504" rx="108" fill="none" stroke="rgba(255,255,255,0.12)" stroke-width="4" />
+  <g transform="translate(10, 0)">
+    <path d="
+  M 136 104
+  L 196 104
+  L 196 226
+  C 214 202, 240 190, 272 190
+  C 324 190, 356 224, 356 284
+  L 356 408
+  L 296 408
+  L 296 290
+  C 296 258, 280 242, 250 242
+  C 218 242, 196 264, 196 300
+  L 196 408
+  L 136 408
+  Z
+" fill="#ffffff" />
+  </g>
+</svg>
