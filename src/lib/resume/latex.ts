@@ -6,6 +6,7 @@ import type {
   Job,
   MasterResume,
   Project,
+  ResumeSectionKey,
   SkillCategory,
 } from "./types";
 import { emptyResume } from "./types";
@@ -582,25 +583,41 @@ export function parseLatexResume(source: string): MasterResume {
   const contactRegion = sections.length > 0 ? body.slice(0, sections[0].start) : body;
   resume.contact = parseContact(contactRegion);
 
+  const detected = new Set<ResumeSectionKey>(["contact"]);
+
   for (const sec of sections) {
     const content = body.slice(sec.contentStart, sec.end);
     const key = sec.key;
 
     if (/EDUCAT|ACADEMIC/.test(key)) {
-      resume.education.push(...parseEducation(content));
+      const items = parseEducation(content);
+      resume.education.push(...items);
+      if (items.length > 0) detected.add("education");
     } else if (/SKILL|TECHNICAL|COMPETENC/.test(key)) {
-      resume.skills.push(...parseSkills(content));
+      const items = parseSkills(content);
+      resume.skills.push(...items);
+      if (items.length > 0) detected.add("skills");
     } else if (/EXPERIENCE|WORK|EMPLOYMENT|PROFESSIONAL/.test(key)) {
-      resume.experience.push(...parseExperience(content));
+      const items = parseExperience(content);
+      resume.experience.push(...items);
+      if (items.length > 0) detected.add("experience");
     } else if (/PROJECT/.test(key)) {
-      resume.projects.push(...parseProjects(content));
+      const items = parseProjects(content);
+      resume.projects.push(...items);
+      if (items.length > 0) detected.add("projects");
     } else if (/LEADERSHIP|EXTRACURRICULAR|ACTIVIT|VOLUNTEER/.test(key)) {
       // Leadership roles are integrated into experience to preserve tool, metric, and line calibration scoring
-      resume.experience.push(...parseExperience(content));
+      const items = parseExperience(content);
+      resume.experience.push(...items);
+      if (items.length > 0) detected.add("experience");
     } else if (/AWARD|HONOR|SCHOLARSHIP|ACHIEVEMENT/.test(key)) {
-      resume.awards.push(...parseAwards(content));
+      const items = parseAwards(content);
+      resume.awards.push(...items);
+      if (items.length > 0) detected.add("awards");
     }
   }
+
+  resume.sections = Array.from(detected);
 
   // Derive tools & metrics across the full vocabulary of skills and projects
   const known = knownTools(

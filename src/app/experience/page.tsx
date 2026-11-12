@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import { loadMasterResume, saveMasterResume } from "@/lib/resume/store";
 import { knownTools } from "@/lib/resume/utils";
-import type { MasterResume } from "@/lib/resume/types";
+import { hasResumeSection, type MasterResume } from "@/lib/resume/types";
 import ResumeImporter from "@/components/resume/ResumeImporter";
 import ResumeTree from "@/components/resume/ResumeTree";
 import CalibrationBar from "@/components/resume/CalibrationBar";
@@ -128,23 +128,35 @@ export default function ExperiencePage() {
 
               <div className="space-y-8 min-w-0">
                 <CalibrationBar />
-                <ContactSection contact={resume.contact} onChange={(contact) => update({ contact })} />
-                <EducationSection items={resume.education} onChange={(education) => update({ education })} />
-                <SkillsSection categories={resume.skills} onChange={(skills) => update({ skills })} />
-                <ExperienceSection
-                  jobs={resume.experience}
-                  known={known}
-                  onChange={(experience) => update({ experience })}
-                />
-                <ProjectsSection
-                  projects={resume.projects}
-                  known={known}
-                  onChange={(projects) => update({ projects })}
-                />
-                <AwardsSection
-                  awards={resume.awards ?? []}
-                  onChange={(awards) => update({ awards })}
-                />
+                {hasResumeSection(resume, "contact") && (
+                  <ContactSection contact={resume.contact} onChange={(contact) => update({ contact })} />
+                )}
+                {hasResumeSection(resume, "education") && (
+                  <EducationSection items={resume.education} onChange={(education) => update({ education })} />
+                )}
+                {hasResumeSection(resume, "skills") && (
+                  <SkillsSection categories={resume.skills} onChange={(skills) => update({ skills })} />
+                )}
+                {hasResumeSection(resume, "experience") && (
+                  <ExperienceSection
+                    jobs={resume.experience}
+                    known={known}
+                    onChange={(experience) => update({ experience })}
+                  />
+                )}
+                {hasResumeSection(resume, "projects") && (
+                  <ProjectsSection
+                    projects={resume.projects}
+                    known={known}
+                    onChange={(projects) => update({ projects })}
+                  />
+                )}
+                {hasResumeSection(resume, "awards") && (
+                  <AwardsSection
+                    awards={resume.awards ?? []}
+                    onChange={(awards) => update({ awards })}
+                  />
+                )}
               </div>
             </div>
           )
