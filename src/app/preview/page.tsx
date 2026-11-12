@@ -14,6 +14,7 @@ import {
   Send,
   Check,
   Plus,
+  X,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import {
@@ -212,11 +213,18 @@ export default function PreviewPage() {
   };
 
   const handleDeleteSlot = (slotId: string) => {
-    const oldUrl = visualizedUrlBySlot[slotId];
-    if (oldUrl) URL.revokeObjectURL(oldUrl);
+    setVisualizedUrlBySlot((prev) => {
+      if (prev[slotId]) {
+        URL.revokeObjectURL(prev[slotId]);
+      }
+      if (!(slotId in prev)) return prev;
+      const next = { ...prev };
+      delete next[slotId];
+      return next;
+    });
     const nextQueue = deletePreviewQueueItem(user.uid, slotId);
     setQueue(nextQueue);
-    if (selectedId === slotId) {
+    if (selectedId === slotId || activeItem?.id === slotId) {
       setSelectedId(nextQueue[0]?.id ?? null);
     }
   };
@@ -285,7 +293,7 @@ export default function PreviewPage() {
       roleUrl: item.roleUrl,
       tailoredResume: tailored,
     });
-    updateActiveItem({ pushedToAgentsAt: entry.createdAt });
+    handleDeleteSlot(item.id);
     setPushedAgentBanner({
       slotId: item.id,
       fileName: entry.fileName,
@@ -348,6 +356,41 @@ export default function PreviewPage() {
         </div>
       </div>
 
+      {pushedAgentBanner && (
+        <div className="flex items-center justify-between gap-3 flex-wrap rounded-xl border border-[#ebebeb] bg-white shadow-subtle px-4 py-3">
+          <div className="flex items-center gap-2.5 text-xs text-neutral-800">
+            <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-emerald-600 text-white shrink-0">
+              <Check className="w-3 h-3" />
+            </span>
+            <span>
+              Sent{" "}
+              <span className="font-mono text-[11px] font-semibold text-neutral-900">
+                {pushedAgentBanner.fileName}
+              </span>{" "}
+              ({pushedAgentBanner.roleName}) to Agents and removed from Preview.
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => router.push("/agents")}
+              className="inline-flex items-center gap-1.5 font-mono text-[11px] font-medium text-white bg-neutral-900 hover:bg-neutral-800 px-3 py-1 rounded-full active:scale-95 transition-all cursor-pointer"
+            >
+              <span>Open Agents</span>
+              <ArrowRight className="w-3 h-3" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setPushedAgentBanner(null)}
+              aria-label="Dismiss notification"
+              className="p-1 rounded-full text-neutral-400 hover:text-neutral-700 hover:bg-neutral-100 cursor-pointer"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
+
       {queue.length === 0 || !activeItem ? (
         <div className="w-full bg-white rounded-xl border border-[#ebebeb] shadow-subtle min-h-[340px] flex flex-col items-center justify-center p-8 text-center space-y-3">
           <div className="w-10 h-10 rounded-xl bg-neutral-100 border border-[#ebebeb] flex items-center justify-center text-neutral-500">
@@ -374,6 +417,7 @@ export default function PreviewPage() {
           </button>
         </div>
       ) : (
+        <>
         <div className="grid grid-cols-1 lg:grid-cols-[270px_minmax(0,1fr)] gap-6 items-start">
           {/* Left Sidebar: Queued Preview Slots */}
           <aside className="bg-white rounded-xl border border-[#ebebeb] shadow-subtle p-3 space-y-2">
@@ -391,7 +435,7 @@ export default function PreviewPage() {
                 const totalSelectedEdits =
                   item.acceptedBulletIds.length +
                   item.acceptedMalleableIds.length +
-                  (item.applySkillsSwap && item.larpRun.skillSwaps.length > 0 ? 1 : 0);
+                  item.selectedSkillNames.length;
 
                 return (
                   <div
@@ -531,44 +575,6 @@ export default function PreviewPage() {
                   </button>
                 </div>
               </div>
-
-              {((pushedAgentBanner && pushedAgentBanner.slotId === activeItem.id) ||
-                activeItem.pushedToAgentsAt) && (
-                <div className="flex items-center justify-between gap-3 flex-wrap rounded-lg border border-[#ebebeb] bg-[#fafafa] px-3 py-2">
-                  <div className="flex items-center gap-2 text-xs text-neutral-800">
-                    <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-emerald-600 text-white">
-                      <Check className="w-2.5 h-2.5" />
-                    </span>
-                    {pushedAgentBanner && pushedAgentBanner.slotId === activeItem.id ? (
-                      <span>
-                        Pushed{" "}
-                        <span className="font-mono text-[11px] font-medium text-neutral-900">
-                          {pushedAgentBanner.fileName}
-                        </span>{" "}
-                        to Agents
-                      </span>
-                    ) : (
-                      <span>
-                        Pushed to Agents{" "}
-                        <span className="font-mono text-[11px] text-neutral-500">
-                          {new Date(activeItem.pushedToAgentsAt!).toLocaleTimeString([], {
-                            hour: "2-digit",
-                            minute: "2-digit",
-                          })}
-                        </span>
-                      </span>
-                    )}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => router.push("/agents")}
-                    className="inline-flex items-center gap-1 font-mono text-[11px] font-medium text-neutral-900 bg-white border border-[#ebebeb] hover:bg-neutral-100 px-2.5 py-1 rounded-full active:scale-95 transition-all cursor-pointer"
-                  >
-                    <span>Open Agents</span>
-                    <ArrowRight className="w-3 h-3" />
-                  </button>
-                </div>
-              )}
 
               {/* 1. Independent Skills Section Additions */}
               {(() => {
@@ -939,49 +945,69 @@ export default function PreviewPage() {
                 </div>
               )}
             </div>
+          </div>
+        </div>
 
-            {/* In-Screen PDF Visualization Pane */}
-            <div className="bg-white rounded-xl border border-[#ebebeb] shadow-subtle overflow-hidden">
-              <div className="px-4 py-3 border-b border-[#ebebeb] flex items-center justify-between bg-[#fafafa]">
-                <span className="font-mono text-[11px] font-semibold text-neutral-800">
-                  On-Screen PDF Visualizer · {activeItem.roleName || activeItem.title}
-                </span>
+        {/* Full-Width Bottom On-Screen PDF Visualization Pane */}
+        <div className="relative left-1/2 -translate-x-1/2 w-[calc(100vw-2rem)] sm:w-[calc(100vw-3rem)]">
+          <div className="w-full bg-white rounded-xl border border-[#ebebeb] shadow-subtle overflow-hidden">
+            <div className="px-4 sm:px-6 py-3 border-b border-[#ebebeb] flex items-center justify-between gap-3 flex-wrap bg-[#fafafa]">
+              <span className="font-mono text-[11px] font-semibold text-neutral-800">
+                On-Screen PDF Visualizer · {activeItem.roleName || activeItem.title}
+              </span>
+              <div className="flex items-center gap-2">
                 {visualizedUrlBySlot[activeItem.id] && (
                   <span className="font-mono text-[10px] text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded">
                     Live Rendered PDF (No Download Required)
                   </span>
                 )}
+                <button
+                  type="button"
+                  disabled={visualizingId === activeItem.id}
+                  onClick={() => handleVisualizeSlot(activeItem)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1 text-[11px] font-medium text-neutral-800 bg-white hover:bg-neutral-100 border border-[#ebebeb] rounded-full disabled:opacity-40 active:scale-95 transition-all cursor-pointer"
+                >
+                  <Eye className="w-3 h-3" />
+                  <span>
+                    {visualizingId === activeItem.id
+                      ? "Rendering..."
+                      : visualizedUrlBySlot[activeItem.id]
+                        ? "Refresh PDF"
+                        : "Visualize PDF"}
+                  </span>
+                </button>
               </div>
-
-              {visualizedUrlBySlot[activeItem.id] ? (
-                <iframe
-                  src={visualizedUrlBySlot[activeItem.id]}
-                  title={`PDF Preview - ${activeItem.roleName || activeItem.title}`}
-                  className="w-full h-[880px] border-0 bg-neutral-100"
-                />
-              ) : (
-                <div className="h-[420px] flex flex-col items-center justify-center p-8 text-center space-y-3">
-                  <p className="text-xs text-neutral-500 max-w-sm">
-                    Select or edit the proposed bullets above, then click{" "}
-                    <span className="font-semibold text-neutral-900">Visualize PDF</span> to render
-                    your tailored resume right here on screen without downloading a file.
-                  </p>
-                  <button
-                    type="button"
-                    disabled={visualizingId === activeItem.id}
-                    onClick={() => handleVisualizeSlot(activeItem)}
-                    className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-medium text-white bg-neutral-900 hover:bg-neutral-800 rounded-full disabled:opacity-40 shadow-subtle active:scale-95 transition-all cursor-pointer"
-                  >
-                    <Eye className="w-3.5 h-3.5" />
-                    <span>
-                      {visualizingId === activeItem.id ? "Rendering PDF..." : "Visualize PDF"}
-                    </span>
-                  </button>
-                </div>
-              )}
             </div>
+
+            {visualizedUrlBySlot[activeItem.id] ? (
+              <iframe
+                src={visualizedUrlBySlot[activeItem.id]}
+                title={`PDF Preview - ${activeItem.roleName || activeItem.title}`}
+                className="w-full h-[88vh] min-h-[760px] border-0 bg-neutral-100"
+              />
+            ) : (
+              <div className="h-[420px] flex flex-col items-center justify-center p-8 text-center space-y-3">
+                <p className="text-xs text-neutral-500 max-w-sm">
+                  Select or edit the proposed bullets above, then click{" "}
+                  <span className="font-semibold text-neutral-900">Visualize PDF</span> to render
+                  your tailored resume right here on screen without downloading a file.
+                </p>
+                <button
+                  type="button"
+                  disabled={visualizingId === activeItem.id}
+                  onClick={() => handleVisualizeSlot(activeItem)}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-medium text-white bg-neutral-900 hover:bg-neutral-800 rounded-full disabled:opacity-40 shadow-subtle active:scale-95 transition-all cursor-pointer"
+                >
+                  <Eye className="w-3.5 h-3.5" />
+                  <span>
+                    {visualizingId === activeItem.id ? "Rendering PDF..." : "Visualize PDF"}
+                  </span>
+                </button>
+              </div>
+            )}
           </div>
         </div>
+        </>
       )}
     </div>
   );
