@@ -1014,6 +1014,18 @@ function tryMinimalKeywordInjection(
  * 7. MALLEABLE 1-LINE LARP BULLET SYNTHESIZER + AI BELIEVABILITY EVALUATOR
  * ============================================================================ */
 
+export interface MalleableBulletOption {
+  id: string;
+  styleLabel: "Casual & Direct" | "Simple Integration" | "Workflow & Ops";
+  markup: string;
+  latex: string;
+  chars: number;
+  maxChars: number;
+  widthNcu: number;
+  fit: ReturnType<typeof bulletFit>;
+  easyExplanation: string;
+}
+
 export interface MalleableSynthesizedBullet {
   id: string;
   targetContainerId: string;
@@ -1031,6 +1043,8 @@ export interface MalleableSynthesizedBullet {
   believabilityScore: number;
   believabilityCritique: string;
   recommended: boolean;
+  /** Multiple good, low-stretch 1-line resume bullet options for this slot so the user can pick their favorite phrasing. */
+  options: MalleableBulletOption[];
 }
 
 export interface AiBelievabilityRecommendation {
@@ -1175,8 +1189,14 @@ export function synthesizeMalleableOneLineBullets(
   const hasDocker = tier1.some((k) => k.toLowerCase() === "docker");
   const pmTool = tier0.find((k) => /^(?:Jira|Linear|Agile)$/i.test(k)) || tier0[0];
 
-  interface TemplateOption {
+  interface OptionTemplate {
+    styleLabel: MalleableBulletOption["styleLabel"];
     variants: string[];
+    easyExplanation: string;
+  }
+
+  interface TemplateOption {
+    optionTemplates: OptionTemplate[];
     keywords: string[];
     believabilityScore: number;
     critique: string;
@@ -1184,7 +1204,7 @@ export function synthesizeMalleableOneLineBullets(
 
   const candidateTemplates: TemplateOption[] = [];
 
-  // Template 1: API + Caching / Querying tailored to the exact role's domain
+  // Template 1: Simple, everyday API consumption or basic TTL caching (zero architectural stretch)
   if (hasGraphQL || hasRedis) {
     const kws = [
       ...(hasGraphQL ? ["GraphQL"] : []),
@@ -1192,42 +1212,112 @@ export function synthesizeMalleableOneLineBullets(
     ];
     if (hasEligibilityOrRecords) {
       candidateTemplates.push({
-        variants: [
-          `Built **${hasGraphQL ? "GraphQL" : "REST"}** endpoints with **${hasRedis ? "Redis" : primaryMatchedStack}** caching to speed up eligibility lookups across services.`,
-          `Built **${hasGraphQL ? "GraphQL" : "REST"}** query endpoints with **${hasRedis ? "Redis" : primaryMatchedStack}** TTL caching to accelerate eligibility record lookups.`,
-          `Added **${hasGraphQL ? "GraphQL" : "REST"}** endpoints and **${hasRedis ? "Redis" : primaryMatchedStack}** caching to reduce latency on eligibility record queries.`,
+        optionTemplates: [
+          {
+            styleLabel: "Casual & Direct",
+            variants: [
+              `Used **${hasRedis ? "Redis" : primaryMatchedStack}** to cache repeat eligibility lookups and queried **${hasGraphQL ? "GraphQL" : "REST"}** endpoints across services.`,
+              `Cached repeat eligibility lookups in **${hasRedis ? "Redis" : primaryMatchedStack}** and fetched record status via **${hasGraphQL ? "GraphQL" : "REST"}** queries.`,
+            ],
+            easyExplanation:
+              "Super easy to explain: you just cached repeat database reads with a basic TTL key and fetched fields from an existing endpoint.",
+          },
+          {
+            styleLabel: "Simple Integration",
+            variants: [
+              `Queried **${hasGraphQL ? "GraphQL" : "REST"}** endpoints and added **${hasRedis ? "Redis" : primaryMatchedStack}** caching to cut repeat database reads on records.`,
+              `Connected **${hasGraphQL ? "GraphQL" : "REST"}** status queries with **${hasRedis ? "Redis" : primaryMatchedStack}** caching for internal eligibility checks.`,
+            ],
+            easyExplanation:
+              "Frames GraphQL/Redis strictly as calling an endpoint and storing a key-value response—no complex server internals.",
+          },
+          {
+            styleLabel: "Workflow & Ops",
+            variants: [
+              `Added **${hasRedis ? "Redis" : primaryMatchedStack}** response caching and **${hasGraphQL ? "GraphQL" : "REST"}** data fetching for internal service dashboards.`,
+              `Wired up **${hasGraphQL ? "GraphQL" : "REST"}** queries and **${hasRedis ? "Redis" : primaryMatchedStack}** caching for internal eligibility tools.`,
+            ],
+            easyExplanation:
+              "Positions the work as a straightforward internal tool improvement that nobody will grill you on.",
+          },
         ],
         keywords: kws,
         believabilityScore: 96,
         critique:
-          "Directly extends the role's existing PostgreSQL & REST eligibility service architecture with a standard read-through Redis/GraphQL layer that is trivial to explain in 30 seconds.",
+          "Very low stretch: simply caching repeat lookups in Redis and querying an endpoint on top of your existing PostgreSQL service.",
       });
     } else if (hasVoiceOrDispatches) {
       candidateTemplates.push({
-        variants: [
-          `Cached active call session state in **${hasRedis ? "Redis" : "Supabase"}** and exposed **${hasGraphQL ? "GraphQL" : "REST"}** status queries for live dashboards.`,
-          `Built **${hasGraphQL ? "GraphQL" : "REST"}** status endpoints backed by **${hasRedis ? "Redis" : "Supabase"}** session caching for real-time call tracking.`,
+        optionTemplates: [
+          {
+            styleLabel: "Casual & Direct",
+            variants: [
+              `Cached active call state in **${hasRedis ? "Redis" : "Supabase"}** and queried **${hasGraphQL ? "GraphQL" : "REST"}** endpoints to update live dispatch views.`,
+              `Used **${hasRedis ? "Redis" : "Supabase"}** to store short-lived call state and fetched updates via **${hasGraphQL ? "GraphQL" : "REST"}** queries.`,
+            ],
+            easyExplanation:
+              "Just storing a temporary session key during a call and reading status for the UI.",
+          },
+          {
+            styleLabel: "Simple Integration",
+            variants: [
+              `Fetched live dispatch status via **${hasGraphQL ? "GraphQL" : "REST"}** queries with **${hasRedis ? "Redis" : "Supabase"}** caching for recent call sessions.`,
+            ],
+            easyExplanation:
+              "Simple client-side query + basic cache read.",
+          },
+          {
+            styleLabel: "Workflow & Ops",
+            variants: [
+              `Added **${hasRedis ? "Redis" : "Supabase"}** session caching and **${hasGraphQL ? "GraphQL" : "REST"}** status checks for client call workflows.`,
+            ],
+            easyExplanation:
+              "Easy everyday product feature framing.",
+          },
         ],
         keywords: kws,
         believabilityScore: 95,
         critique:
-          "Fits seamlessly into the real-time voice/dispatch pipeline—caching active call state in Redis and querying status for the dashboard is textbook consumption-level framing.",
+          "Low-stretch addition: storing short-lived call state in Redis and reading status for the dashboard.",
       });
     } else {
       candidateTemplates.push({
-        variants: [
-          `Implemented **${hasGraphQL ? "GraphQL" : "REST"}** API resolvers with **${hasRedis ? "Redis" : primaryMatchedStack}** caching to cut response latency on client queries.`,
-          `Built **${hasGraphQL ? "GraphQL" : "REST"}** endpoints with **${hasRedis ? "Redis" : primaryMatchedStack}** TTL caching to speed up high-frequency API reads.`,
+        optionTemplates: [
+          {
+            styleLabel: "Casual & Direct",
+            variants: [
+              `Used **${hasRedis ? "Redis" : primaryMatchedStack}** to cache frequent API responses and queried **${hasGraphQL ? "GraphQL" : "REST"}** endpoints for UI views.`,
+              `Queried **${hasGraphQL ? "GraphQL" : "REST"}** endpoints and cached frequent lookups in **${hasRedis ? "Redis" : primaryMatchedStack}** to reduce API load.`,
+            ],
+            easyExplanation:
+              "Simple key-value response caching + standard data fetching.",
+          },
+          {
+            styleLabel: "Simple Integration",
+            variants: [
+              `Connected **${hasGraphQL ? "GraphQL" : "REST"}** client queries with **${hasRedis ? "Redis" : primaryMatchedStack}** caching for faster page loads.`,
+            ],
+            easyExplanation:
+              "Framed as basic consumption of an API and cache.",
+          },
+          {
+            styleLabel: "Workflow & Ops",
+            variants: [
+              `Added **${hasRedis ? "Redis" : primaryMatchedStack}** TTL caching and **${hasGraphQL ? "GraphQL" : "REST"}** queries across internal app workflows.`,
+            ],
+            easyExplanation:
+              "Lightweight, everyday engineering task.",
+          },
         ],
         keywords: kws,
         believabilityScore: 94,
         critique:
-          "Clean, consumption-level API + caching bullet grounded in your existing stack without claiming deep distributed-systems internals.",
+          "Simple, everyday API consumption and TTL caching—no deep architecture claims.",
       });
     }
   }
 
-  // Template 2: Cloud Deployment / Webhooks / PM Workflow tailored to the role's domain
+  // Template 2: Simple Cloud Hosting / Webhooks / PM Tracking (zero-stretch)
   if (hasAws || hasWebhooks || hasDocker || pmTool) {
     const cloudKw = hasAws ? "AWS" : hasDocker ? "Docker" : "CI/CD";
     const secondKw = hasWebhooks ? "Webhooks" : pmTool || primaryMatchedStack;
@@ -1240,72 +1330,101 @@ export function synthesizeMalleableOneLineBullets(
       ])
     ).slice(0, 2);
 
-    if (hasEligibilityOrRecords) {
-      candidateTemplates.push({
-        variants: [
-          `Automated **${cloudKw}** service deployments and **${secondKw}** syncs for internal eligibility workflows.`,
-          `Deployed containerized **${primaryMatchedStack}** services on **${cloudKw}**, tracking sprint releases in **${pmTool || "Git"}**.`,
-          `Streamlined **${cloudKw}** release pipelines and **${secondKw}** alerts across internal backend services.`,
-        ],
-        keywords: kws.length > 0 ? kws : [cloudKw],
-        believabilityScore: 93,
-        critique:
-          "Frames cloud deployment and sprint tracking around the exact internal eligibility services already described in this role—impossible for an interviewer to falsify.",
-      });
-    } else {
-      candidateTemplates.push({
-        variants: [
-          `Deployed **${primaryMatchedStack}** backend workers on **${cloudKw}** with automated **${secondKw}** event handling.`,
-          `Shipped **${primaryMatchedStack}** service updates to **${cloudKw}**, coordinating release milestones in **${pmTool || "Agile"}**.`,
-        ],
-        keywords: kws.length > 0 ? kws : [cloudKw],
-        believabilityScore: 92,
-        critique:
-          "High-plausibility deployment & workflow bullet that pairs your real language stack with lightweight cloud hosting.",
-      });
-    }
+    candidateTemplates.push({
+      optionTemplates: [
+        {
+          styleLabel: "Casual & Direct",
+          variants: [
+            `Deployed **${primaryMatchedStack}** service updates on **${cloudKw}** and tracked sprint tasks and bug fixes in **${pmTool || "Git"}**.`,
+            `Hosted **${primaryMatchedStack}** backend services on **${cloudKw}** and coordinated feature releases in **${pmTool || "Agile"}** sprints.`,
+          ],
+          easyExplanation:
+            "Everyone pushes code to an existing cloud environment and moves tickets in Jira/Linear—zero technical risk.",
+        },
+        {
+          styleLabel: "Simple Integration",
+          variants: [
+            `Wired up **${secondKw}** status notifications for **${primaryMatchedStack}** services running on **${cloudKw}**.`,
+            `Configured **${cloudKw}** environment variables and **${secondKw}** callbacks for internal **${primaryMatchedStack}** APIs.`,
+          ],
+          easyExplanation:
+            "Simple config and webhook callback handling that takes 15 minutes in real life.",
+        },
+        {
+          styleLabel: "Workflow & Ops",
+          variants: [
+            `Managed **${pmTool || "Agile"}** sprint tickets and routine **${cloudKw}** deployments for internal **${primaryMatchedStack}** tools.`,
+          ],
+          easyExplanation:
+            "Pure day-to-day workflow and routine deployment.",
+        },
+      ],
+      keywords: kws.length > 0 ? kws : [cloudKw],
+      believabilityScore: 95,
+      critique:
+        "Zero stretch: deploying your existing code to AWS/Docker and tracking sprint tickets in Jira/Linear is standard day-to-day work.",
+    });
   }
 
-  // Template 3: End-to-end observability / workflow delivery fallback so we can always fulfill up to malleableCount
+  // Template 3: Simple testing / logging / sprint hygiene fallback
   candidateTemplates.push({
-    variants: [
-      `Built **${primaryMatchedStack}** health checks and structured API logging to streamline debugging across services.`,
-      `Added automated **${primaryMatchedStack}** schema validation and **${pmTool || "Agile"}** release checks for backend APIs.`,
+    optionTemplates: [
+      {
+        styleLabel: "Casual & Direct",
+        variants: [
+          `Wrote **${primaryMatchedStack}** API integration tests and tracked bug fixes across **${pmTool || "Agile"}** sprint cycles.`,
+        ],
+        easyExplanation:
+          "Writing basic API tests and tracking tickets is 100% natural for any intern or junior engineer.",
+      },
+      {
+        styleLabel: "Simple Integration",
+        variants: [
+          `Added structured **${primaryMatchedStack}** request logging and error alerts to simplify debugging across internal APIs.`,
+        ],
+        easyExplanation:
+          "Simple logging and error handling in your main language.",
+      },
     ],
     keywords: pmTool ? [pmTool, primaryMatchedStack] : [primaryMatchedStack],
-    believabilityScore: 90,
+    believabilityScore: 93,
     critique:
-      "Grounded engineering hygiene bullet using your primary verified language and lightweight workflow framing.",
+      "Completely grounded in your real language stack—just basic testing, logging, and sprint tracking.",
   });
 
   const results: MalleableSynthesizedBullet[] = [];
 
   for (let i = 0; i < Math.min(count, candidateTemplates.length); i++) {
     const tpl = candidateTemplates[i];
-    // Pick or tighten the variant that lands closest to the green 1-line zone (minOneLineChars .. oneLineMax)
-    let chosenMarkup = fitBulletToCalibratedLineArea(tpl.variants[0], cal);
-    for (const v of tpl.variants) {
-      const fitted = fitBulletToCalibratedLineArea(v, cal);
-      const len = plainText(fitted).trim().length;
-      if (len >= minOneLineChars && len <= oneLineMax) {
-        chosenMarkup = fitted;
-        break;
+    const builtOptions: MalleableBulletOption[] = tpl.optionTemplates.map((optTpl, optIdx) => {
+      let chosen = fitBulletToCalibratedLineArea(optTpl.variants[0], cal);
+      for (const v of optTpl.variants) {
+        const fitted = fitBulletToCalibratedLineArea(v, cal);
+        const len = plainText(fitted).trim().length;
+        if (len >= minOneLineChars && len <= oneLineMax) {
+          chosen = fitted;
+          break;
+        }
+        if (len <= oneLineMax) {
+          chosen = fitted;
+        }
       }
-      if (len <= oneLineMax) {
-        chosenMarkup = fitted;
-      }
-    }
+      const finalLen = plainText(chosen).trim().length;
+      const latex = `\\item ${markupToLatex(chosen)}`;
+      return {
+        id: `malleable-${i + 1}-opt-${optIdx + 1}`,
+        styleLabel: optTpl.styleLabel,
+        markup: chosen,
+        latex,
+        chars: finalLen,
+        maxChars: oneLineMax,
+        widthNcu: computeVisualWidth(latex),
+        fit: bulletFit(chosen, cal),
+        easyExplanation: optTpl.easyExplanation,
+      };
+    });
 
-    // Final safety clamp if oneLineMax is unusually tight
-    let finalLen = plainText(chosenMarkup).trim().length;
-    if (finalLen > oneLineMax) {
-      chosenMarkup = fitBulletToCalibratedLineArea(chosenMarkup, cal);
-      finalLen = plainText(chosenMarkup).trim().length;
-    }
-
-    const latex = `\\item ${markupToLatex(chosenMarkup)}`;
-    const widthNcu = computeVisualWidth(latex);
-    const fit = bulletFit(chosenMarkup, cal);
+    const primaryOpt = builtOptions[0];
 
     results.push({
       id: `malleable-${i + 1}`,
@@ -1313,17 +1432,18 @@ export function synthesizeMalleableOneLineBullets(
       targetContainerTitle: target.title,
       targetContainerKind: target.kind,
       targetTechContext: target.techSignals,
-      markup: chosenMarkup,
-      latex,
-      chars: finalLen,
+      markup: primaryOpt.markup,
+      latex: primaryOpt.latex,
+      chars: primaryOpt.chars,
       maxChars: oneLineMax,
-      widthNcu,
-      fit,
+      widthNcu: primaryOpt.widthNcu,
+      fit: primaryOpt.fit,
       injectedKeywords: tpl.keywords,
       roleContextSummary: target.roleSummary,
       believabilityScore: tpl.believabilityScore,
       believabilityCritique: tpl.critique,
       recommended: i === 0,
+      options: builtOptions,
     });
   }
 
@@ -1341,31 +1461,29 @@ export function evaluateBelievabilityAndRecommend(
 ): AiBelievabilityRecommendation | null {
   const rankings: AiBelievabilityRecommendation["rankings"] = [];
 
-  for (const mb of malleableBullets) {
-    rankings.push({
-      id: mb.id,
-      label: `New 1L Bullet (+${mb.injectedKeywords.join(", ")})`,
-      containerTitle: mb.targetContainerTitle,
-      score: mb.believabilityScore,
-      verdict:
-        mb.believabilityScore >= 95
-          ? "Top Pick · Most Believable"
-          : "Highly Defensible",
-      rationale: mb.believabilityCritique,
-    });
-  }
-
   for (const bp of bulletProposals) {
     const kwLabel = bp.injectedKeywords.join(", ");
-    const fitBonus = bp.budget.candFit.tone === "green" ? 3 : 0;
-    const baseScore = Math.min(95, 88 + fitBonus + (bp.containerKind === "project" ? 2 : 1));
+    const fitBonus = bp.budget.candFit.tone === "green" ? 4 : 1;
+    // Prefer subtle 1-5 word edits to your existing real bullets as the easiest, least-stretched option
+    const baseScore = Math.min(98, 93 + fitBonus + (bp.containerKind === "project" ? 1 : 1));
     rankings.push({
       id: bp.bulletId,
       label: `Subtle Edit (+${kwLabel})`,
       containerTitle: bp.containerTitle,
       score: baseScore,
-      verdict: baseScore >= 93 ? "Highly Defensible" : "Safe & Subtle",
-      rationale: `${bp.reason} (${bp.budget.candChars}/${bp.budget.candLines === 1 ? 108 : 216} chars · ${bp.budget.candFit.badge}). Keeps 90%+ of your original sentence intact.`,
+      verdict: baseScore >= 96 ? "Top Pick · Most Believable" : "Highly Defensible",
+      rationale: `Zero stretch: keeps 90%+ of your real bullet intact and just adds ${kwLabel} (${bp.budget.candChars}/${bp.budget.candLines === 1 ? 108 : 216} chars · ${bp.budget.candFit.badge}).`,
+    });
+  }
+
+  for (const mb of malleableBullets) {
+    rankings.push({
+      id: mb.id,
+      label: `New 1L Bullet (+${mb.injectedKeywords.join(", ")})`,
+      containerTitle: mb.targetContainerTitle,
+      score: Math.min(95, mb.believabilityScore),
+      verdict: "Highly Defensible",
+      rationale: `${mb.believabilityCritique} Includes ${mb.options.length} easy phrasing options to choose from.`,
     });
   }
 
@@ -1377,7 +1495,7 @@ export function evaluateBelievabilityAndRecommend(
     r.verdict =
       idx === 0
         ? "Top Pick · Most Believable"
-        : r.score >= 91
+        : r.score >= 92
         ? "Highly Defensible"
         : "Safe & Subtle";
   });
@@ -1393,11 +1511,11 @@ export function evaluateBelievabilityAndRecommend(
     topPickKind: isMalleableTop ? "malleable-new-line" : "bullet-mutation",
     topPickTitle: `${top.label} in ${top.containerTitle}`,
     believabilityScore: top.score,
-    verdictSummary: `AI Reviewer recommends "${top.label}" under ${top.containerTitle} (${top.score}% Believability Score) as your strongest, lowest-risk addition.`,
+    verdictSummary: `Easiest, Lowest-Stretch Pick: ${top.label} under ${top.containerTitle} (${top.score}% Believability)`,
     whyMostBelievable: top.rationale,
     interviewTalkingPoint:
       topKeywords.length > 0
-        ? `If asked in an interview: "In ${top.containerTitle.split("·")[0].trim()}, we already had the core service layer running, so I wired up ${topKeywords.join(" and ")} at the boundary to handle ${topKeywords.includes("Redis") ? "short-TTL read caching" : topKeywords.includes("GraphQL") ? "typed client status queries" : "deployment & workflow tracking"} without overcomplicating the schema."`
+        ? `Easy 1-sentence answer if asked: "We already had the main ${top.containerTitle.split("·")[0].trim()} service running, so I just used ${topKeywords.join(" and ")} for ${topKeywords.includes("Redis") ? "basic TTL caching on repeat reads" : topKeywords.includes("GraphQL") ? "fetching status fields for the UI" : topKeywords.includes("AWS") ? "hosting the service environment" : "day-to-day sprint & workflow tracking"}."`
         : `Grounded directly in the existing tech stack of ${top.containerTitle}.`,
     rankings,
   };
@@ -1600,7 +1718,8 @@ export function applyLarpMutationsToResume(
   alignment: LarpAlignmentRun,
   acceptedBulletIds: Set<string>,
   applySkills = true,
-  acceptedMalleableIds?: Set<string>
+  acceptedMalleableIds?: Set<string>,
+  selectedMalleableOptionBySlotId?: Record<string, string>
 ): MasterResume {
   const next: MasterResume = structuredClone(resume);
   if (applySkills) {
@@ -1645,10 +1764,15 @@ export function applyLarpMutationsToResume(
   if (acceptedMalleableIds && acceptedMalleableIds.size > 0) {
     for (const mb of alignment.malleableBullets) {
       if (!acceptedMalleableIds.has(mb.id)) continue;
+      const chosenOptId = selectedMalleableOptionBySlotId?.[mb.id];
+      const chosenOpt =
+        mb.options?.find((o) => o.id === chosenOptId) ?? mb.options?.[0];
+      const chosenMarkup = chosenOpt?.markup ?? mb.markup;
+
       const newBullet: Bullet = {
         id: uid("b"),
-        text: mb.markup,
-        ...analyzeBullet(mb.markup, known),
+        text: chosenMarkup,
+        ...analyzeBullet(chosenMarkup, known),
       };
       if (mb.targetContainerKind === "experience") {
         const targetJob = next.experience.find((j) => j.id === mb.targetContainerId);

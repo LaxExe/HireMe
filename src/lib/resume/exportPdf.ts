@@ -994,6 +994,40 @@ export function generateResumePdfBytes(resume: MasterResume): Uint8Array {
 
 /**
  * Compiles the reconstructed LaTeX document via TeX Live (`pdflatex` / `lualatex`)
+ * and returns a Blob URL suitable for in-screen `<iframe src={blobUrl} />` visualization
+ * (without triggering a browser file download). Falls back to the local vector PDF generator if offline.
+ */
+export async function compileResumePdfBlobUrl(resume: MasterResume): Promise<string> {
+  const latexSource = reconstructLatexResume(resume);
+  let pdfBytes: Uint8Array | null = null;
+
+  try {
+    const res = await fetch("/api/resume/compile-pdf", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ latex: latexSource }),
+    });
+    if (res.ok) {
+      const buf = await res.arrayBuffer();
+      const arr = new Uint8Array(buf);
+      if (arr.length > 4 && arr[0] === 0x25 && arr[1] === 0x50 && arr[2] === 0x44 && arr[3] === 0x46) {
+        pdfBytes = arr;
+      }
+    }
+  } catch (e) {
+    console.warn("TeX Live compilation unavailable, using local vector PDF generator:", e);
+  }
+
+  if (!pdfBytes) {
+    pdfBytes = generateResumePdfBytes(resume);
+  }
+
+  const blob = new Blob([pdfBytes.buffer as ArrayBuffer], { type: "application/pdf" });
+  return URL.createObjectURL(blob);
+}
+
+/**
+ * Compiles the reconstructed LaTeX document via TeX Live (`pdflatex` / `lualatex`)
  * for a 100% identical LaTeX PDF (with FontAwesome 5 icons, exact spacing, margins, and fonts),
  * falling back to the client-side vector PDF generator only if offline.
  */

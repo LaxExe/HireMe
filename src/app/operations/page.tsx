@@ -26,7 +26,7 @@ import {
   PYLON_TEST_JD,
   type LarpAlignmentRun,
 } from "@/lib/resume/larpEngine";
-import { downloadResumePdf } from "@/lib/resume/exportPdf";
+import { enqueuePreviewItem, loadPreviewQueue } from "@/lib/resume/previewQueue";
 import { parseMarkup } from "@/lib/resume/utils";
 import type { MasterResume } from "@/lib/resume/types";
 
@@ -45,9 +45,15 @@ export default function OperationsPage() {
   const [larpRun, setLarpRun] = useState<LarpAlignmentRun | null>(null);
   const [acceptedBullets, setAcceptedBullets] = useState<Set<string>>(new Set());
   const [acceptedMalleable, setAcceptedMalleable] = useState<Set<string>>(new Set());
+  const [selectedMalleableOption, setSelectedMalleableOption] = useState<Record<string, string>>(
+    {}
+  );
   const [applySkillsSwap, setApplySkillsSwap] = useState(true);
   const [appliedBanner, setAppliedBanner] = useState(false);
-  const [exportingPdf, setExportingPdf] = useState(false);
+  const [queuedSlotBanner, setQueuedSlotBanner] = useState<{
+    count: number;
+    latestTitle: string;
+  } | null>(null);
   const [missingResumePrompt, setMissingResumePrompt] = useState(false);
 
   useEffect(() => {
@@ -118,8 +124,16 @@ export default function OperationsPage() {
     setAcceptedMalleable(
       new Set(alignment.malleableBullets.filter((m) => m.recommended).map((m) => m.id))
     );
+    const initialOptMap: Record<string, string> = {};
+    for (const mb of alignment.malleableBullets) {
+      if (mb.options && mb.options.length > 0) {
+        initialOptMap[mb.id] = mb.options[0].id;
+      }
+    }
+    setSelectedMalleableOption(initialOptMap);
     setApplySkillsSwap(true);
     setAppliedBanner(false);
+    setQueuedSlotBanner(null);
   };
 
   const handleCheckKeywordMatch = () => {
@@ -185,7 +199,8 @@ export default function OperationsPage() {
       larpRun,
       acceptedBullets,
       applySkillsSwap,
-      acceptedMalleable
+      acceptedMalleable,
+      selectedMalleableOption
     );
     setResume(updated);
     await saveMasterResume(user.uid, updated);
@@ -194,24 +209,19 @@ export default function OperationsPage() {
     setAppliedBanner(true);
   };
 
-  const handleExportTailoredPdf = async () => {
-    if (!resume || !larpRun || exportingPdf) return;
-    const tailored = applyLarpMutationsToResume(
-      resume,
+  const handleQueueIntoPreviewSlot = () => {
+    if (!resume || !larpRun) return;
+    const item = enqueuePreviewItem(user.uid, {
+      jobDescription,
+      baseResume: resume,
       larpRun,
-      acceptedBullets,
+      acceptedBulletIds: Array.from(acceptedBullets),
+      acceptedMalleableIds: Array.from(acceptedMalleable),
+      selectedMalleableOptionBySlotId: selectedMalleableOption,
       applySkillsSwap,
-      acceptedMalleable
-    );
-    const defaultName = tailored.contact.name
-      ? `${tailored.contact.name.trim().replace(/\s+/g, "_")}_Aligned_Resume`
-      : "Aligned_Resume";
-    setExportingPdf(true);
-    try {
-      await downloadResumePdf(tailored, defaultName);
-    } finally {
-      setExportingPdf(false);
-    }
+    });
+    const totalCount = loadPreviewQueue(user.uid).length;
+    setQueuedSlotBanner({ count: totalCount, latestTitle: item.title });
   };
 
   return (
@@ -814,10 +824,14 @@ export default function OperationsPage() {
                       {larpRun.malleableBullets.map((mb) => {
                         const isSelected = acceptedMalleable.has(mb.id);
                         const isTopPick = larpRun.aiRecommendation?.topPickId === mb.id;
+                        const activeOptId =
+                          selectedMalleableOption[mb.id] || mb.options?.[0]?.id;
+                        const activeOpt =
+                          mb.options?.find((o) => o.id === activeOptId) || mb.options?.[0];
                         return (
                           <div
                             key={mb.id}
-                            className={`rounded-xl border p-4 space-y-2.5 transition-colors ${
+                            className={`rounded-xl border p-4 space-y-3 transition-colors ${
                               isSelected
                                 ? "border-neutral-900 bg-white"
                                 : "border-[#ebebeb] bg-[#fafafa] opacity-75"
@@ -853,28 +867,79 @@ export default function OperationsPage() {
                                   </span>
                                 ))}
                                 <span className="font-mono text-[10px] px-2 py-0.5 rounded bg-emerald-50 border border-emerald-200 text-emerald-700">
-                                  {mb.fit.badge} · {mb.fit.label} ({mb.chars}/{mb.maxChars} chars ·{" "}
-                                  {mb.widthNcu} NCU)
+                                  {(activeOpt?.fit ?? mb.fit).badge} · {(activeOpt?.fit ?? mb.fit).label} (
+                                  {activeOpt?.chars ?? mb.chars}/{mb.maxChars} chars ·{" "}
+                                  {activeOpt?.widthNcu ?? mb.widthNcu} NCU)
                                 </span>
                               </div>
                             </div>
 
-                            <div className="rounded-lg bg-emerald-50/30 border border-emerald-200/70 p-3">
-                              <span className="block font-mono text-[10px] text-emerald-700 uppercase mb-1">
-                                New 1-Line Bullet for {mb.roleContextSummary}
-                              </span>
-                              <p className="text-xs text-neutral-900 leading-relaxed">
-                                {parseMarkup(mb.markup).map((seg, idx) =>
-                                  seg.bold ? (
-                                    <strong key={idx} className="font-semibold text-neutral-900">
-                                      {seg.text}
-                                    </strong>
-                                  ) : (
-                                    <span key={idx}>{seg.text}</span>
-                                  )
-                                )}
-                              </p>
-                            </div>
+                            {/* Multiple Good, Low-Stretch Resume Point Options */}
+                            {mb.options && mb.options.length > 0 && (
+                              <div className="space-y-2">
+                                <span className="block font-mono text-[10px] text-neutral-400 uppercase">
+                                  Choose Phrasing Option ({mb.options.length} low-stretch 1-line options for{" "}
+                                  {mb.roleContextSummary})
+                                </span>
+                                <div className="space-y-1.5">
+                                  {mb.options.map((opt, optIdx) => {
+                                    const isChosenOpt = opt.id === (activeOpt?.id ?? "");
+                                    return (
+                                      <label
+                                        key={opt.id}
+                                        onClick={() => {
+                                          setSelectedMalleableOption((prev) => ({
+                                            ...prev,
+                                            [mb.id]: opt.id,
+                                          }));
+                                          if (!acceptedMalleable.has(mb.id)) {
+                                            setAcceptedMalleable((prev) => new Set(prev).add(mb.id));
+                                          }
+                                          setAppliedBanner(false);
+                                        }}
+                                        className={`block rounded-lg border p-2.5 cursor-pointer transition-colors ${
+                                          isChosenOpt
+                                            ? "bg-emerald-50/40 border-emerald-300"
+                                            : "bg-[#fafafa] border-[#ebebeb] hover:bg-neutral-50"
+                                        }`}
+                                      >
+                                        <div className="flex items-center justify-between gap-2 mb-1">
+                                          <div className="flex items-center gap-2">
+                                            <input
+                                              type="radio"
+                                              name={`malleable-opt-${mb.id}`}
+                                              checked={isChosenOpt}
+                                              onChange={() => {}}
+                                              className="text-neutral-900 focus:ring-0"
+                                            />
+                                            <span className="font-mono text-[10px] font-semibold text-neutral-900">
+                                              Option {optIdx + 1} · {opt.styleLabel}
+                                            </span>
+                                          </div>
+                                          <span className="font-mono text-[10px] text-neutral-500">
+                                            {opt.chars}/{opt.maxChars} chars · {opt.fit.badge}
+                                          </span>
+                                        </div>
+                                        <p className="text-xs text-neutral-900 leading-relaxed pl-5">
+                                          {parseMarkup(opt.markup).map((seg, idx) =>
+                                            seg.bold ? (
+                                              <strong key={idx} className="font-semibold text-neutral-900">
+                                                {seg.text}
+                                              </strong>
+                                            ) : (
+                                              <span key={idx}>{seg.text}</span>
+                                            )
+                                          )}
+                                        </p>
+                                        <p className="text-[11px] text-neutral-500 font-mono pl-5 mt-1">
+                                          {opt.easyExplanation}
+                                        </p>
+                                      </label>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            )}
 
                             <p className="text-[11px] text-neutral-500 font-mono">
                               Why it belongs here: {mb.believabilityCritique}
@@ -967,13 +1032,28 @@ export default function OperationsPage() {
                   </div>
                 )}
 
-                {/* Apply & Export Bar */}
+                {/* Apply & Queue to Preview Slot Bar */}
                 <div className="flex items-center justify-between gap-3 pt-3 border-t border-[#ebebeb] flex-wrap">
-                  <div>
+                  <div className="flex items-center gap-3 flex-wrap">
                     {appliedBanner && (
                       <span className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-700">
                         <Check className="w-3.5 h-3.5" />
                         <span>Applied to your Master Resume in Experience!</span>
+                      </span>
+                    )}
+                    {queuedSlotBanner && (
+                      <span className="inline-flex items-center gap-2 text-xs font-medium text-neutral-900 bg-neutral-100 border border-[#ebebeb] px-3 py-1 rounded-full">
+                        <Check className="w-3.5 h-3.5 text-emerald-600" />
+                        <span>
+                          Added to Preview Queue ({queuedSlotBanner.count} in queue)
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => router.push("/preview")}
+                          className="underline font-semibold hover:text-neutral-600 cursor-pointer ml-1"
+                        >
+                          Open Preview Tab →
+                        </button>
                       </span>
                     )}
                   </div>
@@ -988,14 +1068,11 @@ export default function OperationsPage() {
                     </button>
                     <button
                       type="button"
-                      disabled={exportingPdf}
-                      onClick={handleExportTailoredPdf}
-                      className="inline-flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium text-white bg-neutral-900 hover:bg-neutral-800 rounded-full disabled:opacity-40 shadow-subtle active:scale-95 transition-all cursor-pointer"
+                      onClick={handleQueueIntoPreviewSlot}
+                      className="inline-flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium text-white bg-neutral-900 hover:bg-neutral-800 rounded-full shadow-subtle active:scale-95 transition-all cursor-pointer"
                     >
-                      <Download className="w-3.5 h-3.5" />
-                      <span>
-                        {exportingPdf ? "Compiling Tailored PDF..." : "Export Tailored PDF"}
-                      </span>
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Queue to Preview Slot</span>
                     </button>
                   </div>
                 </div>
