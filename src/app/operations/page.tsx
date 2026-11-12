@@ -618,15 +618,15 @@ export default function OperationsPage() {
                 )}
               </div>
 
-              {/* Step 3: Surgical Work & Project Bullet Reframer (<= 6-7 Words Cap & Zero Line-Overflow) */}
+              {/* Step 3: Centralized, Context-Aware Minimal Bullet Placement */}
               <div className="bg-white rounded-xl border border-[#ebebeb] shadow-subtle p-5 space-y-4">
                 <div className="flex items-center justify-between border-b border-[#ebebeb] pb-3 gap-3 flex-wrap">
                   <div>
                     <h2 className="text-xs font-semibold text-neutral-900">
-                      Step 3 · Surgical Bullet Compression & Injection Loop
+                      Step 3 · Centralized Minimal Bullet Additions
                     </h2>
                     <p className="text-[11px] text-neutral-500 mt-0.5">
-                      Strictly capped at ≤ 6–7 reframed words per bullet and validated against deterministic NCU line budgets
+                      Automatically picks 1 context-matched bullet with free line space per technical tool (no PM jargon, ≤ 1–5 words added)
                     </p>
                   </div>
                   <span className="font-mono text-[10px] text-neutral-500 bg-[#fafafa] border border-[#ebebeb] px-2 py-0.5 rounded">
@@ -636,7 +636,7 @@ export default function OperationsPage() {
 
                 {larpRun.bulletProposals.length === 0 ? (
                   <p className="text-xs font-mono text-neutral-400 py-4 text-center">
-                    All experience and project bullets already align with the detected Tier 0 / Tier 1 terms.
+                    All experience and project bullets already contain the compatible technical tools or have no remaining line slack.
                   </p>
                 ) : (
                   <div className="space-y-3">
@@ -652,17 +652,22 @@ export default function OperationsPage() {
                           }`}
                         >
                           <div className="flex items-center justify-between gap-2 flex-wrap">
-                            <label className="inline-flex items-center gap-2 cursor-pointer select-none">
-                              <input
-                                type="checkbox"
-                                checked={isSelected}
-                                onChange={() => handleToggleBullet(prop.bulletId)}
-                                className="rounded border-neutral-300 text-neutral-900 focus:ring-0"
-                              />
-                              <span className="text-xs font-semibold text-neutral-900">
-                                {prop.containerTitle}
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <label className="inline-flex items-center gap-2 cursor-pointer select-none">
+                                <input
+                                  type="checkbox"
+                                  checked={isSelected}
+                                  onChange={() => handleToggleBullet(prop.bulletId)}
+                                  className="rounded border-neutral-300 text-neutral-900 focus:ring-0"
+                                />
+                                <span className="text-xs font-semibold text-neutral-900">
+                                  {prop.containerTitle}
+                                </span>
+                              </label>
+                              <span className="font-mono text-[10px] text-neutral-500 bg-neutral-100 border border-[#ebebeb] px-1.5 py-0.5 rounded">
+                                {prop.contextCategory}
                               </span>
-                            </label>
+                            </div>
 
                             <div className="flex flex-wrap items-center gap-1.5">
                               {prop.injectedKeywords.map((kw) => (
@@ -670,21 +675,23 @@ export default function OperationsPage() {
                                   key={kw}
                                   className="font-mono text-[10px] px-2 py-0.5 rounded-full bg-blue-50 border border-blue-200 text-blue-700"
                                 >
-                                  +{kw}
+                                  +{kw} (1 spot only)
                                 </span>
                               ))}
                               <span className="font-mono text-[10px] px-2 py-0.5 rounded bg-emerald-50 border border-emerald-200 text-emerald-700">
-                                {prop.wordStats.reframedWords}/7 words reframed
+                                +{prop.wordStats.reframedWords} words added
                               </span>
                               <span className="font-mono text-[10px] px-2 py-0.5 rounded bg-neutral-100 border border-[#ebebeb] text-neutral-600">
                                 {prop.budget.origWidth} → {prop.budget.candWidth} NCU (
-                                {prop.budget.delta >= 0
-                                  ? `+${prop.budget.delta}`
-                                  : prop.budget.delta}{" "}
-                                NCU · {prop.budget.origLines}L → {prop.budget.candLines}L)
+                                {prop.budget.origLines}L → {prop.budget.candLines}L ·{" "}
+                                {prop.budget.slackNcu} NCU slack had room)
                               </span>
                             </div>
                           </div>
+
+                          <p className="text-[11px] text-neutral-500 font-mono">
+                            Why this spot: {prop.reason}
+                          </p>
 
                           <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 text-xs leading-relaxed">
                             <div className="rounded-lg bg-[#fafafa] border border-[#ebebeb] p-3">

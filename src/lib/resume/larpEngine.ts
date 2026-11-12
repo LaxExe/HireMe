@@ -1,4 +1,5 @@
 import type { Bullet, MasterResume, SkillCategory } from "./types";
+import { DEFAULT_CALIBRATION } from "./types";
 import { analyzeBullet, escapeRegExp, knownTools, plainText, splitItems, uid } from "./utils";
 import { markupToLatex } from "./latex";
 
@@ -18,17 +19,14 @@ export interface TextSegment {
 /**
  * Parses a LaTeX bullet string (`\textbf{...}`) OR internal markup string (`**...**`)
  * into a list of `(text_segment, is_bold)` tuples.
- * Handles escaped characters like `\%` and `\$` properly.
  */
 export function stripLatexCommandsKeepText(inputStr: string): TextSegment[] {
   if (!inputStr) return [];
 
-  // Normalize internal `**bold**` markup into `\textbf{bold}` if present
   const normalized = inputStr.includes("**")
     ? inputStr.replace(/\*\*([^*]+)\*\*/g, "\\textbf{$1}")
     : inputStr;
 
-  // Replace escaped characters with single-char equivalents for width measurement
   const cleaned = normalized
     .replace(/^\\item\s+/, "")
     .replace(/^\\resumeItem\{([\s\S]*)\}$/, "$1")
@@ -89,12 +87,13 @@ export interface LineBudgetCheck {
   candLines: number;
   maxAllowedWidth: number;
   minAllowedWidth: number;
+  slackNcu: number;
   delta: number;
 }
 
 /**
- * Ensures the mutated candidate fits within the exact same line count as the original,
- * without leaving an awkward 1-2 word orphan on the final line.
+ * Checks whether the candidate fits strictly inside the remaining space of the original
+ * line count (`candLines === origLines` and `candWidth <= origLines * singleLineNcu`).
  */
 export function checkLineBudget(
   originalLatex: string,
@@ -106,30 +105,27 @@ export function checkLineBudget(
 
   const origLines = Math.max(1, Math.ceil(origWidth / singleLineNcu));
   const candLines = Math.max(1, Math.ceil(candWidth / singleLineNcu));
-  const maxAllowedWidth = Number(
-    Math.min(origLines * singleLineNcu, origWidth + 6.0).toFixed(2)
-  );
+  const maxAllowedWidth = Number((origLines * singleLineNcu).toFixed(2));
   const minAllowedWidth = Number(
     ((origLines - 1) * singleLineNcu + 0.65 * singleLineNcu).toFixed(2)
   );
+  const slackNcu = Number((maxAllowedWidth - origWidth).toFixed(2));
 
   return {
-    valid:
-      candLines === origLines &&
-      candWidth <= maxAllowedWidth &&
-      candWidth >= Math.min(origWidth - 8.0, minAllowedWidth),
+    valid: candLines === origLines && candWidth <= maxAllowedWidth,
     origWidth,
     candWidth,
     origLines,
     candLines,
     maxAllowedWidth,
     minAllowedWidth,
+    slackNcu,
     delta: Number((candWidth - origWidth).toFixed(2)),
   };
 }
 
 /* ============================================================================
- * 2. WORD-DIFF & 6-7 WORD REFRAME CAP VALIDATOR
+ * 2. WORD-DIFF & MINIMAL EDIT VALIDATOR (<= 5-6 WORDS ADDED/CHANGED)
  * ============================================================================ */
 
 export interface WordDiffToken {
@@ -146,18 +142,18 @@ export interface WordReframeStats {
 function normalizeWordForDiff(w: string): string {
   return w
     .replace(/\*\*/g, "")
-    .replace(/^[^a-zA-Z0-9%]+|[^a-zA-Z0-9%]+$/g, "")
+    .replace(/^[^a-zA-Z0-9%+#.]+|[^a-zA-Z0-9%+#.]+$/g, "")
     .toLowerCase();
 }
 
 /**
  * Computes word-level LCS between original and candidate bullets to count
- * exactly how many words were changed/reframed (enforcing the <= 7 word cap).
+ * the exact number of newly added/swapped words (strictly capped at <= 6 words).
  */
 export function computeWordReframeStats(
   originalMarkup: string,
   candidateMarkup: string,
-  maxWordsCap = 7
+  maxWordsCap = 6
 ): WordReframeStats {
   const origWords = plainText(originalMarkup).trim().split(/\s+/).filter(Boolean);
   const candRawWords = candidateMarkup.trim().split(/\s+/).filter(Boolean);
@@ -199,13 +195,13 @@ export function computeWordReframeStats(
 
   return {
     reframedWords,
-    withinCap: reframedWords <= maxWordsCap,
+    withinCap: reframedWords > 0 && reframedWords <= maxWordsCap,
     tokens,
   };
 }
 
 /* ============================================================================
- * 3. THE 4-TIER KEYWORD CLASSIFICATION SPEC
+ * 3. THE 4-TIER KEYWORD CLASSIFICATION SPEC (CODE-FIRST, NO PM JARGON)
  * ============================================================================ */
 
 export interface LarpTierClassification {
@@ -216,6 +212,12 @@ export interface LarpTierClassification {
   tier_2_banned: string[];
 }
 
+export type BulletDomainContext =
+  | "backend-api-db"
+  | "cloud-deploy-infra"
+  | "frontend-ui"
+  | "systems-cpp-robotics";
+
 interface CatalogItem {
   name: string;
   aliases: string[];
@@ -225,7 +227,13 @@ interface CatalogItem {
     | "tier_1_5_skills_only"
     | "tier_2_banned";
   alsoSkillsOnly?: boolean;
-  targetSkillCategory?: "Languages" | "Frameworks & Libraries" | "Databases & Cloud" | "Developer Tools & DevOps";
+  targetSkillCategory?:
+    | "Languages"
+    | "Frameworks & Libraries"
+    | "Databases & Cloud"
+    | "Developer Tools & DevOps";
+  /** Which bullet technical contexts this tool can naturally be added to */
+  compatibleBulletContexts?: BulletDomainContext[];
 }
 
 const LARP_CATALOG: CatalogItem[] = [
@@ -244,11 +252,11 @@ const LARP_CATALOG: CatalogItem[] = [
   { name: "C++", aliases: ["c++", "c++17", "c++20", "cpp"], defaultTierIfMissing: "tier_2_banned", targetSkillCategory: "Languages" },
   { name: "Java", aliases: ["java", "spring boot", "jvm"], defaultTierIfMissing: "tier_2_banned", targetSkillCategory: "Languages" },
   { name: "Python", aliases: ["python", "python3"], defaultTierIfMissing: "tier_2_banned", targetSkillCategory: "Languages" },
+
+  // Standard Web / Data Languages & Frameworks
   { name: "TypeScript", aliases: ["typescript", "ts"], defaultTierIfMissing: "tier_1_5_skills_only", targetSkillCategory: "Languages" },
   { name: "JavaScript", aliases: ["javascript", "js"], defaultTierIfMissing: "tier_1_5_skills_only", targetSkillCategory: "Languages" },
   { name: "SQL", aliases: ["sql"], defaultTierIfMissing: "tier_1_5_skills_only", targetSkillCategory: "Languages" },
-
-  // Common Frameworks (Matched if on resume, or Tier 1.5 / Tier 2 depending on depth)
   { name: "React", aliases: ["react", "react.js", "reactjs"], defaultTierIfMissing: "tier_2_banned", targetSkillCategory: "Frameworks & Libraries" },
   { name: "Next.js", aliases: ["next.js", "nextjs"], defaultTierIfMissing: "tier_1_5_skills_only", targetSkillCategory: "Frameworks & Libraries" },
   { name: "Node.js", aliases: ["node.js", "nodejs", "node"], defaultTierIfMissing: "tier_1_5_skills_only", targetSkillCategory: "Frameworks & Libraries" },
@@ -257,40 +265,80 @@ const LARP_CATALOG: CatalogItem[] = [
   { name: "Express", aliases: ["express", "express.js"], defaultTierIfMissing: "tier_1_5_skills_only", targetSkillCategory: "Frameworks & Libraries" },
   { name: "PyTorch", aliases: ["pytorch"], defaultTierIfMissing: "tier_2_banned", targetSkillCategory: "Frameworks & Libraries" },
   { name: "Pandas", aliases: ["pandas"], defaultTierIfMissing: "tier_1_5_skills_only", targetSkillCategory: "Frameworks & Libraries" },
-  { name: "Tailwind CSS", aliases: ["tailwind", "tailwind css", "tailwindcss"], defaultTierIfMissing: "tier_1_5_skills_only", targetSkillCategory: "Frameworks & Libraries" },
+  {
+    name: "Tailwind CSS",
+    aliases: ["tailwind", "tailwind css", "tailwindcss"],
+    defaultTierIfMissing: "tier_1_framing",
+    alsoSkillsOnly: true,
+    targetSkillCategory: "Frameworks & Libraries",
+    compatibleBulletContexts: ["frontend-ui"],
+  },
 
-  // TIER 0: Workflow, Agile, Ownership (Free Real Estate — 100% Safe for Bullets & Skills)
-  { name: "Jira", aliases: ["jira"], defaultTierIfMissing: "tier_0_workflow", alsoSkillsOnly: true, targetSkillCategory: "Developer Tools & DevOps" },
-  { name: "Linear", aliases: ["linear"], defaultTierIfMissing: "tier_0_workflow", alsoSkillsOnly: true, targetSkillCategory: "Developer Tools & DevOps" },
-  { name: "Agile", aliases: ["agile", "scrum", "kanban", "sprint", "sprints"], defaultTierIfMissing: "tier_0_workflow" },
-  { name: "end-to-end", aliases: ["end-to-end", "end to end", "e2e ownership", "full lifecycle"], defaultTierIfMissing: "tier_0_workflow" },
-  { name: "cross-functional", aliases: ["cross-functional", "cross functional", "product and engineering", "stakeholders"], defaultTierIfMissing: "tier_0_workflow" },
-  { name: "fast iteration", aliases: ["fast iteration", "rapid iteration", "rapid prototyping", "fast-paced", "ship fast", "non-waterfall"], defaultTierIfMissing: "tier_0_workflow" },
-  { name: "CI/CD", aliases: ["ci/cd", "continuous integration", "continuous deployment", "deployment pipelines"], defaultTierIfMissing: "tier_0_workflow", alsoSkillsOnly: true, targetSkillCategory: "Developer Tools & DevOps" },
+  // TIER 1: Concrete Technical Wrappers & Integrations (Centralized 1-spot injection in code bullets)
+  {
+    name: "AWS",
+    aliases: ["aws", "amazon web services", "ec2", "s3", "lambda"],
+    defaultTierIfMissing: "tier_1_framing",
+    alsoSkillsOnly: true,
+    targetSkillCategory: "Databases & Cloud",
+    compatibleBulletContexts: ["cloud-deploy-infra", "backend-api-db"],
+  },
+  {
+    name: "Redis",
+    aliases: ["redis"],
+    defaultTierIfMissing: "tier_1_framing",
+    alsoSkillsOnly: true,
+    targetSkillCategory: "Databases & Cloud",
+    compatibleBulletContexts: ["backend-api-db"],
+  },
+  {
+    name: "GraphQL",
+    aliases: ["graphql"],
+    defaultTierIfMissing: "tier_1_framing",
+    alsoSkillsOnly: true,
+    targetSkillCategory: "Frameworks & Libraries",
+    compatibleBulletContexts: ["backend-api-db", "frontend-ui"],
+  },
+  {
+    name: "Webhooks",
+    aliases: ["webhook", "webhooks"],
+    defaultTierIfMissing: "tier_1_framing",
+    compatibleBulletContexts: ["backend-api-db", "cloud-deploy-infra"],
+  },
+  {
+    name: "Docker",
+    aliases: ["docker", "containerization", "containers"],
+    defaultTierIfMissing: "tier_1_framing",
+    alsoSkillsOnly: true,
+    targetSkillCategory: "Developer Tools & DevOps",
+    compatibleBulletContexts: ["cloud-deploy-infra", "backend-api-db"],
+  },
+  {
+    name: "CI/CD",
+    aliases: ["ci/cd", "continuous integration", "continuous deployment"],
+    defaultTierIfMissing: "tier_0_workflow",
+    alsoSkillsOnly: true,
+    targetSkillCategory: "Developer Tools & DevOps",
+    compatibleBulletContexts: ["cloud-deploy-infra"],
+  },
 
-  // TIER 1: Framing & Consumption Wrappers (Safe in bullets ONLY with consumption/context framing)
-  { name: "AWS", aliases: ["aws", "amazon web services", "ec2", "s3", "lambda"], defaultTierIfMissing: "tier_1_framing", alsoSkillsOnly: true, targetSkillCategory: "Databases & Cloud" },
-  { name: "GraphQL", aliases: ["graphql"], defaultTierIfMissing: "tier_1_framing", alsoSkillsOnly: true, targetSkillCategory: "Frameworks & Libraries" },
-  { name: "Webhooks", aliases: ["webhook", "webhooks"], defaultTierIfMissing: "tier_1_framing" },
-  { name: "REST APIs", aliases: ["rest", "rest api", "rest apis", "restful"], defaultTierIfMissing: "tier_1_framing", alsoSkillsOnly: true, targetSkillCategory: "Developer Tools & DevOps" },
-  { name: "B2B workflows", aliases: ["b2b", "b2b support", "b2b workflows", "enterprise customers", "customer support"], defaultTierIfMissing: "tier_1_framing" },
-  { name: "account-level context", aliases: ["account-level", "account data", "account context", "customer context", "tenant"], defaultTierIfMissing: "tier_1_framing" },
-  { name: "agentic workflows", aliases: ["agentic", "ai agents", "llm workflows", "llm", "llms", "generative ai"], defaultTierIfMissing: "tier_1_framing" },
-  { name: "signal ingestion", aliases: ["signal ingestion", "signal resolution", "telemetry", "event ingestion", "real-time events"], defaultTierIfMissing: "tier_1_framing" },
-
-  // TIER 1.5: Skills Section Only — Plug-and-Play Tech
-  { name: "Redis", aliases: ["redis"], defaultTierIfMissing: "tier_1_5_skills_only", targetSkillCategory: "Databases & Cloud" },
+  // TIER 1.5: Skills Section Only (Kept out of bullets to avoid clutter/jargon)
   { name: "PostgreSQL", aliases: ["postgresql", "postgres"], defaultTierIfMissing: "tier_1_5_skills_only", targetSkillCategory: "Databases & Cloud" },
   { name: "MongoDB", aliases: ["mongodb", "mongo"], defaultTierIfMissing: "tier_1_5_skills_only", targetSkillCategory: "Databases & Cloud" },
   { name: "Supabase", aliases: ["supabase"], defaultTierIfMissing: "tier_1_5_skills_only", targetSkillCategory: "Databases & Cloud" },
   { name: "Firebase", aliases: ["firebase", "firestore"], defaultTierIfMissing: "tier_1_5_skills_only", targetSkillCategory: "Databases & Cloud" },
-  { name: "Docker", aliases: ["docker", "containerization", "containers"], defaultTierIfMissing: "tier_1_5_skills_only", targetSkillCategory: "Developer Tools & DevOps" },
   { name: "GitHub Actions", aliases: ["github actions"], defaultTierIfMissing: "tier_1_5_skills_only", targetSkillCategory: "Developer Tools & DevOps" },
   { name: "Postman", aliases: ["postman"], defaultTierIfMissing: "tier_1_5_skills_only", targetSkillCategory: "Developer Tools & DevOps" },
   { name: "Vercel", aliases: ["vercel"], defaultTierIfMissing: "tier_1_5_skills_only", targetSkillCategory: "Databases & Cloud" },
   { name: "Cloudflare", aliases: ["cloudflare"], defaultTierIfMissing: "tier_1_5_skills_only", targetSkillCategory: "Databases & Cloud" },
   { name: "Git", aliases: ["git", "github"], defaultTierIfMissing: "tier_1_5_skills_only", targetSkillCategory: "Developer Tools & DevOps" },
   { name: "Linux", aliases: ["linux", "unix"], defaultTierIfMissing: "tier_1_5_skills_only", targetSkillCategory: "Developer Tools & DevOps" },
+  { name: "REST APIs", aliases: ["rest", "rest api", "rest apis", "restful"], defaultTierIfMissing: "tier_1_5_skills_only", targetSkillCategory: "Developer Tools & DevOps" },
+
+  // TIER 0: Workflow & Agile (Recognized from JD, kept centralized in Skills section only — never stuffed into code bullets)
+  { name: "Jira", aliases: ["jira"], defaultTierIfMissing: "tier_0_workflow", alsoSkillsOnly: true, targetSkillCategory: "Developer Tools & DevOps" },
+  { name: "Linear", aliases: ["linear"], defaultTierIfMissing: "tier_0_workflow", alsoSkillsOnly: true, targetSkillCategory: "Developer Tools & DevOps" },
+  { name: "Agile", aliases: ["agile", "scrum", "kanban"], defaultTierIfMissing: "tier_0_workflow" },
 ];
 
 function containsPhrase(haystack: string, phrase: string): boolean {
@@ -340,11 +388,7 @@ export function classifyJobDescriptionTiers(
 
     const inResume = item.aliases.some((a) => containsPhrase(resumeCorpus, a));
     if (inResume) {
-      if (item.defaultTierIfMissing === "tier_0_workflow") {
-        result.tier_0_workflow.push(item.name);
-      } else {
-        result.matched.push(item.name);
-      }
+      result.matched.push(item.name);
       continue;
     }
 
@@ -363,11 +407,6 @@ export function classifyJobDescriptionTiers(
     } else if (item.defaultTierIfMissing === "tier_2_banned") {
       result.tier_2_banned.push(item.name);
     }
-  }
-
-  // Always provide default high-signal Tier 0 workflow terms if JD is software-focused
-  if (result.tier_0_workflow.length === 0) {
-    result.tier_0_workflow.push("end-to-end");
   }
 
   return result;
@@ -411,10 +450,8 @@ export function smartSwapSkillsSection(
   const matchedLower = new Set(tiers.matched.map((m) => m.toLowerCase()));
   const bannedLower = new Set(tiers.tier_2_banned.map((b) => b.toLowerCase()));
 
-  // Map each tier_1_5_skills_only item to its target category bucket
   for (const cat of cloned) {
     const bucket = matchCategoryBucket(cat.name);
-    // Never auto-inject into Languages unless already matched
     if (bucket === "Languages") continue;
 
     const origNames = cat.skills.map((s) => s.name);
@@ -498,7 +535,19 @@ export function smartSwapSkillsSection(
 }
 
 /* ============================================================================
- * 5. STEP 3: SURGICAL WORK BULLET COMPRESSION & INJECTION (<= 6-7 WORDS CAP)
+ * 5. STEP 3: CONTEXT-AWARE, CENTRALIZED MINIMAL BULLET INJECTION
+ * ============================================================================
+ * Core Principles:
+ * 1. Centralize edits: Each missing Tier 1 technical tool (e.g., AWS, Redis, GraphQL)
+ *    is placed in AT MOST ONE bullet across the entire resume — specifically the bullet
+ *    where it is most natural to defend and hardest to over-verify.
+ * 2. Context awareness: Never inject web/cloud tools into C++/systems/OS-hook/robotics
+ *    bullets. Only match bullets whose technical context fits the tool.
+ * 3. Space-first check: Only apply an edit to a bullet that ALREADY has enough free
+ *    horizontal space on its current line (1L or 2L) to fit the 2-5 word addition without
+ *    rewriting the sentence or overflowing onto a new line.
+ * 4. Minimal diff: Change only 1-5 words (e.g. appending `on **AWS**`, `with **Redis** caching`,
+ *    or `and **GraphQL**` to an existing tool list), keeping 95%+ of the bullet identical.
  * ============================================================================ */
 
 export interface BulletMutationProposal {
@@ -506,380 +555,262 @@ export interface BulletMutationProposal {
   containerId: string;
   containerTitle: string;
   containerKind: "experience" | "project";
+  contextCategory: BulletDomainContext;
   originalMarkup: string;
   mutatedMarkup: string;
   originalLatex: string;
   mutatedLatex: string;
-  candidatesLatex: [string, string, string];
   budget: LineBudgetCheck;
   wordStats: WordReframeStats;
   injectedKeywords: string[];
+  reason: string;
   accepted: boolean;
 }
 
-interface SurgicalPattern {
-  /** Regex matching a verbose or generic 3-to-7 word span in an existing bullet */
-  match: RegExp;
-  /** Builds a replacement using available Tier 0 / Tier 1 keywords (changing <= 6-7 words) */
-  replace: (ctx: {
-    workflowTerm: string;
-    cloudOrApiTerm: string | null;
-    domainTerm: string | null;
-  }) => { replacement: string; injected: string[] };
+/**
+ * Classifies what a bullet is actually about so we never inject cloud/web tools
+ * into C++ OS hooks, embedded systems, or robotics bullets.
+ */
+export function classifyBulletContext(
+  bulletMarkup: string,
+  containerTitle: string
+): BulletDomainContext {
+  const combined = `${containerTitle} ${plainText(bulletMarkup)}`;
+
+  // 1. Check if this is a low-level C++, OS hook, desktop, or robotics/autonomous bullet
+  if (
+    /\b(?:CGEventTap|WH_KEYBOARD_LL|SymSpell|llama\.cpp|SmolLM2|Qt6|Win32|macOS desktop|ROS\s*2|LiDAR|Gazebo|Foxglove|Pure Pursuit|costmap|odometry|rover|sensor-fusion|Raft consensus|Write-Ahead Log)\b/i.test(
+      combined
+    )
+  ) {
+    return "systems-cpp-robotics";
+  }
+
+  // 2. Check if frontend / dashboard / UI focused
+  if (
+    /\b(?:React|Next\.js|dashboards?|UI|frontend|Tailwind|components|CSV\/Excel report)\b/i.test(
+      combined
+    )
+  ) {
+    return "frontend-ui";
+  }
+
+  // 3. Check if cloud deployment / CI/CD / serverless focused
+  if (
+    /\b(?:deployed on|Firebase Cloud Functions|Docker|CI\/CD|GitHub Actions|serverless|container)\b/i.test(
+      combined
+    )
+  ) {
+    return "cloud-deploy-infra";
+  }
+
+  // 4. Default for backend / API / database / Python / service bullets
+  return "backend-api-db";
 }
 
-const SURGICAL_PATTERNS: SurgicalPattern[] = [
-  {
-    match: /\bDeveloped backend and frontend features using (\*\*?React\*\*?) and (\*\*?REST APIs\*\*?)/i,
-    replace: ({ cloudOrApiTerm, workflowTerm }) => ({
-      replacement: `Owned **end-to-end** B2B features in **React**, **${cloudOrApiTerm || "AWS"}**, and **${
-        workflowTerm === "end-to-end" ? "Jira" : workflowTerm
-      }**`,
-      injected: ["end-to-end", cloudOrApiTerm || "AWS", workflowTerm === "end-to-end" ? "Jira" : workflowTerm],
-    }),
-  },
-  {
-    match: /\b(?:Developed and maintained|Designed and developed|Built and maintained|Developed)\b/i,
-    replace: ({ workflowTerm }) => ({
-      replacement:
-        workflowTerm.toLowerCase() === "end-to-end"
-          ? "Owned **end-to-end**"
-          : `Shipped **${workflowTerm}**`,
-      injected: [workflowTerm],
-    }),
-  },
-  {
-    match: /\b(?:Reduced manual coordination|Reduced manual data processing time|Reduced manual lookup time)\b/i,
-    replace: ({ workflowTerm }) => ({
-      replacement:
-        workflowTerm.toLowerCase() === "end-to-end"
-          ? "Cut **end-to-end** manual overhead"
-          : "Cut manual coordination",
-      injected: workflowTerm.toLowerCase() === "end-to-end" ? ["end-to-end"] : [],
-    }),
-  },
-  {
-    match: /\b(?:for (\*\*?\d+\*\*?) clinics by building|by building customizable dashboards)\b/i,
-    replace: ({ domainTerm, workflowTerm }) => {
-      if (domainTerm) {
-        return {
-          replacement: `across **B2B** workflows by building`,
-          injected: [domainTerm],
-        };
-      }
-      return {
-        replacement: `in **${workflowTerm}** sprints by building`,
-        injected: [workflowTerm],
-      };
-    },
-  },
-  {
-    match: /\b(?:integrating external \*\*REST APIs\*\*|using \*\*REST APIs\*\*|and \*\*REST APIs\*\*)\b/i,
-    replace: ({ cloudOrApiTerm }) => {
-      if (cloudOrApiTerm === "GraphQL") {
-        return {
-          replacement: "consuming **GraphQL** and **REST APIs**",
-          injected: ["GraphQL"],
-        };
-      }
-      if (cloudOrApiTerm === "AWS") {
-        return {
-          replacement: "integrating **REST APIs** on **AWS**",
-          injected: ["AWS"],
-        };
-      }
-      return {
-        replacement: "consuming external **REST APIs**",
-        injected: [],
-      };
-    },
-  },
-  {
-    match: /\b(?:deployed on \*\*Firebase Cloud Functions\*\*|persisting structured events via)\b/i,
-    replace: ({ cloudOrApiTerm, workflowTerm }) => {
-      if (cloudOrApiTerm === "AWS") {
-        return {
-          replacement: "deployed on **AWS** and **Firebase**",
-          injected: ["AWS"],
-        };
-      }
-      return {
-        replacement: `tracked in **${workflowTerm}**, persisting events via`,
-        injected: [workflowTerm],
-      };
-    },
-  },
-  {
-    match: /\b(?:Gave clients control over call workflows and dispatch timing by building)\b/i,
-    replace: ({ workflowTerm, domainTerm }) => {
-      if (domainTerm) {
-        return {
-          replacement: "Owned **end-to-end** B2B dispatch workflows by building",
-          injected: ["end-to-end", domainTerm],
-        };
-      }
-      return {
-        replacement: `Owned **${workflowTerm}** client dispatch workflows, building`,
-        injected: [workflowTerm],
-      };
-    },
-  },
-  {
-    match: /\b(?:Achieved (\*\*\d+%?\+?\*\*) eligibility accuracy on test data by building)\b/i,
-    replace: ({ workflowTerm }) => ({
-      replacement: `Reached $1 eligibility accuracy across **${workflowTerm}** workflows by building`,
-      injected: [workflowTerm],
-    }),
-  },
-  {
-    match: /\b(?:Developed (\*\*REST APIs\*\*) and relational (\*\*PostgreSQL\*\*) schemas to standardize)\b/i,
-    replace: ({ cloudOrApiTerm, workflowTerm }) => {
-      if (cloudOrApiTerm === "GraphQL") {
-        return {
-          replacement: "Built **GraphQL**, $1, and $2 schemas to unify",
-          injected: ["GraphQL"],
-        };
-      }
-      if (cloudOrApiTerm === "AWS") {
-        return {
-          replacement: "Built $1 and $2 schemas on **AWS** to unify",
-          injected: ["AWS"],
-        };
-      }
-      return {
-        replacement: `Built **${workflowTerm}** $1 and $2 schemas to unify`,
-        injected: [workflowTerm],
-      };
-    },
-  },
-];
-
 /**
- * Generates 3 surgical candidate rewrites for a single bullet that:
- * 1. Change at most 6-7 words from the original bullet.
- * 2. Inject only Tier 0 / Tier 1 consumption terms (never Tier 2 Banned).
- * 3. Obey the exact NCU visual line budget (`candLines === origLines`).
+ * Attempts a minimal 1-to-5 word surgical addition of `keyword` into `origMarkup`
+ * ONLY if the bullet's context matches and the bullet has enough free space on its current line.
  */
-export function mutateBulletSurgical(
-  bullet: Bullet,
-  containerId: string,
-  containerTitle: string,
-  containerKind: "experience" | "project",
-  tiers: LarpTierClassification,
-  singleLineNcu = 98.0
-): BulletMutationProposal | null {
-  const origMarkup = bullet.text.trim();
-  if (!origMarkup) return null;
+function tryMinimalKeywordInjection(
+  origMarkup: string,
+  context: BulletDomainContext,
+  keyword: string
+): { mutatedMarkup: string; reason: string; fitScore: number } | null {
+  if (context === "systems-cpp-robotics") return null;
+  if (containsPhrase(plainText(origMarkup), keyword)) return null;
 
-  const origLatex = `\\item ${markupToLatex(origMarkup)}`;
+  const trimmed = origMarkup.trim();
 
-  const workflowTerms =
-    tiers.tier_0_workflow.length > 0 ? tiers.tier_0_workflow : ["end-to-end"];
-  const workflowTerm =
-    workflowTerms.find((t) => !origMarkup.toLowerCase().includes(t.toLowerCase())) ||
-    workflowTerms[0] ||
-    "end-to-end";
-
-  const cloudOrApiTerm =
-    tiers.tier_1_framing.find(
-      (t) =>
-        (t === "GraphQL" || t === "AWS" || t === "Webhooks") &&
-        !origMarkup.toLowerCase().includes(t.toLowerCase())
-    ) || null;
-
-  const domainTerm =
-    tiers.tier_1_framing.find(
-      (t) =>
-        t !== "GraphQL" &&
-        t !== "AWS" &&
-        t !== "Webhooks" &&
-        !origMarkup.toLowerCase().includes(t.toLowerCase())
-    ) || null;
-
-  const candidateMarkups: { markup: string; injected: string[] }[] = [];
-
-  // Candidate 1: Pattern-matched surgical clause replacement (changes 3-6 words)
-  for (const pat of SURGICAL_PATTERNS) {
-    if (pat.match.test(origMarkup)) {
-      const { replacement, injected } = pat.replace({
-        workflowTerm,
-        cloudOrApiTerm,
-        domainTerm,
-      });
-      const mutated = origMarkup.replace(pat.match, replacement);
-      if (mutated !== origMarkup && injected.length > 0) {
-        candidateMarkups.push({ markup: mutated, injected });
+  if (keyword === "AWS") {
+    // Best spot 1: A bullet that persists/deploys backend services or cloud functions (e.g. Flask/Supabase/Firebase/Python)
+    if (/\bto \*\*Supabase\*\*\.$/i.test(trimmed)) {
+      return {
+        mutatedMarkup: trimmed.replace(/\bto \*\*Supabase\*\*\.$/i, "to **Supabase** on **AWS**."),
+        reason: "Centralized cloud hosting context on backend API persistence",
+        fitScore: 98,
+      };
+    }
+    if (/\bdeployed on \*\*Firebase Cloud Functions\*\*/i.test(trimmed)) {
+      return {
+        mutatedMarkup: trimmed.replace(
+          /\bdeployed on \*\*Firebase Cloud Functions\*\*/i,
+          "deployed on **AWS** and **Firebase**"
+        ),
+        reason: "Natural cloud deployment pairing on existing serverless agent bullet",
+        fitScore: 95,
+      };
+    }
+    if (/\bacross (\*\*\d+\*\*|\d+) internal services\.$/i.test(trimmed)) {
+      return {
+        mutatedMarkup: trimmed.replace(
+          /\bacross (\*\*\d+\*\*|\d+) internal services\.$/i,
+          "across $1 internal services on **AWS**."
+        ),
+        reason: "Lightweight cloud hosting context on internal backend services",
+        fitScore: 92,
+      };
+    }
+    if (context === "backend-api-db" || context === "cloud-deploy-infra") {
+      if (/\busing \*\*React\*\* and \*\*REST APIs\*\*/i.test(trimmed)) {
+        return {
+          mutatedMarkup: trimmed.replace(
+            /\busing \*\*React\*\* and \*\*REST APIs\*\*/i,
+            "using **React**, **REST APIs**, and **AWS**"
+          ),
+          reason: "Appended AWS to existing stack list",
+          fitScore: 88,
+        };
+      }
+      if (/\b(?:APIs?|services?|pipeline|backend|server|PostgreSQL|FastAPI|Flask|Node\.js)\b/i.test(trimmed) && /\.$/.test(trimmed)) {
+        return {
+          mutatedMarkup: trimmed.replace(/\.$/, " on **AWS**."),
+          reason: "Appended lightweight AWS hosting context to backend bullet with free line space",
+          fitScore: 84,
+        };
       }
     }
   }
 
-  // Candidate 2: Leading action-verb surgical reframe (changes 2-4 words at the start)
-  const leadingVerbMatch = /^([A-Za-z]+ed)\s+([a-z]+\s+[a-z]+)/.exec(origMarkup);
-  if (leadingVerbMatch && !origMarkup.toLowerCase().includes(workflowTerm.toLowerCase())) {
-    const verb = leadingVerbMatch[1];
-    const restAfterVerb = origMarkup.slice(verb.length).trimStart();
-    if (workflowTerm.toLowerCase() === "end-to-end") {
-      candidateMarkups.push({
-        markup: `${verb} **end-to-end** ${restAfterVerb}`,
-        injected: ["end-to-end"],
-      });
-    } else if (workflowTerm === "Jira" || workflowTerm === "Linear") {
-      // Compress trailing clause slightly if needed and weave in Jira/Linear
-      const compressed = origMarkup
-        .replace(/\bby building\b/i, "building")
-        .replace(/\bin order to\b/i, "to")
-        .replace(/\bresulting in a\b/i, "driving a")
-        .replace(/\.$/, "");
-      candidateMarkups.push({
-        markup: `${compressed}, tracked in **${workflowTerm}**.`,
-        injected: [workflowTerm],
-      });
-    }
-  }
-
-  // Candidate 3: Consumption wrapper tail compression (changes 3-5 words at the end)
-  if (cloudOrApiTerm && !origMarkup.toLowerCase().includes(cloudOrApiTerm.toLowerCase())) {
-    const compressed = origMarkup
-      .replace(/\bthat automate data gathering from\b/i, "automating")
-      .replace(/\bby architecting a scalable\b/i, "via a")
-      .replace(/\bto generate dynamically feasible\b/i, "generating")
-      .replace(/\band using local\b/i, "with")
-      .replace(/\.$/, "");
-    const tailPhrase =
-      cloudOrApiTerm === "AWS"
-        ? `on **AWS**.`
-        : cloudOrApiTerm === "GraphQL"
-        ? `via **GraphQL**.`
-        : `via **${cloudOrApiTerm}**.`;
-    candidateMarkups.push({
-      markup: `${compressed} ${tailPhrase}`,
-      injected: [cloudOrApiTerm],
-    });
-  }
-
-  if (candidateMarkups.length === 0) return null;
-
-  // Evaluate all candidates against:
-  // (a) <= 7 reframed words cap
-  // (b) Zero Tier-2 Banned leakage
-  // (c) Deterministic NCU visual line budget
-  const bannedLower = tiers.tier_2_banned.map((b) => b.toLowerCase());
-
-  let chosen: {
-    markup: string;
-    latex: string;
-    budget: LineBudgetCheck;
-    wordStats: WordReframeStats;
-    injected: string[];
-  } | null = null;
-
-  for (const cand of candidateMarkups) {
-    const hasBanned = bannedLower.some((b) => containsPhrase(plainText(cand.markup), b));
-    if (hasBanned) continue;
-
-    const wordStats = computeWordReframeStats(origMarkup, cand.markup, 7);
-    if (!wordStats.withinCap || wordStats.reframedWords === 0) continue;
-
-    const candLatex = `\\item ${markupToLatex(cand.markup)}`;
-    const budget = checkLineBudget(origLatex, candLatex, singleLineNcu);
-
-    if (budget.valid) {
-      chosen = {
-        markup: cand.markup,
-        latex: candLatex,
-        budget,
-        wordStats,
-        injected: cand.injected,
+  if (keyword === "Redis") {
+    // Best spot: A bullet about PostgreSQL schemas, database queries, or backend APIs with ample line slack
+    if (/\bacross (\*\*\d+\*\*|\d+) internal services\.$/i.test(trimmed)) {
+      return {
+        mutatedMarkup: trimmed.replace(
+          /\bacross (\*\*\d+\*\*|\d+) internal services\.$/i,
+          "across $1 internal services with **Redis** caching."
+        ),
+        reason: "Natural TTL/read-through caching addition on PostgreSQL + REST API bullet",
+        fitScore: 97,
       };
-      break;
     }
-  }
-
-  // If a candidate was slightly over the NCU budget, apply automatic micro-compression once
-  if (!chosen && candidateMarkups.length > 0) {
-    const first = candidateMarkups[0];
-    const microCompressed = first.markup
-      .replace(/\band maintained\b/gi, "")
-      .replace(/\bcustomizable\b/gi, "custom")
-      .replace(/\brelational\b/gi, "")
-      .replace(/\bexternal\b/gi, "")
-      .replace(/\bstructured\b/gi, "")
-      .replace(/\s{2,}/g, " ")
-      .trim();
-
-    const wordStats = computeWordReframeStats(origMarkup, microCompressed, 7);
-    const candLatex = `\\item ${markupToLatex(microCompressed)}`;
-    const budget = checkLineBudget(origLatex, candLatex, singleLineNcu);
-
-    if (wordStats.withinCap && wordStats.reframedWords > 0 && budget.candLines === budget.origLines) {
-      chosen = {
-        markup: microCompressed,
-        latex: candLatex,
-        budget: { ...budget, valid: true },
-        wordStats,
-        injected: first.injected,
+    if (/\brelational \*\*PostgreSQL\*\* schemas\b/i.test(trimmed)) {
+      return {
+        mutatedMarkup: trimmed.replace(
+          /\brelational \*\*PostgreSQL\*\* schemas\b/i,
+          "**PostgreSQL** schemas and **Redis** caching"
+        ),
+        reason: "Paired Redis caching alongside PostgreSQL schemas",
+        fitScore: 94,
+      };
+    }
+    if (/\bto \*\*Supabase\*\*\.$/i.test(trimmed)) {
+      return {
+        mutatedMarkup: trimmed.replace(
+          /\bto \*\*Supabase\*\*\.$/i,
+          "to **Supabase** and **Redis**."
+        ),
+        reason: "Added Redis state store alongside Supabase persistence",
+        fitScore: 89,
+      };
+    }
+    if (context === "backend-api-db" && /\*\*PostgreSQL\*\*/i.test(trimmed)) {
+      return {
+        mutatedMarkup: trimmed.replace(/\*\*PostgreSQL\*\*/i, "**PostgreSQL** and **Redis**"),
+        reason: "Paired Redis alongside PostgreSQL in backend bullet",
+        fitScore: 85,
       };
     }
   }
 
-  if (!chosen) return null;
+  if (keyword === "GraphQL") {
+    // Best spot: Right next to an existing REST APIs mention in a frontend or backend bullet
+    if (/\band \*\*REST APIs\*\*\.$/i.test(trimmed)) {
+      return {
+        mutatedMarkup: trimmed.replace(
+          /\band \*\*REST APIs\*\*\.$/i,
+          "**REST**, and **GraphQL APIs**."
+        ),
+        reason: "Minimal 2-word API query layer addition next to REST APIs",
+        fitScore: 96,
+      };
+    }
+    if (/\bDeveloped \*\*REST APIs\*\* and\b/i.test(trimmed)) {
+      return {
+        mutatedMarkup: trimmed.replace(
+          /\bDeveloped \*\*REST APIs\*\* and\b/i,
+          "Developed **REST** and **GraphQL APIs** with"
+        ),
+        reason: "Paired GraphQL with REST APIs in backend service bullet",
+        fitScore: 94,
+      };
+    }
+    if (/\bintegrating external \*\*REST APIs\*\*/i.test(trimmed)) {
+      return {
+        mutatedMarkup: trimmed.replace(
+          /\bintegrating external \*\*REST APIs\*\*/i,
+          "integrating **REST** and **GraphQL APIs**"
+        ),
+        reason: "Replaced adjective 'external' with GraphQL alongside REST APIs",
+        fitScore: 91,
+      };
+    }
+    if (/\*\*REST APIs\*\*/i.test(trimmed)) {
+      return {
+        mutatedMarkup: trimmed.replace(/\*\*REST APIs\*\*/i, "**REST** and **GraphQL APIs**"),
+        reason: "Paired GraphQL alongside REST APIs",
+        fitScore: 86,
+      };
+    }
+  }
 
-  const allThreeLatex: [string, string, string] = [
-    chosen.latex,
-    candidateMarkups[1] ? `\\item ${markupToLatex(candidateMarkups[1].markup)}` : chosen.latex,
-    candidateMarkups[2] ? `\\item ${markupToLatex(candidateMarkups[2].markup)}` : chosen.latex,
-  ];
+  if (keyword === "Tailwind CSS") {
+    if (context === "frontend-ui" && /\b\*\*TypeScript, Next\.js, React\*\*/i.test(trimmed)) {
+      return {
+        mutatedMarkup: trimmed.replace(
+          /\b\*\*TypeScript, Next\.js, React\*\*/i,
+          "**TypeScript, Next.js, React, Tailwind CSS**"
+        ),
+        reason: "Appended Tailwind CSS to existing Next.js/React frontend stack",
+        fitScore: 95,
+      };
+    }
+  }
 
-  return {
-    bulletId: bullet.id,
-    containerId,
-    containerTitle,
-    containerKind,
-    originalMarkup: origMarkup,
-    mutatedMarkup: chosen.markup,
-    originalLatex: origLatex,
-    mutatedLatex: chosen.latex,
-    candidatesLatex: allThreeLatex,
-    budget: chosen.budget,
-    wordStats: chosen.wordStats,
-    injectedKeywords: chosen.injected,
-    accepted: true,
-  };
+  if (keyword === "Webhooks") {
+    if (/\bhandled WhatsApp\/SMS via \*\*Twilio\*\*/i.test(trimmed)) {
+      return {
+        mutatedMarkup: trimmed.replace(
+          /\bhandled WhatsApp\/SMS via \*\*Twilio\*\*/i,
+          "handled WhatsApp/SMS **Webhooks** via **Twilio**"
+        ),
+        reason: "Natural Twilio webhook event handling context",
+        fitScore: 96,
+      };
+    }
+    if (/\bvia \*\*Flask\*\* backend \*\*APIs\*\*/i.test(trimmed)) {
+      return {
+        mutatedMarkup: trimmed.replace(
+          /\bvia \*\*Flask\*\* backend \*\*APIs\*\*/i,
+          "via **Flask** **Webhooks** and **APIs**"
+        ),
+        reason: "Added Webhooks to Flask event intake API bullet",
+        fitScore: 92,
+      };
+    }
+  }
+
+  if (keyword === "Docker") {
+    if (context === "cloud-deploy-infra" || context === "backend-api-db") {
+      if (/\bacross (\*\*\d+\*\*|\d+) internal services\.$/i.test(trimmed)) {
+        return {
+          mutatedMarkup: trimmed.replace(
+            /\bacross (\*\*\d+\*\*|\d+) internal services\.$/i,
+            "across $1 **Docker** services."
+          ),
+          reason: "Added Docker container context to internal services bullet",
+          fitScore: 93,
+        };
+      }
+    }
+  }
+
+  return null;
 }
 
 /* ============================================================================
- * 6. FULL LARP ALIGNMENT PIPELINE & PROMPTS
+ * 6. FULL LARP ALIGNMENT PIPELINE (CENTRALIZED, SPACE-AWARE, MINIMAL)
  * ============================================================================ */
-
-export const JD_TRIAGE_SYSTEM_PROMPT = `You are a Technical Recruiting & Resume Defensibility Classifier.
-Given a User Resume and a Target Job Description (JD), extract all technical skills, tools, workflows, and product domain phrases from the JD and classify them into exact tiers:
-
-1. "matched": Skills present in BOTH the JD and the User Resume.
-2. "tier_0_workflow": Agile/PM tools (Jira, Linear), ownership styles (end-to-end, cross-functional, fast iteration, non-waterfall), and dev processes. Safe to weave into any work bullet.
-3. "tier_1_framing": Domain context (e.g., B2B support, account-level context, agentic workflows, signal resolution) and lightweight API/cloud consumption (e.g., GraphQL queries, AWS deployment) that can be framed around existing full-stack/backend work without claiming deep architectural mastery.
-4. "tier_1_5_skills_only": Plug-and-play tools, caches, or secondary services (e.g., Redis, GraphQL, AWS, Jira, Postman, Docker) that should be appended or swapped into the Skills section.
-5. "tier_2_banned": Core programming languages (e.g., Golang, Rust, Ruby) or complex infrastructure internals that the user has ZERO evidence of knowing. These are STRICTLY BANNED from injection.
-
-Return strict JSON matching this schema.`;
-
-export const BULLET_MUTATION_SYSTEM_PROMPT = `You are a Precision LaTeX Resume Editor. Rewrite the provided LaTeX \`\\item\` bullet to align with the target Job Description while strictly obeying defensibility, a 6-7 word maximum edit cap, and visual-width rules.
-
-### INPUTS:
-- Original LaTeX Bullet: {{original_bullet}}
-- Target Visual Width Budget: Must land between {{min_width}} and {{max_width}} NCU (roughly {{char_len}} visible characters).
-- Matched Core Skills to Emphasize: {{matched}}
-- Tier 0 Workflow Terms (Inject 1-2 naturally): {{tier_0_workflow}}
-- Tier 1 Framing/Integration Terms (Inject 1 if contextually compatible): {{tier_1_framing}}
-- BANNED Terms (NEVER include): {{tier_2_banned}}
-
-### RULES:
-1. 6-7 WORD SURGICAL CAP: Change or reframe AT MOST 6 to 7 words in the bullet. Keep 80%+ of the user's original sentence verbatim.
-2. COMPRESS BEFORE INJECTING: To make room for new keywords without wrapping onto a new line, replace a single wordy low-signal phrase with a tight action/workflow clause.
-3. DEFENSIBILITY CAP: Frame Tier 1 tech as integration or consumption (e.g., "via GraphQL", "on AWS", "tracked in Jira"), NEVER as core ground-up invention. Preserve all original hard metrics/numbers exactly.
-4. STRATEGIC BOLDING (\\textbf{}):
-   - Wrap 3 to 4 high-signal tokens per bullet in \`\\textbf{...}\`.
-   - Remember \`\\textbf{}\` widens text by 12%, so keep prose tight.
-5. Escape all LaTeX special characters (\`\\%\`, \`\\$\`, \`\\&\`). Return ONLY the raw LaTeX string inside a JSON array of 3 variations: \`["variation_1_tight", "variation_2_balanced", "variation_3_slightly_longer"]\`.`;
 
 export interface LarpAlignmentRun {
   tiers: LarpTierClassification;
@@ -890,10 +821,12 @@ export interface LarpAlignmentRun {
 }
 
 /**
- * Executes the complete 3-Step Defensible Resume Alignment (LARP) Pipeline:
- * - Step 1: 4-Tier JD Keyword Triage (`matched`, `tier_0_workflow`, `tier_1_framing`, `tier_1_5_skills_only`, `tier_2_banned`)
- * - Step 2: Skills Section Smart-Swapper (`<= 98.0 NCU` per category line)
- * - Step 3: Surgical Work & Project Bullet Reframer (`<= 6-7 words` changed per bullet & exact NCU line count preserved)
+ * Executes the refined Defensible Resume Alignment (LARP) Pipeline:
+ * 1. Classifies JD keywords into the 5 defensibility buckets (blocking Tier 2 Banned).
+ * 2. Runs the Skills Section Smart-Swapper (`<= 98.0 NCU` per category line).
+ * 3. Globally selects AT MOST 1 best, space-permitting bullet per missing Tier 1 technical tool
+ *    (prioritizing easily defensible backend/service/project bullets with ample free line space),
+ *    applying a minimal 1-to-5 word addition without rewriting the sentence or overflowing lines.
  */
 export function runLarpAlignmentPipeline(
   jobDescription: string,
@@ -906,42 +839,150 @@ export function runLarpAlignmentPipeline(
     98.0
   );
 
-  const bulletProposals: BulletMutationProposal[] = [];
+  const cal = resume.calibration ?? DEFAULT_CALIBRATION;
+  const oneLineMaxChars = cal.oneLineMax || 108;
+  const twoLineMaxChars = cal.twoLineMax || 216;
 
-  for (const job of resume.experience) {
-    for (const bullet of job.bullets) {
-      const proposal = mutateBulletSurgical(
-        bullet,
-        job.id,
-        `${job.title} · ${job.company}`,
-        "experience",
-        tiers,
-        98.0
-      );
-      if (proposal) {
-        bulletProposals.push(proposal);
-      }
-    }
+  // Collect all candidate bullets with their context and available line slack
+  interface CandidateBulletSlot {
+    bullet: Bullet;
+    containerId: string;
+    containerTitle: string;
+    containerKind: "experience" | "project";
+    context: BulletDomainContext;
+    defensibilityBonus: number;
+    origPlainLen: number;
+    maxAllowedChars: number;
+    charSlack: number;
   }
+
+  const slots: CandidateBulletSlot[] = [];
+
+  resume.experience.forEach((job, jobIdx) => {
+    for (const bullet of job.bullets) {
+      const origPlainLen = plainText(bullet.text).trim().length;
+      if (origPlainLen === 0) continue;
+      const origLines = origPlainLen <= oneLineMaxChars ? 1 : 2;
+      const maxAllowedChars = origLines === 1 ? oneLineMaxChars : twoLineMaxChars;
+      const charSlack = maxAllowedChars - origPlainLen;
+      const context = classifyBulletContext(bullet.text, `${job.title} ${job.company}`);
+      // Prefer earlier/secondary roles or bullets with more slack that are easy to explain
+      const defensibilityBonus = jobIdx > 0 ? 5 : 0;
+
+      slots.push({
+        bullet,
+        containerId: job.id,
+        containerTitle: `${job.title} · ${job.company}`,
+        containerKind: "experience",
+        context,
+        defensibilityBonus,
+        origPlainLen,
+        maxAllowedChars,
+        charSlack,
+      });
+    }
+  });
 
   for (const proj of resume.projects) {
     for (const bullet of proj.bullets) {
-      const proposal = mutateBulletSurgical(
+      const origPlainLen = plainText(bullet.text).trim().length;
+      if (origPlainLen === 0) continue;
+      const origLines = origPlainLen <= oneLineMaxChars ? 1 : 2;
+      const maxAllowedChars = origLines === 1 ? oneLineMaxChars : twoLineMaxChars;
+      const charSlack = maxAllowedChars - origPlainLen;
+      const context = classifyBulletContext(bullet.text, `${proj.name} ${proj.techStack.join(" ")}`);
+
+      slots.push({
         bullet,
-        proj.id,
-        proj.name,
-        "project",
-        tiers,
-        98.0
-      );
-      if (proposal) {
-        bulletProposals.push(proposal);
+        containerId: proj.id,
+        containerTitle: proj.name,
+        containerKind: "project",
+        context,
+        defensibilityBonus: 6, // Small projects are very easy to defend
+        origPlainLen,
+        maxAllowedChars,
+        charSlack,
+      });
+    }
+  }
+
+  // For each Tier 1 technical tool (e.g. AWS, Redis, GraphQL, Tailwind CSS, Webhooks, Docker),
+  // find the SINGLE best bullet slot that has enough free space on its current line.
+  const usedBulletIds = new Set<string>();
+  const bulletProposals: BulletMutationProposal[] = [];
+  const bannedLower = tiers.tier_2_banned.map((b) => b.toLowerCase());
+
+  for (const keyword of tiers.tier_1_framing) {
+    let bestProposal: {
+      slot: CandidateBulletSlot;
+      mutatedMarkup: string;
+      reason: string;
+      score: number;
+      budget: LineBudgetCheck;
+      wordStats: WordReframeStats;
+    } | null = null;
+
+    for (const slot of slots) {
+      if (usedBulletIds.has(slot.bullet.id)) continue;
+      // Require at least 8 characters of free space on the current line before even trying
+      if (slot.charSlack < 8) continue;
+
+      const attempt = tryMinimalKeywordInjection(slot.bullet.text, slot.context, keyword);
+      if (!attempt) continue;
+
+      const newPlainLen = plainText(attempt.mutatedMarkup).trim().length;
+      // Must fit strictly within the bullet's existing calibrated 1-line or 2-line character cap!
+      if (newPlainLen > slot.maxAllowedChars) continue;
+
+      // Verify zero Tier 2 Banned terms
+      if (bannedLower.some((b) => containsPhrase(plainText(attempt.mutatedMarkup), b))) continue;
+
+      const origLatex = `\\item ${markupToLatex(slot.bullet.text)}`;
+      const candLatex = `\\item ${markupToLatex(attempt.mutatedMarkup)}`;
+      const budget = checkLineBudget(origLatex, candLatex, 98.0);
+      if (!budget.valid) continue;
+
+      const wordStats = computeWordReframeStats(slot.bullet.text, attempt.mutatedMarkup, 6);
+      if (!wordStats.withinCap) continue;
+
+      const totalScore = attempt.fitScore + slot.defensibilityBonus + Math.min(10, slot.charSlack / 5);
+      if (!bestProposal || totalScore > bestProposal.score) {
+        bestProposal = {
+          slot,
+          mutatedMarkup: attempt.mutatedMarkup,
+          reason: attempt.reason,
+          score: totalScore,
+          budget,
+          wordStats,
+        };
       }
+    }
+
+    if (bestProposal) {
+      usedBulletIds.add(bestProposal.slot.bullet.id);
+      const origLatex = `\\item ${markupToLatex(bestProposal.slot.bullet.text)}`;
+      const candLatex = `\\item ${markupToLatex(bestProposal.mutatedMarkup)}`;
+
+      bulletProposals.push({
+        bulletId: bestProposal.slot.bullet.id,
+        containerId: bestProposal.slot.containerId,
+        containerTitle: bestProposal.slot.containerTitle,
+        containerKind: bestProposal.slot.containerKind,
+        contextCategory: bestProposal.slot.context,
+        originalMarkup: bestProposal.slot.bullet.text,
+        mutatedMarkup: bestProposal.mutatedMarkup,
+        originalLatex: origLatex,
+        mutatedLatex: candLatex,
+        budget: bestProposal.budget,
+        wordStats: bestProposal.wordStats,
+        injectedKeywords: [keyword],
+        reason: bestProposal.reason,
+        accepted: true,
+      });
     }
   }
 
   // Final Guardrail Verification: confirm 0 occurrences of any tier_2_banned term in mutated outputs
-  const bannedLower = tiers.tier_2_banned.map((b) => b.toLowerCase());
   const allMutatedText = [
     ...updatedCategories.flatMap((c) => c.skills.map((s) => s.name)),
     ...bulletProposals.map((p) => plainText(p.mutatedMarkup)),
@@ -1019,79 +1060,4 @@ Requirements & Tech Stack:
 - Strong experience with React, TypeScript, Python, PostgreSQL, and REST APIs.
 - Experience with Golang (Go) and Rust for high-throughput backend services.
 - Experience querying GraphQL APIs, caching with Redis, and deploying on AWS (EC2, S3, Lambda).
-- Comfortable with end-to-end ownership, fast iteration, and tracking B2B support and account-level context workflows in Jira.`;
-
-export function runPylonVerificationTest() {
-  const sampleResume: MasterResume = {
-    version: 1,
-    updatedAt: new Date().toISOString(),
-    contact: {
-      name: "Test Candidate",
-      location: "Waterloo, ON",
-      phone: "555-0100",
-      email: "test@uwaterloo.ca",
-      links: [],
-    },
-    education: [],
-    skills: [
-      {
-        id: "cat_lang",
-        name: "Languages",
-        skills: [
-          { id: "s1", name: "Python" },
-          { id: "s2", name: "TypeScript" },
-          { id: "s3", name: "SQL" },
-        ],
-      },
-      {
-        id: "cat_fw",
-        name: "Frameworks & Libraries",
-        skills: [
-          { id: "s4", name: "React" },
-          { id: "s5", name: "Next.js" },
-          { id: "s6", name: "FastAPI" },
-        ],
-      },
-      {
-        id: "cat_db",
-        name: "Databases & Cloud",
-        skills: [
-          { id: "s7", name: "PostgreSQL" },
-          { id: "s8", name: "SQLite3" },
-        ],
-      },
-      {
-        id: "cat_tools",
-        name: "Developer Tools & DevOps",
-        skills: [
-          { id: "s9", name: "Git" },
-          { id: "s10", name: "Docker" },
-          { id: "s11", name: "REST APIs" },
-        ],
-      },
-    ],
-    experience: [
-      {
-        id: "job_1",
-        title: "Software Engineering Intern",
-        company: "Acme Corp",
-        companyUrl: "",
-        location: "Remote",
-        dates: "May 2025 – Aug 2025",
-        bullets: [
-          {
-            id: "b_pylon",
-            text: "Developed backend and frontend features using **React** and **REST APIs** to help customer teams view account data, resulting in a **35%** reduction in manual lookup time.",
-            tools: ["React", "REST APIs"],
-            metrics: ["35%"],
-          },
-        ],
-      },
-    ],
-    projects: [],
-    awards: [],
-  };
-
-  return runLarpAlignmentPipeline(PYLON_TEST_JD, sampleResume);
-}
-
+- Comfortable with Agile workflows and tracking issues in Jira.`;
