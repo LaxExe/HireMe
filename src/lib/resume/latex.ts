@@ -6,9 +6,11 @@ import type {
   Job,
   MasterResume,
   Project,
+  ResumeFormat,
+  ResumeSectionKey,
   SkillCategory,
 } from "./types";
-import { emptyResume } from "./types";
+import { DEFAULT_RESUME_FORMAT, emptyResume } from "./types";
 import { analyzeBullet, knownTools, plainText, splitItems, uid } from "./utils";
 
 /* ---------------------------------- low level ---------------------------------- */
@@ -158,6 +160,26 @@ function splitDates(dates: string): string {
   return dates.replace(/\s*[–—-]+\s*/g, " – ").trim();
 }
 
+/* ---------------------------------- dimensions --------------------------------- */
+
+function dimToInches(raw: string, baseFontPt = 11): number | null {
+  const m = /([+-]?\d+(?:\.\d+)?)\s*(in|cm|mm|pt|em)/i.exec(raw.trim());
+  if (!m) return null;
+  const val = parseFloat(m[1]);
+  const unit = m[2].toLowerCase();
+  if (unit === "in") return val;
+  if (unit === "cm") return val / 2.54;
+  if (unit === "mm") return val / 25.4;
+  if (unit === "pt") return val / 72;
+  if (unit === "em") return (val * baseFontPt) / 72;
+  return null;
+}
+
+function dimToPoints(raw: string, baseFontPt = 11): number | null {
+  const inches = dimToInches(raw, baseFontPt);
+  return inches !== null ? inches * 72 : null;
+}
+
 /* ----------------------------------- sections ---------------------------------- */
 
 interface SectionRegion {
@@ -196,6 +218,250 @@ function findSections(body: string): SectionRegion[] {
     sections[i].end = i + 1 < sections.length ? sections[i + 1].start : body.length;
   }
   return sections;
+}
+
+function classifySectionKey(upperName: string): ResumeSectionKey | null {
+  if (/EDUCAT|ACADEMIC/.test(upperName)) return "education";
+  if (/SKILL|TECHNICAL|COMPETENC/.test(upperName)) return "skills";
+  if (/EXPERIENCE|WORK|EMPLOYMENT|PROFESSIONAL|LEADERSHIP|EXTRACURRICULAR|ACTIVIT|VOLUNTEER/.test(upperName))
+    return "experience";
+  if (/PROJECT/.test(upperName)) return "projects";
+  if (/AWARD|HONOR|SCHOLARSHIP|ACHIEVEMENT/.test(upperName)) return "awards";
+  return null;
+}
+
+/** Extract formatting metadata from the LaTeX document preamble and body. */
+function parseResumeFormat(
+  src: string,
+  preamble: string,
+  headerRegion: string,
+  sections: SectionRegion[]
+): ResumeFormat {
+  const fmt: ResumeFormat = structuredClone(DEFAULT_RESUME_FORMAT);
+
+  // 1. Document class: paperSize & baseFontSizePt
+  const docClassMatch = /\\documentclass\s*(?:\[([^\]]*)\])?/.exec(preamble);
+  if (docClassMatch && docClassMatch[1]) {
+    const opts = docClassMatch[1];
+    if (/a4paper/i.test(opts)) fmt.paperSize = "a4";
+    else if (/letterpaper/i.test(opts)) fmt.paperSize = "letter";
+
+    const ptMatch = /(10|11|12)pt/.exec(opts);
+    if (ptMatch) fmt.baseFontSizePt = Number(ptMatch[1]) as 10 | 11 | 12;
+  }
+
+  // 2. Font family & scale
+  const helvetMatch = /\\usepackage\s*(?:\[([^\]]*)\])?\s*\{helvet\}/.exec(preamble);
+  if (helvetMatch) {
+    fmt.fontFamily = "helvetica";
+    const scaleMatch = /scaled\s*=\s*(\d+(?:\.\d+)?)/.exec(helvetMatch[1] || "");
+    fmt.fontScale = scaleMatch ? parseFloat(scaleMatch[1]) : 1.0;
+  } else if (/Noto\s*Sans/i.test(preamble)) {
+    fmt.fontFamily = "noto-sans";
+    fmt.fontScale = 1.0;
+  } else if (/\\sfdefault|sans|roboto|lato|opensans|inter|arial|tgheros/i.test(preamble)) {
+    fmt.fontFamily = "sans";
+    fmt.fontScale = 1.0;
+  } else {
+    fmt.fontFamily = "serif";
+    fmt.fontScale = 1.0;
+  }
+
+  // 3. Margins: geometry package vs fullpage + \addtolength
+  const geoPkgMatch = /\\usepackage\s*\[([^\]]+)\]\s*\{geometry\}/.exec(preamble);
+  const geoCmdMatch = /\\geometry\s*\{([^}]+)\}/.exec(preamble);
+  const geoOpts = geoPkgMatch?.[1] || geoCmdMatch?.[1] || "";
+
+  if (geoOpts) {
+    if (/a4paper/i.test(geoOpts)) fmt.paperSize = "a4";
+    if (/letterpaper/i.test(geoOpts)) fmt.paperSize = "letter";
+
+    const allMargin = /(?:^|,)\s*margin\s*=\s*([^,\]]+)/i.exec(geoOpts);
+    if (allMargin) {
+      const m = dimToInches(allMargin[1], fmt.baseFontSizePt);
+      if (m !== null) {
+        fmt.margins = { topIn: m, bottomIn: m, leftIn: m, rightIn: m };
+      }
+    }
+    const hMargin = /hmargin\s*=\s*([^,\]]+)/i.exec(geoOpts);
+    if (hMargin) {
+      const m = dimToInches(hMargin[1], fmt.baseFontSizePt);
+      if (m !== null) {
+        fmt.margins.leftIn = m;
+        fmt.margins.rightIn = m;
+      }
+    }
+    const vMargin = /vmargin\s*=\s*([^,\]]+)/i.exec(geoOpts);
+    if (vMargin) {
+      const m = dimToInches(vMargin[1], fmt.baseFontSizePt);
+      if (m !== null) {
+        fmt.margins.topIn = m;
+        fmt.margins.bottomIn = m;
+      }
+    }
+    for (const side of ["top", "bottom", "left", "right"] as const) {
+      const sideMatch = new RegExp(`(?:^|,)\\s*${side}\\s*=\\s*([^,\\]]+)`, "i").exec(geoOpts);
+      if (sideMatch) {
+        const m = dimToInches(sideMatch[1], fmt.baseFontSizePt);
+        if (m !== null) {
+          if (side === "top") fmt.margins.topIn = m;
+          if (side === "bottom") fmt.margins.bottomIn = m;
+          if (side === "left") fmt.margins.leftIn = m;
+          if (side === "right") fmt.margins.rightIn = m;
+        }
+      }
+    }
+  } else if (/\\usepackage(?:\[[^\]]*\])?\{fullpage\}/.test(preamble)) {
+    let leftIn = 1.0;
+    let rightIn = 1.0;
+    let topIn = 1.0;
+    let bottomIn = 1.0;
+
+    const oddMatch = /\\addtolength\{\\oddsidemargin\}\{([^}]+)\}/.exec(preamble);
+    if (oddMatch) {
+      const delta = dimToInches(oddMatch[1], fmt.baseFontSizePt);
+      if (delta !== null) {
+        leftIn = Math.max(0.2, 1.0 + delta);
+        rightIn = leftIn;
+      }
+    }
+    const topMatch = /\\addtolength\{\\topmargin\}\{([^}]+)\}/.exec(preamble);
+    if (topMatch) {
+      const delta = dimToInches(topMatch[1], fmt.baseFontSizePt);
+      if (delta !== null) {
+        topIn = Math.max(0.2, 1.0 + delta);
+        bottomIn = topIn;
+      }
+    }
+    fmt.margins = { topIn, bottomIn, leftIn, rightIn };
+  }
+
+  // 4. Line spread & muted color
+  const lsMatch = /\\linespread\{(\d+(?:\.\d+)?)\}/.exec(preamble);
+  fmt.lineSpread = lsMatch ? parseFloat(lsMatch[1]) : 1.0;
+
+  const mutedMatch = /\\definecolor\{muted\}\{gray\}\{(\d+(?:\.\d+)?)\}/.exec(preamble);
+  fmt.mutedGray = mutedMatch ? parseFloat(mutedMatch[1]) : 0.35;
+
+  // 5. Header style
+  fmt.headerStyle.alignment = /\\begin\{center\}/.test(headerRegion) ? "center" : "left";
+  if (/\\Huge/.test(headerRegion)) fmt.headerStyle.nameSize = "Huge";
+  else if (/\\LARGE/.test(headerRegion)) fmt.headerStyle.nameSize = "LARGE";
+  else fmt.headerStyle.nameSize = "Large";
+
+  fmt.headerStyle.nameBold = /\\textbf|\\bfseries/.test(headerRegion);
+  fmt.headerStyle.showIcons = /\\fa(?:MapMarker|Phone|Envelope|Linkedin|Github|Globe)/.test(
+    headerRegion
+  );
+  fmt.headerStyle.underlineLinks = /\\underline\{/.test(headerRegion);
+  if (/\$\\cdot\$|\\cdot/.test(headerRegion)) fmt.headerStyle.separator = "cdot";
+  else if (/\$\|\$|\|/.test(headerRegion)) fmt.headerStyle.separator = "bar";
+  else fmt.headerStyle.separator = "cdot";
+
+  // 6. Section heading style
+  fmt.sectionStyle.uppercase = /\\MakeUppercase|\\uppercase|\\scshape/.test(preamble);
+  fmt.sectionStyle.hasRule = /\\titlerule|\\hrule/.test(preamble);
+  const hruleHeight = /\\hrule\s+height\s+([0-9.]+pt)/.exec(preamble);
+  if (hruleHeight) {
+    fmt.sectionStyle.ruleHeightPt = parseFloat(hruleHeight[1]) || 0.6;
+  } else {
+    fmt.sectionStyle.ruleHeightPt = 0.5;
+  }
+
+  const titleSpacingMatch =
+    /\\titlespacing\*?\{\\section\}\{[^}]*\}\{([^}]+)\}\{([^}]+)\}/.exec(preamble);
+  if (titleSpacingMatch) {
+    const above = dimToPoints(titleSpacingMatch[1], fmt.baseFontSizePt);
+    const below = dimToPoints(titleSpacingMatch[2], fmt.baseFontSizePt);
+    if (above !== null) fmt.sectionStyle.spaceAbovePt = above;
+    if (below !== null) fmt.sectionStyle.spaceBelowPt = below;
+  } else if (/\\newcommand\{\\ressection\}/.test(preamble)) {
+    fmt.sectionStyle.spaceAbovePt = 8;
+    fmt.sectionStyle.spaceBelowPt = 5;
+  }
+
+  const orderedKeys: ResumeSectionKey[] = [];
+  const sectionTitles: Partial<Record<ResumeSectionKey, string>> = {};
+  for (const sec of sections) {
+    const k = classifySectionKey(sec.key);
+    if (k) {
+      if (!orderedKeys.includes(k)) {
+        orderedKeys.push(k);
+      }
+      if (!sectionTitles[k]) {
+        sectionTitles[k] = sec.name;
+      }
+    }
+  }
+  if (orderedKeys.length > 0) {
+    fmt.sectionStyle.order = orderedKeys;
+  }
+  fmt.sectionStyle.titles = {
+    ...fmt.sectionStyle.titles,
+    ...sectionTitles,
+  };
+
+  // 7. Entry / Subheading style
+  const hasResumeSubheading = /\\resumeSubheading/.test(src);
+  if (hasResumeSubheading) {
+    fmt.entryStyle = {
+      layout: "subheading-macro",
+      companyFirst: false,
+      line2Bold: false,
+      rightItalic: false,
+      rightMuted: /\\textcolor\{muted\}/.test(src),
+      showLinkIcons: /\\faLink|\\faGithub/.test(src),
+      projectTechStyle: /\\textcolor\{muted\}/.test(src) ? "muted" : "italic",
+      entrySpacingPt: 4,
+    };
+  } else {
+    fmt.entryStyle = {
+      layout: "hfill-italic",
+      companyFirst: true,
+      line2Bold: true,
+      rightItalic: /\\hfill\s*\\textit/.test(src),
+      rightMuted: /\\textcolor\{muted\}/.test(src),
+      showLinkIcons: /\\faLink|\\faGithub/.test(src),
+      projectTechStyle: /\$\|\$\s*\\textit/.test(src) ? "italic" : "muted",
+      entrySpacingPt: 5,
+    };
+  }
+
+  // 8. Skill style
+  const skillsSec = sections.find((s) => /SKILL|TECHNICAL|COMPETENC/.test(s.key));
+  if (skillsSec) {
+    const skillBody = src.slice(skillsSec.contentStart, skillsSec.end);
+    const itemCount = (skillBody.match(/\\item(?![A-Za-z])/g) || []).length;
+    fmt.skillStyle.layout = itemCount > 1 ? "itemize-bullets" : "compact-lines";
+    fmt.skillStyle.colonInsideBold = /\\textbf\{[^}]+:\}/.test(skillBody);
+    fmt.skillStyle.smallText = /\\small/.test(skillBody);
+  }
+
+  // 9. Bullet style
+  const hasResumeItem = /\\resumeItem/.test(src);
+  fmt.bulletStyle.smallText = hasResumeItem || /\\newcommand\{\\resumeItem\}\[1\]\{\\item\\small/.test(preamble);
+
+  const leftMarginMatch = /leftmargin\s*=\s*([^,\]]+)/.exec(src);
+  if (leftMarginMatch) {
+    const lm = dimToInches(leftMarginMatch[1], fmt.baseFontSizePt);
+    if (lm !== null) fmt.bulletStyle.leftMarginIn = lm;
+  }
+  if (/nosep/.test(preamble)) {
+    fmt.bulletStyle.itemSepPt = 1;
+  } else {
+    const itemSepMatch = /itemsep\s*=\s*([^,\]]+)/.exec(src);
+    if (itemSepMatch) {
+      const isep = dimToPoints(itemSepMatch[1], fmt.baseFontSizePt);
+      if (isep !== null) fmt.bulletStyle.itemSepPt = Math.max(0, isep);
+    }
+  }
+  const topSepMatch = /topsep\s*=\s*([^,\]]+)/.exec(src);
+  if (topSepMatch) {
+    const tsep = dimToPoints(topSepMatch[1], fmt.baseFontSizePt);
+    if (tsep !== null) fmt.bulletStyle.topSepPt = Math.max(0, tsep);
+  }
+
+  return fmt;
 }
 
 /** Extract Candidate Contact Info from header / preamble region. */
@@ -570,9 +836,11 @@ function parseAwards(content: string): Award[] {
 
 export function parseLatexResume(source: string): MasterResume {
   const resume = emptyResume();
+  resume.rawLatex = source;
   const src = stripComments(source);
 
   const docStart = src.indexOf("\\begin{document}");
+  const preamble = docStart >= 0 ? src.slice(0, docStart) : "";
   const body = docStart >= 0 ? src.slice(docStart + "\\begin{document}".length) : src;
 
   // Discover all sections
@@ -582,25 +850,44 @@ export function parseLatexResume(source: string): MasterResume {
   const contactRegion = sections.length > 0 ? body.slice(0, sections[0].start) : body;
   resume.contact = parseContact(contactRegion);
 
+  // Extract full formatting metadata from preamble, header, and sections
+  resume.format = parseResumeFormat(src, preamble, contactRegion, sections);
+
+  const detected = new Set<ResumeSectionKey>(["contact"]);
+
   for (const sec of sections) {
     const content = body.slice(sec.contentStart, sec.end);
     const key = sec.key;
 
     if (/EDUCAT|ACADEMIC/.test(key)) {
-      resume.education.push(...parseEducation(content));
+      const items = parseEducation(content);
+      resume.education.push(...items);
+      if (items.length > 0) detected.add("education");
     } else if (/SKILL|TECHNICAL|COMPETENC/.test(key)) {
-      resume.skills.push(...parseSkills(content));
+      const items = parseSkills(content);
+      resume.skills.push(...items);
+      if (items.length > 0) detected.add("skills");
     } else if (/EXPERIENCE|WORK|EMPLOYMENT|PROFESSIONAL/.test(key)) {
-      resume.experience.push(...parseExperience(content));
+      const items = parseExperience(content);
+      resume.experience.push(...items);
+      if (items.length > 0) detected.add("experience");
     } else if (/PROJECT/.test(key)) {
-      resume.projects.push(...parseProjects(content));
+      const items = parseProjects(content);
+      resume.projects.push(...items);
+      if (items.length > 0) detected.add("projects");
     } else if (/LEADERSHIP|EXTRACURRICULAR|ACTIVIT|VOLUNTEER/.test(key)) {
       // Leadership roles are integrated into experience to preserve tool, metric, and line calibration scoring
-      resume.experience.push(...parseExperience(content));
+      const items = parseExperience(content);
+      resume.experience.push(...items);
+      if (items.length > 0) detected.add("experience");
     } else if (/AWARD|HONOR|SCHOLARSHIP|ACHIEVEMENT/.test(key)) {
-      resume.awards.push(...parseAwards(content));
+      const items = parseAwards(content);
+      resume.awards.push(...items);
+      if (items.length > 0) detected.add("awards");
     }
   }
+
+  resume.sections = Array.from(detected);
 
   // Derive tools & metrics across the full vocabulary of skills and projects
   const known = knownTools(

@@ -69,16 +69,15 @@ export function CalibrationProvider({
   };
 
   const setOneLineMax = (n: number) => {
-    const valid = Math.max(20, Math.min(300, Math.round(n)));
-    // Automatically keep twoLineMax proportionally scaled if it was double
-    const newTwoLine = calibration.twoLineMax <= calibration.oneLineMax * 2 + 5
-      ? valid * 2
-      : Math.max(valid + 20, calibration.twoLineMax);
+    if (!Number.isFinite(n) || n < 1) return;
+    const valid = Math.max(1, Math.min(500, Math.round(n)));
+    const newTwoLine = calibration.twoLineMax <= valid ? valid * 2 : calibration.twoLineMax;
     update({ oneLineMax: valid, twoLineMax: newTwoLine });
   };
 
   const setTwoLineMax = (n: number) => {
-    const valid = Math.max(calibration.oneLineMax + 10, Math.min(600, Math.round(n)));
+    if (!Number.isFinite(n) || n < 1) return;
+    const valid = Math.max(calibration.oneLineMax + 1, Math.min(1000, Math.round(n)));
     update({ ...calibration, twoLineMax: valid });
   };
 
