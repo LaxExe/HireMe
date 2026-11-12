@@ -44,6 +44,7 @@ export default function OperationsPage() {
   const [matchResult, setMatchResult] = useState<KeywordMatchResult | null>(null);
   const [larpRun, setLarpRun] = useState<LarpAlignmentRun | null>(null);
   const [acceptedBullets, setAcceptedBullets] = useState<Set<string>>(new Set());
+  const [acceptedMalleable, setAcceptedMalleable] = useState<Set<string>>(new Set());
   const [applySkillsSwap, setApplySkillsSwap] = useState(true);
   const [appliedBanner, setAppliedBanner] = useState(false);
   const [exportingPdf, setExportingPdf] = useState(false);
@@ -114,6 +115,9 @@ export default function OperationsPage() {
     setMatchResult(kwResult);
     setLarpRun(alignment);
     setAcceptedBullets(new Set(alignment.bulletProposals.map((p) => p.bulletId)));
+    setAcceptedMalleable(
+      new Set(alignment.malleableBullets.filter((m) => m.recommended).map((m) => m.id))
+    );
     setApplySkillsSwap(true);
     setAppliedBanner(false);
   };
@@ -151,13 +155,37 @@ export default function OperationsPage() {
     setAppliedBanner(false);
   };
 
+  const handleToggleMalleable = (malleableId: string) => {
+    setAcceptedMalleable((prev) => {
+      const next = new Set(prev);
+      if (next.has(malleableId)) next.delete(malleableId);
+      else next.add(malleableId);
+      return next;
+    });
+    setAppliedBanner(false);
+  };
+
+  const handleSelectOnlyTopRecommended = () => {
+    if (!larpRun?.aiRecommendation) return;
+    const topId = larpRun.aiRecommendation.topPickId;
+    if (larpRun.aiRecommendation.topPickKind === "malleable-new-line") {
+      setAcceptedMalleable(new Set([topId]));
+      setAcceptedBullets(new Set());
+    } else {
+      setAcceptedMalleable(new Set());
+      setAcceptedBullets(new Set([topId]));
+    }
+    setAppliedBanner(false);
+  };
+
   const handleApplyToMasterResume = async () => {
     if (!resume || !larpRun) return;
     const updated = applyLarpMutationsToResume(
       resume,
       larpRun,
       acceptedBullets,
-      applySkillsSwap
+      applySkillsSwap,
+      acceptedMalleable
     );
     setResume(updated);
     await saveMasterResume(user.uid, updated);
@@ -172,7 +200,8 @@ export default function OperationsPage() {
       resume,
       larpRun,
       acceptedBullets,
-      applySkillsSwap
+      applySkillsSwap,
+      acceptedMalleable
     );
     const defaultName = tailored.contact.name
       ? `${tailored.contact.name.trim().replace(/\s+/g, "_")}_Aligned_Resume`
@@ -753,6 +782,188 @@ export default function OperationsPage() {
                         </div>
                       );
                     })}
+                  </div>
+                )}
+
+                {/* Step 4: Malleable 1-Line LARP Bullets (Context-Aware Synthesis) */}
+                <div className="border-t border-[#ebebeb] pt-4 space-y-3">
+                  <div className="flex items-center justify-between gap-3 flex-wrap">
+                    <div>
+                      <h3 className="text-xs font-semibold text-neutral-900">
+                        Step 4 · Malleable 1-Line LARP Bullets (
+                        {resume?.calibration?.malleableLines ?? 1} configured in Experience)
+                      </h3>
+                      <p className="text-[11px] text-neutral-500 mt-0.5">
+                        Synthesizes up to {resume?.calibration?.malleableLines ?? 1} complete 1-line
+                        bullet(s) for the single role or project where the stack belongs best
+                      </p>
+                    </div>
+                    <span className="font-mono text-[10px] text-neutral-500 bg-[#fafafa] border border-[#ebebeb] px-2 py-0.5 rounded">
+                      {acceptedMalleable.size} of {larpRun.malleableBullets.length} malleable line(s)
+                      selected
+                    </span>
+                  </div>
+
+                  {larpRun.malleableBullets.length === 0 ? (
+                    <p className="text-xs font-mono text-neutral-400 py-2">
+                      Malleable lines set to 0 in Experience calibration (set to 1+ on Experience to
+                      generate new 1-line LARP bullets).
+                    </p>
+                  ) : (
+                    <div className="space-y-2.5">
+                      {larpRun.malleableBullets.map((mb) => {
+                        const isSelected = acceptedMalleable.has(mb.id);
+                        const isTopPick = larpRun.aiRecommendation?.topPickId === mb.id;
+                        return (
+                          <div
+                            key={mb.id}
+                            className={`rounded-xl border p-4 space-y-2.5 transition-colors ${
+                              isSelected
+                                ? "border-neutral-900 bg-white"
+                                : "border-[#ebebeb] bg-[#fafafa] opacity-75"
+                            }`}
+                          >
+                            <div className="flex items-center justify-between gap-2 flex-wrap">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <label className="inline-flex items-center gap-2 cursor-pointer select-none">
+                                  <input
+                                    type="checkbox"
+                                    checked={isSelected}
+                                    onChange={() => handleToggleMalleable(mb.id)}
+                                    className="rounded border-neutral-300 text-neutral-900 focus:ring-0"
+                                  />
+                                  <span className="text-xs font-semibold text-neutral-900">
+                                    Placement Target: {mb.targetContainerTitle}
+                                  </span>
+                                </label>
+                                {isTopPick && (
+                                  <span className="font-mono text-[10px] px-2 py-0.5 rounded-full bg-neutral-900 text-white">
+                                    AI Recommended · Most Believable ({mb.believabilityScore}%)
+                                  </span>
+                                )}
+                              </div>
+
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                {mb.injectedKeywords.map((kw) => (
+                                  <span
+                                    key={kw}
+                                    className="font-mono text-[10px] px-2 py-0.5 rounded-full bg-blue-50 border border-blue-200 text-blue-700"
+                                  >
+                                    +{kw}
+                                  </span>
+                                ))}
+                                <span className="font-mono text-[10px] px-2 py-0.5 rounded bg-emerald-50 border border-emerald-200 text-emerald-700">
+                                  {mb.fit.badge} · {mb.fit.label} ({mb.chars}/{mb.maxChars} chars ·{" "}
+                                  {mb.widthNcu} NCU)
+                                </span>
+                              </div>
+                            </div>
+
+                            <div className="rounded-lg bg-emerald-50/30 border border-emerald-200/70 p-3">
+                              <span className="block font-mono text-[10px] text-emerald-700 uppercase mb-1">
+                                New 1-Line Bullet for {mb.roleContextSummary}
+                              </span>
+                              <p className="text-xs text-neutral-900 leading-relaxed">
+                                {parseMarkup(mb.markup).map((seg, idx) =>
+                                  seg.bold ? (
+                                    <strong key={idx} className="font-semibold text-neutral-900">
+                                      {seg.text}
+                                    </strong>
+                                  ) : (
+                                    <span key={idx}>{seg.text}</span>
+                                  )
+                                )}
+                              </p>
+                            </div>
+
+                            <p className="text-[11px] text-neutral-500 font-mono">
+                              Why it belongs here: {mb.believabilityCritique}
+                            </p>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* Step 5: AI Believability Reviewer & Top Recommendation */}
+                {larpRun.aiRecommendation && (
+                  <div className="border-t border-[#ebebeb] pt-4 space-y-3">
+                    <div className="rounded-xl border border-neutral-900 bg-[#fafafa] p-4 space-y-3">
+                      <div className="flex items-start justify-between gap-3 flex-wrap">
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="inline-flex items-center gap-1 font-mono text-[10px] uppercase tracking-wider px-2 py-0.5 rounded bg-neutral-900 text-white">
+                              <Sparkles className="w-3 h-3" />
+                              AI Believability Recommendation
+                            </span>
+                            <span className="font-mono text-[11px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded">
+                              {larpRun.aiRecommendation.believabilityScore}% Believability Score
+                            </span>
+                          </div>
+                          <h3 className="text-xs font-semibold text-neutral-900 pt-0.5">
+                            {larpRun.aiRecommendation.verdictSummary}
+                          </h3>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={handleSelectOnlyTopRecommended}
+                          className="px-3 py-1.5 text-xs font-medium text-neutral-900 bg-white hover:bg-neutral-100 border border-[#ebebeb] rounded-full shadow-2xs active:scale-95 transition-all cursor-pointer"
+                        >
+                          Select Only Most Believable Pick
+                        </button>
+                      </div>
+
+                      <p className="text-xs text-neutral-600 leading-relaxed">
+                        {larpRun.aiRecommendation.whyMostBelievable}
+                      </p>
+
+                      <div className="rounded-lg bg-white border border-[#ebebeb] p-3 text-xs text-neutral-700 font-mono">
+                        {larpRun.aiRecommendation.interviewTalkingPoint}
+                      </div>
+
+                      <div className="space-y-1.5 pt-1">
+                        <span className="block font-mono text-[10px] text-neutral-400 uppercase">
+                          All Proposed Changes Ranked by Live-Interview Believability
+                        </span>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          {larpRun.aiRecommendation.rankings.map((r, idx) => (
+                            <div
+                              key={r.id}
+                              className={`rounded-lg border p-2.5 text-xs flex items-start justify-between gap-2 ${
+                                idx === 0
+                                  ? "bg-white border-neutral-900"
+                                  : "bg-white border-[#ebebeb]"
+                              }`}
+                            >
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span className="font-mono text-[10px] font-semibold text-neutral-900">
+                                    #{idx + 1} · {r.label}
+                                  </span>
+                                  <span className="font-mono text-[10px] text-neutral-500">
+                                    ({r.containerTitle})
+                                  </span>
+                                </div>
+                                <p className="text-[11px] text-neutral-500 mt-0.5 line-clamp-2">
+                                  {r.rationale}
+                                </p>
+                              </div>
+                              <span
+                                className={`font-mono text-[10px] px-1.5 py-0.5 rounded flex-shrink-0 ${
+                                  idx === 0
+                                    ? "bg-neutral-900 text-white"
+                                    : "bg-neutral-100 text-neutral-700"
+                                }`}
+                              >
+                                {r.score}%
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 )}
 

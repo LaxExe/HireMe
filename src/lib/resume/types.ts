@@ -80,11 +80,14 @@ export interface CalibrationConfig {
   oneLineMax: number;
   /** Maximum character length of a full two-line bullet in LaTeX. */
   twoLineMax: number;
+  /** Number of new 1-line LARP bullet points allowed to be synthesized into the single best-fitting role or project. */
+  malleableLines?: number;
 }
 
 export const DEFAULT_CALIBRATION: CalibrationConfig = {
   oneLineMax: 108,
   twoLineMax: 216,
+  malleableLines: 1,
 };
 
 export type ResumeSectionKey =

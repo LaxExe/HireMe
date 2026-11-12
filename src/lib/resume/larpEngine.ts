@@ -1011,7 +1011,400 @@ function tryMinimalKeywordInjection(
 }
 
 /* ============================================================================
- * 7. FULL LARP ALIGNMENT PIPELINE (CENTRALIZED + FITS 1L OR 2L AREA)
+ * 7. MALLEABLE 1-LINE LARP BULLET SYNTHESIZER + AI BELIEVABILITY EVALUATOR
+ * ============================================================================ */
+
+export interface MalleableSynthesizedBullet {
+  id: string;
+  targetContainerId: string;
+  targetContainerTitle: string;
+  targetContainerKind: "experience" | "project";
+  targetTechContext: string[];
+  markup: string;
+  latex: string;
+  chars: number;
+  maxChars: number;
+  widthNcu: number;
+  fit: ReturnType<typeof bulletFit>;
+  injectedKeywords: string[];
+  roleContextSummary: string;
+  believabilityScore: number;
+  believabilityCritique: string;
+  recommended: boolean;
+}
+
+export interface AiBelievabilityRecommendation {
+  topPickId: string;
+  topPickKind: "malleable-new-line" | "bullet-mutation";
+  topPickTitle: string;
+  believabilityScore: number;
+  verdictSummary: string;
+  whyMostBelievable: string;
+  interviewTalkingPoint: string;
+  rankings: {
+    id: string;
+    label: string;
+    containerTitle: string;
+    score: number;
+    verdict: "Top Pick · Most Believable" | "Highly Defensible" | "Safe & Subtle";
+    rationale: string;
+  }[];
+}
+
+/**
+ * Selects the single best role or project container on the resume where new 1-line
+ * malleable LARP bullets belong most naturally (avoiding C++/OS/robotics roles and
+ * preferring roles/projects with web, API, cloud, or backend stacks).
+ */
+function selectBestContainerForMalleableLines(resume: MasterResume): {
+  id: string;
+  title: string;
+  kind: "experience" | "project";
+  existingBullets: string[];
+  techSignals: string[];
+  roleSummary: string;
+} | null {
+  interface ContainerCandidate {
+    id: string;
+    title: string;
+    kind: "experience" | "project";
+    existingBullets: string[];
+    techSignals: string[];
+    roleSummary: string;
+    score: number;
+  }
+
+  const candidates: ContainerCandidate[] = [];
+
+  resume.experience.forEach((job, idx) => {
+    const bulletsText = job.bullets.map((b) => plainText(b.text)).join(" ");
+    const combined = `${job.title} ${job.company} ${bulletsText}`;
+    const ctx = classifyBulletContext(bulletsText, `${job.title} ${job.company}`);
+    if (ctx === "systems-cpp-robotics") return;
+
+    const techSignals = job.bullets.flatMap((b) => b.tools);
+    let score = 80;
+    if (/\b(?:Full\s*Stack|Software|Backend|Platform|Web)\b/i.test(job.title)) score += 12;
+    if (/\b(?:REST|PostgreSQL|React|Next\.js|Supabase|Python|TypeScript|FastAPI|Flask)\b/i.test(combined)) {
+      score += 10;
+    }
+    // Slight preference for roles that aren't overcrowded (<= 3 bullets) or secondary experience
+    if (job.bullets.length <= 3) score += 6;
+    if (idx > 0) score += 5;
+
+    candidates.push({
+      id: job.id,
+      title: `${job.title} · ${job.company}`,
+      kind: "experience",
+      existingBullets: job.bullets.map((b) => plainText(b.text)),
+      techSignals: Array.from(new Set(techSignals)).slice(0, 6),
+      roleSummary: `${job.title} at ${job.company} (${job.dates || "recent role"})`,
+      score,
+    });
+  });
+
+  for (const proj of resume.projects) {
+    const bulletsText = proj.bullets.map((b) => plainText(b.text)).join(" ");
+    const combined = `${proj.name} ${proj.techStack.join(" ")} ${bulletsText}`;
+    const ctx = classifyBulletContext(bulletsText, `${proj.name} ${proj.techStack.join(" ")}`);
+    if (ctx === "systems-cpp-robotics") continue;
+
+    let score = 84;
+    if (/\b(?:React|Next\.js|Python|TypeScript|Flask|Supabase|Firebase|Twilio|PostgreSQL|Docker)\b/i.test(combined)) {
+      score += 11;
+    }
+    if (proj.bullets.length <= 3) score += 7;
+
+    candidates.push({
+      id: proj.id,
+      title: `${proj.name} (Project)`,
+      kind: "project",
+      existingBullets: proj.bullets.map((b) => plainText(b.text)),
+      techSignals: proj.techStack.slice(0, 6),
+      roleSummary: `${proj.name} (${proj.techStack.slice(0, 4).join(", ")})`,
+      score,
+    });
+  }
+
+  if (candidates.length === 0) return null;
+  candidates.sort((a, b) => b.score - a.score);
+  return candidates[0];
+}
+
+/**
+ * Generates up to `malleableCount` complete, context-aware 1-line LARP bullets
+ * tailored to the chosen role/project and calibrated to fit inside the 1-line area (`<= oneLineMax`).
+ */
+export function synthesizeMalleableOneLineBullets(
+  resume: MasterResume,
+  tiers: LarpTierClassification,
+  malleableCount: number
+): MalleableSynthesizedBullet[] {
+  const count = Math.max(0, Math.min(6, Math.round(malleableCount)));
+  if (count === 0) return [];
+
+  const target = selectBestContainerForMalleableLines(resume);
+  if (!target) return [];
+
+  const cal = resume.calibration ?? DEFAULT_CALIBRATION;
+  const oneLineMax = cal.oneLineMax || 108;
+  const minOneLineChars = Math.ceil(oneLineMax * 0.82);
+
+  // Extract domain nouns from existing bullets of that exact role/project so the new 1-line bullet reads like an authentic continuation
+  const combinedExisting = target.existingBullets.join(" ");
+  const hasVoiceOrDispatches = /\b(?:call|voice|dispatch|Twilio|WhatsApp|transcript|booking)\b/i.test(
+    combinedExisting
+  );
+  const hasEligibilityOrRecords = /\b(?:eligibility|records|workflows|internal services|PostgreSQL)\b/i.test(
+    combinedExisting
+  );
+  const primaryMatchedStack =
+    target.techSignals.find((t) =>
+      /^(?:TypeScript|Python|React|Next\.js|PostgreSQL|Supabase|Flask|FastAPI)$/i.test(t)
+    ) ||
+    tiers.matched[0] ||
+    "TypeScript";
+
+  const tier1 = tiers.tier_1_framing;
+  const tier0 = tiers.tier_0_workflow;
+
+  const hasRedis = tier1.some((k) => k.toLowerCase() === "redis");
+  const hasGraphQL = tier1.some((k) => k.toLowerCase() === "graphql");
+  const hasAws = tier1.some((k) => k.toLowerCase() === "aws");
+  const hasWebhooks = tier1.some((k) => k.toLowerCase() === "webhooks");
+  const hasDocker = tier1.some((k) => k.toLowerCase() === "docker");
+  const pmTool = tier0.find((k) => /^(?:Jira|Linear|Agile)$/i.test(k)) || tier0[0];
+
+  interface TemplateOption {
+    variants: string[];
+    keywords: string[];
+    believabilityScore: number;
+    critique: string;
+  }
+
+  const candidateTemplates: TemplateOption[] = [];
+
+  // Template 1: API + Caching / Querying tailored to the exact role's domain
+  if (hasGraphQL || hasRedis) {
+    const kws = [
+      ...(hasGraphQL ? ["GraphQL"] : []),
+      ...(hasRedis ? ["Redis"] : []),
+    ];
+    if (hasEligibilityOrRecords) {
+      candidateTemplates.push({
+        variants: [
+          `Built **${hasGraphQL ? "GraphQL" : "REST"}** endpoints with **${hasRedis ? "Redis" : primaryMatchedStack}** caching to speed up eligibility lookups across services.`,
+          `Built **${hasGraphQL ? "GraphQL" : "REST"}** query endpoints with **${hasRedis ? "Redis" : primaryMatchedStack}** TTL caching to accelerate eligibility record lookups.`,
+          `Added **${hasGraphQL ? "GraphQL" : "REST"}** endpoints and **${hasRedis ? "Redis" : primaryMatchedStack}** caching to reduce latency on eligibility record queries.`,
+        ],
+        keywords: kws,
+        believabilityScore: 96,
+        critique:
+          "Directly extends the role's existing PostgreSQL & REST eligibility service architecture with a standard read-through Redis/GraphQL layer that is trivial to explain in 30 seconds.",
+      });
+    } else if (hasVoiceOrDispatches) {
+      candidateTemplates.push({
+        variants: [
+          `Cached active call session state in **${hasRedis ? "Redis" : "Supabase"}** and exposed **${hasGraphQL ? "GraphQL" : "REST"}** status queries for live dashboards.`,
+          `Built **${hasGraphQL ? "GraphQL" : "REST"}** status endpoints backed by **${hasRedis ? "Redis" : "Supabase"}** session caching for real-time call tracking.`,
+        ],
+        keywords: kws,
+        believabilityScore: 95,
+        critique:
+          "Fits seamlessly into the real-time voice/dispatch pipeline—caching active call state in Redis and querying status for the dashboard is textbook consumption-level framing.",
+      });
+    } else {
+      candidateTemplates.push({
+        variants: [
+          `Implemented **${hasGraphQL ? "GraphQL" : "REST"}** API resolvers with **${hasRedis ? "Redis" : primaryMatchedStack}** caching to cut response latency on client queries.`,
+          `Built **${hasGraphQL ? "GraphQL" : "REST"}** endpoints with **${hasRedis ? "Redis" : primaryMatchedStack}** TTL caching to speed up high-frequency API reads.`,
+        ],
+        keywords: kws,
+        believabilityScore: 94,
+        critique:
+          "Clean, consumption-level API + caching bullet grounded in your existing stack without claiming deep distributed-systems internals.",
+      });
+    }
+  }
+
+  // Template 2: Cloud Deployment / Webhooks / PM Workflow tailored to the role's domain
+  if (hasAws || hasWebhooks || hasDocker || pmTool) {
+    const cloudKw = hasAws ? "AWS" : hasDocker ? "Docker" : "CI/CD";
+    const secondKw = hasWebhooks ? "Webhooks" : pmTool || primaryMatchedStack;
+    const kws = Array.from(
+      new Set([
+        ...(hasAws ? ["AWS"] : []),
+        ...(hasDocker ? ["Docker"] : []),
+        ...(hasWebhooks ? ["Webhooks"] : []),
+        ...(pmTool ? [pmTool] : []),
+      ])
+    ).slice(0, 2);
+
+    if (hasEligibilityOrRecords) {
+      candidateTemplates.push({
+        variants: [
+          `Automated **${cloudKw}** service deployments and **${secondKw}** syncs for internal eligibility workflows.`,
+          `Deployed containerized **${primaryMatchedStack}** services on **${cloudKw}**, tracking sprint releases in **${pmTool || "Git"}**.`,
+          `Streamlined **${cloudKw}** release pipelines and **${secondKw}** alerts across internal backend services.`,
+        ],
+        keywords: kws.length > 0 ? kws : [cloudKw],
+        believabilityScore: 93,
+        critique:
+          "Frames cloud deployment and sprint tracking around the exact internal eligibility services already described in this role—impossible for an interviewer to falsify.",
+      });
+    } else {
+      candidateTemplates.push({
+        variants: [
+          `Deployed **${primaryMatchedStack}** backend workers on **${cloudKw}** with automated **${secondKw}** event handling.`,
+          `Shipped **${primaryMatchedStack}** service updates to **${cloudKw}**, coordinating release milestones in **${pmTool || "Agile"}**.`,
+        ],
+        keywords: kws.length > 0 ? kws : [cloudKw],
+        believabilityScore: 92,
+        critique:
+          "High-plausibility deployment & workflow bullet that pairs your real language stack with lightweight cloud hosting.",
+      });
+    }
+  }
+
+  // Template 3: End-to-end observability / workflow delivery fallback so we can always fulfill up to malleableCount
+  candidateTemplates.push({
+    variants: [
+      `Built **${primaryMatchedStack}** health checks and structured API logging to streamline debugging across services.`,
+      `Added automated **${primaryMatchedStack}** schema validation and **${pmTool || "Agile"}** release checks for backend APIs.`,
+    ],
+    keywords: pmTool ? [pmTool, primaryMatchedStack] : [primaryMatchedStack],
+    believabilityScore: 90,
+    critique:
+      "Grounded engineering hygiene bullet using your primary verified language and lightweight workflow framing.",
+  });
+
+  const results: MalleableSynthesizedBullet[] = [];
+
+  for (let i = 0; i < Math.min(count, candidateTemplates.length); i++) {
+    const tpl = candidateTemplates[i];
+    // Pick or tighten the variant that lands closest to the green 1-line zone (minOneLineChars .. oneLineMax)
+    let chosenMarkup = fitBulletToCalibratedLineArea(tpl.variants[0], cal);
+    for (const v of tpl.variants) {
+      const fitted = fitBulletToCalibratedLineArea(v, cal);
+      const len = plainText(fitted).trim().length;
+      if (len >= minOneLineChars && len <= oneLineMax) {
+        chosenMarkup = fitted;
+        break;
+      }
+      if (len <= oneLineMax) {
+        chosenMarkup = fitted;
+      }
+    }
+
+    // Final safety clamp if oneLineMax is unusually tight
+    let finalLen = plainText(chosenMarkup).trim().length;
+    if (finalLen > oneLineMax) {
+      chosenMarkup = fitBulletToCalibratedLineArea(chosenMarkup, cal);
+      finalLen = plainText(chosenMarkup).trim().length;
+    }
+
+    const latex = `\\item ${markupToLatex(chosenMarkup)}`;
+    const widthNcu = computeVisualWidth(latex);
+    const fit = bulletFit(chosenMarkup, cal);
+
+    results.push({
+      id: `malleable-${i + 1}`,
+      targetContainerId: target.id,
+      targetContainerTitle: target.title,
+      targetContainerKind: target.kind,
+      targetTechContext: target.techSignals,
+      markup: chosenMarkup,
+      latex,
+      chars: finalLen,
+      maxChars: oneLineMax,
+      widthNcu,
+      fit,
+      injectedKeywords: tpl.keywords,
+      roleContextSummary: target.roleSummary,
+      believabilityScore: tpl.believabilityScore,
+      believabilityCritique: tpl.critique,
+      recommended: i === 0,
+    });
+  }
+
+  return results;
+}
+
+/**
+ * Evaluates all proposed changes (both synthesized 1-line malleable bullets and existing-bullet edits)
+ * and produces a structured AI Believability Recommendation ranking which option is the most believable
+ * and easiest to defend in a live interview.
+ */
+export function evaluateBelievabilityAndRecommend(
+  malleableBullets: MalleableSynthesizedBullet[],
+  bulletProposals: BulletMutationProposal[]
+): AiBelievabilityRecommendation | null {
+  const rankings: AiBelievabilityRecommendation["rankings"] = [];
+
+  for (const mb of malleableBullets) {
+    rankings.push({
+      id: mb.id,
+      label: `New 1L Bullet (+${mb.injectedKeywords.join(", ")})`,
+      containerTitle: mb.targetContainerTitle,
+      score: mb.believabilityScore,
+      verdict:
+        mb.believabilityScore >= 95
+          ? "Top Pick · Most Believable"
+          : "Highly Defensible",
+      rationale: mb.believabilityCritique,
+    });
+  }
+
+  for (const bp of bulletProposals) {
+    const kwLabel = bp.injectedKeywords.join(", ");
+    const fitBonus = bp.budget.candFit.tone === "green" ? 3 : 0;
+    const baseScore = Math.min(95, 88 + fitBonus + (bp.containerKind === "project" ? 2 : 1));
+    rankings.push({
+      id: bp.bulletId,
+      label: `Subtle Edit (+${kwLabel})`,
+      containerTitle: bp.containerTitle,
+      score: baseScore,
+      verdict: baseScore >= 93 ? "Highly Defensible" : "Safe & Subtle",
+      rationale: `${bp.reason} (${bp.budget.candChars}/${bp.budget.candLines === 1 ? 108 : 216} chars · ${bp.budget.candFit.badge}). Keeps 90%+ of your original sentence intact.`,
+    });
+  }
+
+  if (rankings.length === 0) return null;
+
+  rankings.sort((a, b) => b.score - a.score);
+  // Ensure only the #1 item carries the "Top Pick · Most Believable" badge
+  rankings.forEach((r, idx) => {
+    r.verdict =
+      idx === 0
+        ? "Top Pick · Most Believable"
+        : r.score >= 91
+        ? "Highly Defensible"
+        : "Safe & Subtle";
+  });
+
+  const top = rankings[0];
+  const isMalleableTop = malleableBullets.some((m) => m.id === top.id);
+  const topKeywords = isMalleableTop
+    ? malleableBullets.find((m) => m.id === top.id)?.injectedKeywords ?? []
+    : bulletProposals.find((b) => b.bulletId === top.id)?.injectedKeywords ?? [];
+
+  return {
+    topPickId: top.id,
+    topPickKind: isMalleableTop ? "malleable-new-line" : "bullet-mutation",
+    topPickTitle: `${top.label} in ${top.containerTitle}`,
+    believabilityScore: top.score,
+    verdictSummary: `AI Reviewer recommends "${top.label}" under ${top.containerTitle} (${top.score}% Believability Score) as your strongest, lowest-risk addition.`,
+    whyMostBelievable: top.rationale,
+    interviewTalkingPoint:
+      topKeywords.length > 0
+        ? `If asked in an interview: "In ${top.containerTitle.split("·")[0].trim()}, we already had the core service layer running, so I wired up ${topKeywords.join(" and ")} at the boundary to handle ${topKeywords.includes("Redis") ? "short-TTL read caching" : topKeywords.includes("GraphQL") ? "typed client status queries" : "deployment & workflow tracking"} without overcomplicating the schema."`
+        : `Grounded directly in the existing tech stack of ${top.containerTitle}.`,
+    rankings,
+  };
+}
+
+/* ============================================================================
+ * 8. FULL LARP ALIGNMENT PIPELINE (CENTRALIZED + FITS 1L OR 2L AREA)
  * ============================================================================ */
 
 export interface LarpAlignmentRun {
@@ -1019,6 +1412,8 @@ export interface LarpAlignmentRun {
   skillSwaps: SkillSwapChange[];
   updatedSkills: SkillCategory[];
   bulletProposals: BulletMutationProposal[];
+  malleableBullets: MalleableSynthesizedBullet[];
+  aiRecommendation: AiBelievabilityRecommendation | null;
   guardrailVerifiedZeroBanned: boolean;
 }
 
@@ -1175,9 +1570,14 @@ export function runLarpAlignmentPipeline(
     }
   }
 
+  const malleableCount = cal.malleableLines ?? 1;
+  const malleableBullets = synthesizeMalleableOneLineBullets(resume, tiers, malleableCount);
+  const aiRecommendation = evaluateBelievabilityAndRecommend(malleableBullets, bulletProposals);
+
   const allMutatedText = [
     ...updatedCategories.flatMap((c) => c.skills.map((s) => s.name)),
     ...bulletProposals.map((p) => plainText(p.mutatedMarkup)),
+    ...malleableBullets.map((m) => plainText(m.markup)),
   ].join(" ");
 
   const guardrailVerifiedZeroBanned = !bannedLower.some((b) =>
@@ -1189,6 +1589,8 @@ export function runLarpAlignmentPipeline(
     skillSwaps,
     updatedSkills: updatedCategories,
     bulletProposals,
+    malleableBullets,
+    aiRecommendation,
     guardrailVerifiedZeroBanned,
   };
 }
@@ -1197,7 +1599,8 @@ export function applyLarpMutationsToResume(
   resume: MasterResume,
   alignment: LarpAlignmentRun,
   acceptedBulletIds: Set<string>,
-  applySkills = true
+  applySkills = true,
+  acceptedMalleableIds?: Set<string>
 ): MasterResume {
   const next: MasterResume = structuredClone(resume);
   if (applySkills) {
@@ -1237,6 +1640,28 @@ export function applyLarpMutationsToResume(
         ...analyzeBullet(prop.mutatedMarkup, known),
       };
     });
+  }
+
+  if (acceptedMalleableIds && acceptedMalleableIds.size > 0) {
+    for (const mb of alignment.malleableBullets) {
+      if (!acceptedMalleableIds.has(mb.id)) continue;
+      const newBullet: Bullet = {
+        id: uid("b"),
+        text: mb.markup,
+        ...analyzeBullet(mb.markup, known),
+      };
+      if (mb.targetContainerKind === "experience") {
+        const targetJob = next.experience.find((j) => j.id === mb.targetContainerId);
+        if (targetJob) {
+          targetJob.bullets.push(newBullet);
+        }
+      } else {
+        const targetProj = next.projects.find((p) => p.id === mb.targetContainerId);
+        if (targetProj) {
+          targetProj.bullets.push(newBullet);
+        }
+      }
+    }
   }
 
   next.updatedAt = new Date().toISOString();

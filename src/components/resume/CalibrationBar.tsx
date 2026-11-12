@@ -6,12 +6,21 @@ import { useCalibration } from "@/context/CalibrationContext";
 import { plainText } from "@/lib/resume/utils";
 
 export default function CalibrationBar() {
-  const { calibration, setOneLineMax, setTwoLineMax, resetToDefault, isCalibrated } =
-    useCalibration();
+  const {
+    calibration,
+    setOneLineMax,
+    setTwoLineMax,
+    setMalleableLines,
+    resetToDefault,
+    isCalibrated,
+  } = useCalibration();
   const [open, setOpen] = useState(false);
   const [sample, setSample] = useState("");
   const [oneDraft, setOneDraft] = useState(String(calibration.oneLineMax));
   const [twoDraft, setTwoDraft] = useState(String(calibration.twoLineMax));
+  const [malleableDraft, setMalleableDraft] = useState(
+    String(calibration.malleableLines ?? 1)
+  );
 
   useEffect(() => {
     setOneDraft(String(calibration.oneLineMax));
@@ -20,6 +29,10 @@ export default function CalibrationBar() {
   useEffect(() => {
     setTwoDraft(String(calibration.twoLineMax));
   }, [calibration.twoLineMax]);
+
+  useEffect(() => {
+    setMalleableDraft(String(calibration.malleableLines ?? 1));
+  }, [calibration.malleableLines]);
 
   const charCount = plainText(sample).trim().length;
 
@@ -39,6 +52,14 @@ export default function CalibrationBar() {
     }
   };
 
+  const handleMalleableChange = (val: string) => {
+    setMalleableDraft(val);
+    const parsed = Number(val);
+    if (val.trim() !== "" && Number.isFinite(parsed) && parsed >= 0) {
+      setMalleableLines(parsed);
+    }
+  };
+
   const commitDrafts = () => {
     const p1 = Number(oneDraft);
     if (!Number.isFinite(p1) || p1 < 1) {
@@ -51,6 +72,12 @@ export default function CalibrationBar() {
       setTwoDraft(String(calibration.twoLineMax));
     } else {
       setTwoLineMax(p2);
+    }
+    const pm = Number(malleableDraft);
+    if (!Number.isFinite(pm) || pm < 0) {
+      setMalleableDraft(String(calibration.malleableLines ?? 1));
+    } else {
+      setMalleableLines(pm);
     }
   };
 
@@ -66,13 +93,17 @@ export default function CalibrationBar() {
             <span className="text-xs font-semibold text-neutral-900 tracking-tight">
               line calibration
             </span>
-            <div className="flex items-center gap-1.5 font-mono text-[11px] text-neutral-500">
+            <div className="flex items-center gap-1.5 font-mono text-[11px] text-neutral-500 flex-wrap">
               <span className="px-1.5 py-0.5 rounded bg-neutral-100 text-neutral-700">
                 1-line: {calibration.oneLineMax}
               </span>
               <span>·</span>
               <span className="px-1.5 py-0.5 rounded bg-neutral-100 text-neutral-700">
                 2-line: {calibration.twoLineMax}
+              </span>
+              <span>·</span>
+              <span className="px-1.5 py-0.5 rounded bg-neutral-100 text-neutral-700">
+                malleable lines: {calibration.malleableLines ?? 1}
               </span>
             </div>
             {isCalibrated && (
@@ -97,8 +128,8 @@ export default function CalibrationBar() {
       {/* Simplified Calibration Panel */}
       {open && (
         <div className="border-t border-[#ebebeb] bg-[#fafafa] p-4 space-y-4 animate-scaleIn">
-          {/* Direct Character Max Inputs */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {/* Direct Character Max Inputs + Malleable Lines */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div className="bg-white rounded-lg border border-[#ebebeb] p-3 shadow-2xs space-y-1.5">
               <label
                 htmlFor="cal-one-line"
@@ -143,6 +174,30 @@ export default function CalibrationBar() {
                 />
                 <span className="text-[11px] font-mono text-neutral-400 flex-shrink-0">
                   chars
+                </span>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-lg border border-[#ebebeb] p-3 shadow-2xs space-y-1.5">
+              <label
+                htmlFor="cal-malleable-lines"
+                className="text-[11px] font-mono text-neutral-500 uppercase block"
+              >
+                malleable lines (1L larp bullets)
+              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  id="cal-malleable-lines"
+                  type="number"
+                  min={0}
+                  max={6}
+                  value={malleableDraft}
+                  onChange={(e) => handleMalleableChange(e.target.value)}
+                  onBlur={commitDrafts}
+                  className="w-full text-xs font-mono text-neutral-900 bg-[#fafafa] border border-[#ebebeb] rounded-md px-2.5 py-1.5 focus:outline-none focus:border-neutral-400"
+                />
+                <span className="text-[11px] font-mono text-neutral-400 flex-shrink-0">
+                  lines
                 </span>
               </div>
             </div>

@@ -8,6 +8,7 @@ interface CalibrationContextValue {
   setCalibration: (config: CalibrationConfig) => void;
   setOneLineMax: (n: number) => void;
   setTwoLineMax: (n: number) => void;
+  setMalleableLines: (n: number) => void;
   resetToDefault: () => void;
   isCalibrated: boolean;
 }
@@ -72,13 +73,19 @@ export function CalibrationProvider({
     if (!Number.isFinite(n) || n < 1) return;
     const valid = Math.max(1, Math.min(500, Math.round(n)));
     const newTwoLine = calibration.twoLineMax <= valid ? valid * 2 : calibration.twoLineMax;
-    update({ oneLineMax: valid, twoLineMax: newTwoLine });
+    update({ ...calibration, oneLineMax: valid, twoLineMax: newTwoLine });
   };
 
   const setTwoLineMax = (n: number) => {
     if (!Number.isFinite(n) || n < 1) return;
     const valid = Math.max(calibration.oneLineMax + 1, Math.min(1000, Math.round(n)));
     update({ ...calibration, twoLineMax: valid });
+  };
+
+  const setMalleableLines = (n: number) => {
+    if (!Number.isFinite(n) || n < 0) return;
+    const valid = Math.max(0, Math.min(6, Math.round(n)));
+    update({ ...calibration, malleableLines: valid });
   };
 
   const resetToDefault = () => {
@@ -98,6 +105,7 @@ export function CalibrationProvider({
         setCalibration: update,
         setOneLineMax,
         setTwoLineMax,
+        setMalleableLines,
         resetToDefault,
         isCalibrated,
       }}
@@ -115,6 +123,7 @@ export function useCalibration() {
       setCalibration: () => {},
       setOneLineMax: () => {},
       setTwoLineMax: () => {},
+      setMalleableLines: () => {},
       resetToDefault: () => {},
       isCalibrated: false,
     };

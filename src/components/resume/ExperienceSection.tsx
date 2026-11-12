@@ -4,6 +4,7 @@ import React, { useState } from "react";
 import { GripVertical, Pencil, Plus, Trash2 } from "lucide-react";
 import type { Job } from "@/lib/resume/types";
 import { uid } from "@/lib/resume/utils";
+import { useCalibration } from "@/context/CalibrationContext";
 import BulletList from "./BulletList";
 import FieldEditor from "./FieldEditor";
 
@@ -136,6 +137,7 @@ export default function ExperienceSection({
   known: string[];
   onChange: (jobs: Job[]) => void;
 }) {
+  const { calibration, setMalleableLines } = useCalibration();
   const [adding, setAdding] = useState(false);
   const [draggedJobId, setDraggedJobId] = useState<string | null>(null);
   const [dropTargetJobId, setDropTargetJobId] = useState<string | null>(null);
@@ -160,11 +162,34 @@ export default function ExperienceSection({
 
   return (
     <section id="sec-experience" className="scroll-mt-20 space-y-3">
-      <div className="flex items-center justify-between">
-        <h2 className="text-sm font-semibold tracking-tight text-neutral-900 lowercase">
-          experience{" "}
-          <span className="font-mono text-[11px] text-neutral-400 ml-1">{jobs.length}</span>
-        </h2>
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div className="flex items-center gap-3 flex-wrap">
+          <h2 className="text-sm font-semibold tracking-tight text-neutral-900 lowercase">
+            experience{" "}
+            <span className="font-mono text-[11px] text-neutral-400 ml-1">{jobs.length}</span>
+          </h2>
+          <label
+            htmlFor="exp-malleable-lines"
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white border border-[#ebebeb] shadow-2xs text-[11px] font-mono text-neutral-600"
+          >
+            <span>malleable lines:</span>
+            <input
+              id="exp-malleable-lines"
+              type="number"
+              min={0}
+              max={6}
+              value={calibration.malleableLines ?? 1}
+              onChange={(e) => {
+                const parsed = Number(e.target.value);
+                if (Number.isFinite(parsed) && parsed >= 0) {
+                  setMalleableLines(parsed);
+                }
+              }}
+              className="w-9 bg-[#fafafa] border border-[#ebebeb] rounded px-1 py-0.5 text-center font-mono text-[11px] text-neutral-900 focus:outline-none focus:border-neutral-400"
+            />
+            <span className="text-[10px] text-neutral-400">1L larp</span>
+          </label>
+        </div>
         <button
           type="button"
           onClick={() => setAdding(true)}
