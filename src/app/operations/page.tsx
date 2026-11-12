@@ -626,7 +626,7 @@ export default function OperationsPage() {
                       Step 3 · Centralized Minimal Bullet Additions
                     </h2>
                     <p className="text-[11px] text-neutral-500 mt-0.5">
-                      Automatically picks 1 context-matched bullet with free line space per technical tool (no PM jargon, ≤ 1–5 words added)
+                      Automatically picks 1 context-matched bullet with free line space per tool or PM workflow term (≤ 1–5 words added)
                     </p>
                   </div>
                   <span className="font-mono text-[10px] text-neutral-500 bg-[#fafafa] border border-[#ebebeb] px-2 py-0.5 rounded">

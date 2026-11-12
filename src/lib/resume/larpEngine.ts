@@ -335,10 +335,35 @@ const LARP_CATALOG: CatalogItem[] = [
   { name: "Linux", aliases: ["linux", "unix"], defaultTierIfMissing: "tier_1_5_skills_only", targetSkillCategory: "Developer Tools & DevOps" },
   { name: "REST APIs", aliases: ["rest", "rest api", "rest apis", "restful"], defaultTierIfMissing: "tier_1_5_skills_only", targetSkillCategory: "Developer Tools & DevOps" },
 
-  // TIER 0: Workflow & Agile (Recognized from JD, kept centralized in Skills section only — never stuffed into code bullets)
-  { name: "Jira", aliases: ["jira"], defaultTierIfMissing: "tier_0_workflow", alsoSkillsOnly: true, targetSkillCategory: "Developer Tools & DevOps" },
-  { name: "Linear", aliases: ["linear"], defaultTierIfMissing: "tier_0_workflow", alsoSkillsOnly: true, targetSkillCategory: "Developer Tools & DevOps" },
-  { name: "Agile", aliases: ["agile", "scrum", "kanban"], defaultTierIfMissing: "tier_0_workflow" },
+  // TIER 0: Workflow & Agile (Centralized 1-spot injection in a single space-permitting product/team bullet + Skills section)
+  {
+    name: "Jira",
+    aliases: ["jira"],
+    defaultTierIfMissing: "tier_0_workflow",
+    alsoSkillsOnly: true,
+    targetSkillCategory: "Developer Tools & DevOps",
+    compatibleBulletContexts: ["frontend-ui", "backend-api-db", "cloud-deploy-infra"],
+  },
+  {
+    name: "Linear",
+    aliases: ["linear"],
+    defaultTierIfMissing: "tier_0_workflow",
+    alsoSkillsOnly: true,
+    targetSkillCategory: "Developer Tools & DevOps",
+    compatibleBulletContexts: ["frontend-ui", "backend-api-db", "cloud-deploy-infra"],
+  },
+  {
+    name: "Agile",
+    aliases: ["agile", "scrum", "kanban", "sprints"],
+    defaultTierIfMissing: "tier_0_workflow",
+    compatibleBulletContexts: ["frontend-ui", "backend-api-db", "cloud-deploy-infra"],
+  },
+  {
+    name: "end-to-end",
+    aliases: ["end-to-end", "end to end", "e2e ownership"],
+    defaultTierIfMissing: "tier_0_workflow",
+    compatibleBulletContexts: ["frontend-ui", "backend-api-db", "cloud-deploy-infra"],
+  },
 ];
 
 function containsPhrase(haystack: string, phrase: string): boolean {
@@ -805,6 +830,65 @@ function tryMinimalKeywordInjection(
     }
   }
 
+  if (keyword === "Jira" || keyword === "Linear") {
+    // Centralized 1-spot PM tool placement on a product/workflow/service bullet with free line space
+    if (/\bGave clients control over call workflows and dispatch timing\b/i.test(trimmed)) {
+      return {
+        mutatedMarkup: trimmed.replace(
+          /\bGave clients control over call workflows and dispatch timing\b/i,
+          `Gave clients control over **${keyword}**-tracked call workflows and dispatch timing`
+        ),
+        reason: `Centralized ${keyword} workflow mention on client dispatch & dashboard bullet`,
+        fitScore: 95,
+      };
+    }
+    if (/\bacross (\*\*\d+\*\*|\d+) internal services\.$/i.test(trimmed)) {
+      return {
+        mutatedMarkup: trimmed.replace(
+          /\bacross (\*\*\d+\*\*|\d+) internal services\.$/i,
+          `across $1 internal services tracked in **${keyword}**.`
+        ),
+        reason: `Centralized ${keyword} sprint tracking on internal services bullet with free space`,
+        fitScore: 91,
+      };
+    }
+    if (
+      (context === "frontend-ui" || context === "backend-api-db") &&
+      /\b(?:workflows?|features?|dashboards?|services?|sprints?)\b/i.test(trimmed) &&
+      /\.$/.test(trimmed)
+    ) {
+      return {
+        mutatedMarkup: trimmed.replace(/\.$/, `, tracked in **${keyword}**.`),
+        reason: `Centralized ${keyword} mention on product/feature bullet with free line space`,
+        fitScore: 86,
+      };
+    }
+  }
+
+  if (keyword === "Agile") {
+    if (
+      (context === "frontend-ui" || context === "backend-api-db") &&
+      /\b(?:Developed|Built|Shipped)\b/i.test(trimmed) &&
+      /\.$/.test(trimmed)
+    ) {
+      return {
+        mutatedMarkup: trimmed.replace(/\.$/, " in **Agile** sprints."),
+        reason: "Centralized Agile sprint mention on feature delivery bullet with free line space",
+        fitScore: 85,
+      };
+    }
+  }
+
+  if (keyword === "end-to-end") {
+    if (/^(?:Developed|Built)\s+(?!\*\*end-to-end\*\*)/i.test(trimmed)) {
+      return {
+        mutatedMarkup: trimmed.replace(/^(Developed|Built)\s+/i, "$1 **end-to-end** "),
+        reason: "Centralized end-to-end ownership qualifier on a single feature bullet",
+        fitScore: 88,
+      };
+    }
+  }
+
   return null;
 }
 
@@ -906,13 +990,17 @@ export function runLarpAlignmentPipeline(
     }
   }
 
-  // For each Tier 1 technical tool (e.g. AWS, Redis, GraphQL, Tailwind CSS, Webhooks, Docker),
+  // For each Tier 1 technical tool AND at most 1 centralized Tier 0 PM/workflow term,
   // find the SINGLE best bullet slot that has enough free space on its current line.
   const usedBulletIds = new Set<string>();
   const bulletProposals: BulletMutationProposal[] = [];
   const bannedLower = tiers.tier_2_banned.map((b) => b.toLowerCase());
+  const centralizedTargetKeywords = [
+    ...tiers.tier_1_framing,
+    ...tiers.tier_0_workflow.slice(0, 1),
+  ];
 
-  for (const keyword of tiers.tier_1_framing) {
+  for (const keyword of centralizedTargetKeywords) {
     let bestProposal: {
       slot: CandidateBulletSlot;
       mutatedMarkup: string;
