@@ -287,18 +287,14 @@ export default function PreviewPage() {
 
   const handlePushToAgents = (item: PreviewQueueItem) => {
     const tailored = buildTailoredResumeForSlot(item);
-    const entry = pushResumeToAgents(user.uid, {
+    pushResumeToAgents(user.uid, {
       sourcePreviewId: item.id,
       roleName: item.roleName || item.title,
       roleUrl: item.roleUrl,
       tailoredResume: tailored,
     });
     handleDeleteSlot(item.id);
-    setPushedAgentBanner({
-      slotId: item.id,
-      fileName: entry.fileName,
-      roleName: entry.roleName,
-    });
+    router.push("/agents");
   };
 
   const handleVisualizeSlot = async (item: PreviewQueueItem) => {

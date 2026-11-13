@@ -3,6 +3,7 @@ import { ref, get, set } from "firebase/database";
 import type { LarpAlignmentRun } from "./larpEngine";
 import type { MasterResume } from "./types";
 import { uid } from "./utils";
+import { loadAgentsQueue } from "./agentsQueue";
 
 export interface PreviewQueueItem {
   id: string;
@@ -62,24 +63,49 @@ function normalizeQueueItems(parsed: unknown): PreviewQueueItem[] {
 export function loadPreviewQueue(uidStr: string): PreviewQueueItem[] {
   if (typeof window === "undefined") return [];
   try {
+    const pushedIds = new Set(
+      loadAgentsQueue(uidStr)
+        .map((a) => a.sourcePreviewId)
+        .filter(Boolean)
+    );
+
+    let items: PreviewQueueItem[] = [];
     const rawUser = uidStr ? localStorage.getItem(PREVIEW_QUEUE_KEY(uidStr)) : null;
-    if (rawUser) {
-      const items = normalizeQueueItems(JSON.parse(rawUser));
-      if (items.length > 0) return items;
+    if (rawUser !== null) {
+      items = normalizeQueueItems(JSON.parse(rawUser));
+    } else {
+      const rawGlobal = localStorage.getItem(PREVIEW_QUEUE_GLOBAL_KEY);
+      if (rawGlobal !== null) {
+        items = normalizeQueueItems(JSON.parse(rawGlobal));
+      }
     }
-    const rawGlobal = localStorage.getItem(PREVIEW_QUEUE_GLOBAL_KEY);
-    if (rawGlobal) {
-      return normalizeQueueItems(JSON.parse(rawGlobal));
+
+    // Filter out any items that have been pushed to agents
+    const unpushed = items.filter(
+      (item) => !item.pushedToAgentsAt && !pushedIds.has(item.id)
+    );
+
+    // If pushed items were pruned, persist the cleaned queue
+    if (unpushed.length !== items.length) {
+      savePreviewQueue(uidStr, unpushed);
     }
-    return [];
+
+    return unpushed;
   } catch {
     return [];
   }
 }
 
 export async function loadPreviewQueueAsync(uidStr: string): Promise<PreviewQueueItem[]> {
-  const local = loadPreviewQueue(uidStr);
-  if (local.length > 0) return local;
+  const rawUser =
+    typeof window !== "undefined" && uidStr
+      ? localStorage.getItem(PREVIEW_QUEUE_KEY(uidStr))
+      : null;
+
+  // If this device already has an established local state for this user (even if 0 items), use it
+  if (rawUser !== null) {
+    return loadPreviewQueue(uidStr);
+  }
 
   if (isFirebaseConfigured && uidStr) {
     try {
@@ -89,15 +115,23 @@ export async function loadPreviewQueueAsync(uidStr: string): Promise<PreviewQueu
         const data = val?.data;
         if (typeof data === "string") {
           const items = normalizeQueueItems(JSON.parse(data));
-          savePreviewQueue(uidStr, items);
-          return items;
+          const pushedIds = new Set(
+            loadAgentsQueue(uidStr)
+              .map((a) => a.sourcePreviewId)
+              .filter(Boolean)
+          );
+          const unpushed = items.filter(
+            (item) => !item.pushedToAgentsAt && !pushedIds.has(item.id)
+          );
+          savePreviewQueue(uidStr, unpushed);
+          return unpushed;
         }
       }
     } catch (e) {
       console.warn("RTDB preview queue read failed, using local copy:", e);
     }
   }
-  return local;
+  return loadPreviewQueue(uidStr);
 }
 
 export function savePreviewQueue(uidStr: string, items: PreviewQueueItem[]): void {
