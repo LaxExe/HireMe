@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { Pencil, Plus, Trash2 } from "lucide-react";
+import { GripVertical, Pencil, Plus, Trash2 } from "lucide-react";
 import type { Project } from "@/lib/resume/types";
 import { splitItems, uid } from "@/lib/resume/utils";
 import BulletList from "./BulletList";
@@ -18,11 +18,23 @@ const projectFields = (p?: Project) => [
 function ProjectCard({
   project,
   known,
+  isDragging,
+  isDropTarget,
+  onDragStart,
+  onDragOver,
+  onDrop,
+  onDragEnd,
   onChange,
   onDelete,
 }: {
   project: Project;
   known: string[];
+  isDragging: boolean;
+  isDropTarget: boolean;
+  onDragStart: (e: React.DragEvent<HTMLElement>) => void;
+  onDragOver: (e: React.DragEvent<HTMLElement>) => void;
+  onDrop: (e: React.DragEvent<HTMLElement>) => void;
+  onDragEnd: () => void;
   onChange: (p: Project) => void;
   onDelete: () => void;
 }) {
@@ -52,24 +64,43 @@ function ProjectCard({
   return (
     <article
       id={`proj-${project.id}`}
-      className="scroll-mt-20 bg-white rounded-xl border border-[#ebebeb] shadow-subtle overflow-hidden"
+      draggable
+      onDragStart={onDragStart}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
+      onDragEnd={onDragEnd}
+      className={`scroll-mt-20 bg-white rounded-xl border transition-all duration-150 shadow-subtle overflow-hidden ${
+        isDragging
+          ? "opacity-40 border-neutral-400"
+          : isDropTarget
+          ? "border-neutral-900 ring-1 ring-neutral-900/10"
+          : "border-[#ebebeb]"
+      }`}
     >
       <header className="px-4 py-3.5 space-y-2.5">
         <div className="flex items-start justify-between gap-4">
-          <h3 className="text-sm font-semibold tracking-tight text-neutral-900 min-w-0">
-            {project.url ? (
-              <a
-                href={project.url}
-                target="_blank"
-                rel="noreferrer"
-                className="hover:underline decoration-[#ebebeb] underline-offset-2"
-              >
-                {project.name}
-              </a>
-            ) : (
-              project.name
-            )}
-          </h3>
+          <div className="flex items-start gap-2 min-w-0">
+            <span
+              className="mt-0.5 text-neutral-300 hover:text-neutral-600 cursor-grab active:cursor-grabbing flex-shrink-0 transition-colors"
+              title="Drag to reorder project"
+            >
+              <GripVertical className="w-4 h-4" />
+            </span>
+            <h3 className="text-sm font-semibold tracking-tight text-neutral-900 min-w-0">
+              {project.url ? (
+                <a
+                  href={project.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="hover:underline decoration-[#ebebeb] underline-offset-2"
+                >
+                  {project.name}
+                </a>
+              ) : (
+                project.name
+              )}
+            </h3>
+          </div>
           <div className="flex items-center gap-1 flex-shrink-0">
             {project.meta && (
               <span className="text-[11px] font-mono text-neutral-500 mr-1">{project.meta}</span>
@@ -91,7 +122,7 @@ function ProjectCard({
           </div>
         </div>
         {project.techStack.length > 0 && (
-          <div className="flex flex-wrap gap-1.5">
+          <div className="flex flex-wrap gap-1.5 pl-6">
             {project.techStack.map((t) => (
               <Chip key={t} variant="skill">
                 {t}
@@ -121,6 +152,26 @@ export default function ProjectsSection({
   onChange: (projects: Project[]) => void;
 }) {
   const [adding, setAdding] = useState(false);
+  const [draggedProjId, setDraggedProjId] = useState<string | null>(null);
+  const [dropTargetProjId, setDropTargetProjId] = useState<string | null>(null);
+
+  const handleProjectDrop = (targetId: string) => {
+    if (!draggedProjId || draggedProjId === targetId) {
+      setDraggedProjId(null);
+      setDropTargetProjId(null);
+      return;
+    }
+    const srcIdx = projects.findIndex((p) => p.id === draggedProjId);
+    const dstIdx = projects.findIndex((p) => p.id === targetId);
+    if (srcIdx >= 0 && dstIdx >= 0) {
+      const next = [...projects];
+      const [moved] = next.splice(srcIdx, 1);
+      next.splice(dstIdx, 0, moved);
+      onChange(next);
+    }
+    setDraggedProjId(null);
+    setDropTargetProjId(null);
+  };
 
   return (
     <section id="sec-projects" className="scroll-mt-20 space-y-3">
@@ -170,6 +221,26 @@ export default function ProjectsSection({
           key={p.id}
           project={p}
           known={known}
+          isDragging={draggedProjId === p.id}
+          isDropTarget={dropTargetProjId === p.id && draggedProjId !== p.id}
+          onDragStart={(e) => {
+            e.dataTransfer.effectAllowed = "move";
+            setDraggedProjId(p.id);
+          }}
+          onDragOver={(e) => {
+            if (!draggedProjId) return;
+            e.preventDefault();
+            if (dropTargetProjId !== p.id) setDropTargetProjId(p.id);
+          }}
+          onDrop={(e) => {
+            if (!draggedProjId) return;
+            e.preventDefault();
+            handleProjectDrop(p.id);
+          }}
+          onDragEnd={() => {
+            setDraggedProjId(null);
+            setDropTargetProjId(null);
+          }}
           onChange={(next) => onChange(projects.map((x) => (x.id === p.id ? next : x)))}
           onDelete={() => onChange(projects.filter((x) => x.id !== p.id))}
         />

@@ -8,6 +8,7 @@ interface CalibrationContextValue {
   setCalibration: (config: CalibrationConfig) => void;
   setOneLineMax: (n: number) => void;
   setTwoLineMax: (n: number) => void;
+  setMalleableLines: (n: number) => void;
   resetToDefault: () => void;
   isCalibrated: boolean;
 }
@@ -69,17 +70,22 @@ export function CalibrationProvider({
   };
 
   const setOneLineMax = (n: number) => {
-    const valid = Math.max(20, Math.min(300, Math.round(n)));
-    // Automatically keep twoLineMax proportionally scaled if it was double
-    const newTwoLine = calibration.twoLineMax <= calibration.oneLineMax * 2 + 5
-      ? valid * 2
-      : Math.max(valid + 20, calibration.twoLineMax);
-    update({ oneLineMax: valid, twoLineMax: newTwoLine });
+    if (!Number.isFinite(n) || n < 1) return;
+    const valid = Math.max(1, Math.min(500, Math.round(n)));
+    const newTwoLine = calibration.twoLineMax <= valid ? valid * 2 : calibration.twoLineMax;
+    update({ ...calibration, oneLineMax: valid, twoLineMax: newTwoLine });
   };
 
   const setTwoLineMax = (n: number) => {
-    const valid = Math.max(calibration.oneLineMax + 10, Math.min(600, Math.round(n)));
+    if (!Number.isFinite(n) || n < 1) return;
+    const valid = Math.max(calibration.oneLineMax + 1, Math.min(1000, Math.round(n)));
     update({ ...calibration, twoLineMax: valid });
+  };
+
+  const setMalleableLines = (n: number) => {
+    if (!Number.isFinite(n) || n < 0) return;
+    const valid = Math.max(0, Math.min(6, Math.round(n)));
+    update({ ...calibration, malleableLines: valid });
   };
 
   const resetToDefault = () => {
@@ -99,6 +105,7 @@ export function CalibrationProvider({
         setCalibration: update,
         setOneLineMax,
         setTwoLineMax,
+        setMalleableLines,
         resetToDefault,
         isCalibrated,
       }}
@@ -116,6 +123,7 @@ export function useCalibration() {
       setCalibration: () => {},
       setOneLineMax: () => {},
       setTwoLineMax: () => {},
+      setMalleableLines: () => {},
       resetToDefault: () => {},
       isCalibrated: false,
     };

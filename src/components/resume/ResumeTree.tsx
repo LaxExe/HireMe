@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import type { MasterResume } from "@/lib/resume/types";
+import { hasResumeSection, type MasterResume } from "@/lib/resume/types";
 
 function jump(id: string) {
   document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -47,36 +47,52 @@ export default function ResumeTree({ resume }: { resume: MasterResume }) {
         master resume
       </p>
       <Branch>
-        <Node label="contact" target="sec-contact" strong />
+        {hasResumeSection(resume, "contact") && (
+          <Node label="contact" target="sec-contact" strong />
+        )}
 
-        <Node label="education" count={resume.education.length} target="sec-education" strong />
+        {hasResumeSection(resume, "education") && (
+          <Node label="education" count={resume.education.length} target="sec-education" strong />
+        )}
 
-        <Node label="skills" count={skillTotal} target="sec-skills" strong />
-        <Branch>
-          {resume.skills.map((c) => (
-            <Node key={c.id} label={c.name} count={c.skills.length} target={`cat-${c.id}`} />
-          ))}
-        </Branch>
-
-        <Node label="experience" count={resume.experience.length} target="sec-experience" strong />
-        <Branch>
-          {resume.experience.map((j) => (
-            <Node key={j.id} label={j.company || j.title} count={j.bullets.length} target={`job-${j.id}`} />
-          ))}
-        </Branch>
-
-        <Node label="projects" count={resume.projects.length} target="sec-projects" strong />
-        <Branch>
-          {resume.projects.map((p) => (
-            <Node key={p.id} label={p.name} count={p.bullets.length} target={`proj-${p.id}`} />
-          ))}
-        </Branch>
-
-        {resume.awards && resume.awards.length > 0 && (
+        {hasResumeSection(resume, "skills") && (
           <>
-            <Node label="awards" count={resume.awards.length} target="sec-awards" strong />
+            <Node label="skills" count={skillTotal} target="sec-skills" strong />
             <Branch>
-              {resume.awards.map((a) => (
+              {resume.skills.map((c) => (
+                <Node key={c.id} label={c.name} count={c.skills.length} target={`cat-${c.id}`} />
+              ))}
+            </Branch>
+          </>
+        )}
+
+        {hasResumeSection(resume, "experience") && (
+          <>
+            <Node label="experience" count={resume.experience.length} target="sec-experience" strong />
+            <Branch>
+              {resume.experience.map((j) => (
+                <Node key={j.id} label={j.company || j.title} count={j.bullets.length} target={`job-${j.id}`} />
+              ))}
+            </Branch>
+          </>
+        )}
+
+        {hasResumeSection(resume, "projects") && (
+          <>
+            <Node label="projects" count={resume.projects.length} target="sec-projects" strong />
+            <Branch>
+              {resume.projects.map((p) => (
+                <Node key={p.id} label={p.name} count={p.bullets.length} target={`proj-${p.id}`} />
+              ))}
+            </Branch>
+          </>
+        )}
+
+        {hasResumeSection(resume, "awards") && (
+          <>
+            <Node label="awards" count={(resume.awards ?? []).length} target="sec-awards" strong />
+            <Branch>
+              {(resume.awards ?? []).map((a) => (
                 <Node key={a.id} label={a.title} target={`award-${a.id}`} />
               ))}
             </Branch>

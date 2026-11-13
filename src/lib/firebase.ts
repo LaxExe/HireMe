@@ -1,10 +1,11 @@
 import { initializeApp, getApps, getApp, FirebaseApp } from "firebase/app";
-import { getFirestore, Firestore } from "firebase/firestore";
+import { getDatabase, Database } from "firebase/database";
 import { getAuth, Auth } from "firebase/auth";
 
 const firebaseConfig = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY || "AIzaSyDummyKeyForInitializationPlaceholder00",
   authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN || "hireme-app.firebaseapp.com",
+  databaseURL: process.env.NEXT_PUBLIC_FIREBASE_DATABASE_URL || "https://hireme-9e8f7-default-rtdb.firebaseio.com",
   projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || "hireme-app",
   storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET || "hireme-app.firebasestorage.app",
   messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID || "000000000000",
@@ -20,7 +21,7 @@ export const isFirebaseConfigured = Boolean(
 
 // Initialize Firebase safely (singleton pattern)
 const app: FirebaseApp = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
-const db: Firestore = getFirestore(app);
+const rtdb: Database = getDatabase(app);
 const auth: Auth = getAuth(app);
 
-export { app, db, auth };
+export { app, rtdb, auth };

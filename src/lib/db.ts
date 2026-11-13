@@ -1,14 +1,6 @@
-import { db, isFirebaseConfigured } from "./firebase";
-import {
-  collection,
-  getDocs,
-  addDoc,
-  deleteDoc,
-  doc,
-  updateDoc,
-  query,
-  orderBy,
-} from "firebase/firestore";
+import { rtdb, isFirebaseConfigured } from "./firebase";
+import { ref, get, set, remove, update } from "firebase/database";
+import { isOnline, enqueueOfflineItem } from "./offlineSync";
 
 export interface Role {
   id: string;
@@ -112,13 +104,17 @@ function setLocal<T>(key: string, data: T) {
 export async function getRoles(): Promise<Role[]> {
   if (isFirebaseConfigured) {
     try {
-      const q = query(collection(db, "roles"), orderBy("createdAt", "desc"));
-      const snapshot = await getDocs(q);
-      if (!snapshot.empty) {
-        return snapshot.docs.map((d) => ({ id: d.id, ...d.data() } as Role));
+      const snap = await get(ref(rtdb, "roles"));
+      if (snap.exists()) {
+        const val = snap.val();
+        if (val && typeof val === "object") {
+          const list: Role[] = Object.values(val);
+          list.sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
+          return list;
+        }
       }
     } catch (e) {
-      console.warn("Firestore read failed, falling back to local DB:", e);
+      console.warn("RTDB read failed, falling back to local DB:", e);
     }
   }
   return getLocal<Role[]>(LOCAL_ROLES_KEY, DEFAULT_ROLES);
@@ -131,13 +127,15 @@ export async function createRole(newRole: Omit<Role, "id" | "createdAt">): Promi
     createdAt: new Date().toISOString().split("T")[0],
   };
 
-  if (isFirebaseConfigured) {
+  if (isOnline() && isFirebaseConfigured) {
     try {
-      const docRef = await addDoc(collection(db, "roles"), role);
-      role.id = docRef.id;
+      await set(ref(rtdb, `roles/${role.id}`), role);
     } catch (e) {
-      console.warn("Firestore write failed, saving locally:", e);
+      console.warn("RTDB write failed, queueing for offline sync:", e);
+      enqueueOfflineItem({ type: "role", role });
     }
+  } else {
+    enqueueOfflineItem({ type: "role", role });
   }
 
   const current = getLocal<Role[]>(LOCAL_ROLES_KEY, DEFAULT_ROLES);
@@ -149,9 +147,9 @@ export async function createRole(newRole: Omit<Role, "id" | "createdAt">): Promi
 export async function deleteRole(id: string): Promise<void> {
   if (isFirebaseConfigured) {
     try {
-      await deleteDoc(doc(db, "roles", id));
+      await remove(ref(rtdb, `roles/${id}`));
     } catch (e) {
-      console.warn("Firestore delete failed:", e);
+      console.warn("RTDB delete failed:", e);
     }
   }
 
@@ -164,13 +162,17 @@ export async function deleteRole(id: string): Promise<void> {
 export async function getCandidates(): Promise<Candidate[]> {
   if (isFirebaseConfigured) {
     try {
-      const q = query(collection(db, "candidates"), orderBy("appliedDate", "desc"));
-      const snapshot = await getDocs(q);
-      if (!snapshot.empty) {
-        return snapshot.docs.map((d) => ({ id: d.id, ...d.data() } as Candidate));
+      const snap = await get(ref(rtdb, "candidates"));
+      if (snap.exists()) {
+        const val = snap.val();
+        if (val && typeof val === "object") {
+          const list: Candidate[] = Object.values(val);
+          list.sort((a, b) => (b.appliedDate || "").localeCompare(a.appliedDate || ""));
+          return list;
+        }
       }
     } catch (e) {
-      console.warn("Firestore read candidates failed, falling back to local DB:", e);
+      console.warn("RTDB read candidates failed, falling back to local DB:", e);
     }
   }
   return getLocal<Candidate[]>(LOCAL_CANDIDATES_KEY, DEFAULT_CANDIDATES);
@@ -185,13 +187,15 @@ export async function createCandidate(
     appliedDate: new Date().toISOString().split("T")[0],
   };
 
-  if (isFirebaseConfigured) {
+  if (isOnline() && isFirebaseConfigured) {
     try {
-      const docRef = await addDoc(collection(db, "candidates"), candidate);
-      candidate.id = docRef.id;
+      await set(ref(rtdb, `candidates/${candidate.id}`), candidate);
     } catch (e) {
-      console.warn("Firestore candidate write failed, saving locally:", e);
+      console.warn("RTDB candidate write failed, queueing for offline sync:", e);
+      enqueueOfflineItem({ type: "candidate", candidate });
     }
+  } else {
+    enqueueOfflineItem({ type: "candidate", candidate });
   }
 
   const current = getLocal<Candidate[]>(LOCAL_CANDIDATES_KEY, DEFAULT_CANDIDATES);
@@ -206,9 +210,9 @@ export async function updateCandidateStage(
 ): Promise<void> {
   if (isFirebaseConfigured) {
     try {
-      await updateDoc(doc(db, "candidates", id), { stage });
+      await update(ref(rtdb, `candidates/${id}`), { stage });
     } catch (e) {
-      console.warn("Firestore update stage failed:", e);
+      console.warn("RTDB update stage failed:", e);
     }
   }
 

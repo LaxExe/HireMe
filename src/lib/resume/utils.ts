@@ -150,8 +150,8 @@ export function bulletFit(
   config: CalibrationConfig = DEFAULT_CALIBRATION
 ): BulletFitResult {
   const length = plainText(markup).trim().length;
-  const oneLineMax = Math.max(10, config.oneLineMax || DEFAULT_CALIBRATION.oneLineMax);
-  const twoLineMax = Math.max(oneLineMax + 10, config.twoLineMax || DEFAULT_CALIBRATION.twoLineMax);
+  const oneLineMax = Math.max(1, config.oneLineMax || DEFAULT_CALIBRATION.oneLineMax);
+  const twoLineMax = Math.max(oneLineMax + 1, config.twoLineMax || DEFAULT_CALIBRATION.twoLineMax);
 
   if (length === 0) {
     return {
