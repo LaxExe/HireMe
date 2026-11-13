@@ -1,5 +1,6 @@
-import { db, isFirebaseConfigured } from "@/lib/firebase";
-import { doc, getDoc, setDoc } from "firebase/firestore";
+import { rtdb, isFirebaseConfigured } from "@/lib/firebase";
+import { ref, get, set, push } from "firebase/database";
+import { isOnline, enqueueOfflineItem } from "@/lib/offlineSync";
 import type { MasterResume } from "./types";
 import { uid } from "./utils";
 
@@ -81,9 +82,10 @@ export async function loadAgentsQueueAsync(uidStr: string): Promise<AgentResumeE
 
   if (isFirebaseConfigured && uidStr) {
     try {
-      const snap = await getDoc(doc(db, "agentsQueues", uidStr));
+      const snap = await get(ref(rtdb, `agentsQueues/${uidStr}`));
       if (snap.exists()) {
-        const data = snap.data().data;
+        const val = snap.val();
+        const data = val?.data;
         if (typeof data === "string") {
           const items = normalizeAgentEntries(JSON.parse(data));
           saveAgentsQueue(uidStr, items);
@@ -91,7 +93,7 @@ export async function loadAgentsQueueAsync(uidStr: string): Promise<AgentResumeE
         }
       }
     } catch (e) {
-      console.warn("Firestore agents queue read failed, using local copy:", e);
+      console.warn("RTDB agents queue read failed, using local copy:", e);
     }
   }
   return local;
@@ -100,23 +102,85 @@ export async function loadAgentsQueueAsync(uidStr: string): Promise<AgentResumeE
 export function saveAgentsQueue(uidStr: string, items: AgentResumeEntry[]): void {
   if (typeof window === "undefined") return;
   const serialized = JSON.stringify(items);
+  const now = new Date().toISOString();
+
+  // If online and Firebase is configured, write directly to the database
+  if (isOnline() && isFirebaseConfigured && uidStr) {
+    set(ref(rtdb, `agentsQueues/${uidStr}`), {
+      data: serialized,
+      updatedAt: now,
+    }).catch((e) => {
+      console.warn("Direct DB sync failed, falling back to offline queue:", e);
+      enqueueOfflineItem({
+        type: "agentsQueue",
+        uid: uidStr,
+        data: serialized,
+        timestamp: now,
+      });
+    });
+  } else {
+    // Offline mode: store in local storage and queue for upload when WiFi returns
+    enqueueOfflineItem({
+      type: "agentsQueue",
+      uid: uidStr,
+      data: serialized,
+      timestamp: now,
+    });
+  }
+
+  // Also maintain fast local in-memory/cache for responsive UI
   try {
     if (uidStr) {
       localStorage.setItem(AGENTS_QUEUE_KEY(uidStr), serialized);
     }
     localStorage.setItem(AGENTS_QUEUE_GLOBAL_KEY, serialized);
   } catch (e) {
-    console.warn("Failed to save agents queue to localStorage:", e);
+    console.warn("Local storage cache warning:", e);
+  }
+}
+
+export function logAppliedJobToFirebase(
+  jobTitle: string,
+  jobUrl: string,
+  status: "queued" | "applied"
+): void {
+  const timestamp = new Date().toISOString();
+  const cleanTitle = jobTitle.trim() || "Untitled Role";
+  const cleanUrl = (jobUrl || "").trim();
+
+  // If online, write directly to database
+  if (isOnline() && isFirebaseConfigured) {
+    try {
+      const jobLogRef = push(ref(rtdb, "appliedJobs"));
+      set(jobLogRef, {
+        jobTitle: cleanTitle,
+        jobUrl: cleanUrl,
+        status,
+        timestamp,
+      }).catch((e) => {
+        console.warn("Online write failed, saving to offline sync queue:", e);
+        enqueueOfflineItem({
+          type: "appliedJob",
+          jobTitle: cleanTitle,
+          jobUrl: cleanUrl,
+          status,
+          timestamp,
+        });
+      });
+      return;
+    } catch (e) {
+      console.warn("Online write error, saving to offline sync queue:", e);
+    }
   }
 
-  if (isFirebaseConfigured && uidStr) {
-    setDoc(doc(db, "agentsQueues", uidStr), {
-      data: serialized,
-      updatedAt: new Date().toISOString(),
-    }).catch((e) => {
-      console.warn("Firestore agents queue sync skipped:", e);
-    });
-  }
+  // Offline: save to offline queue so it will push to DB as soon as WiFi reconnects
+  enqueueOfflineItem({
+    type: "appliedJob",
+    jobTitle: cleanTitle,
+    jobUrl: cleanUrl,
+    status,
+    timestamp,
+  });
 }
 
 export function pushResumeToAgents(
@@ -151,24 +215,34 @@ export function pushResumeToAgents(
 
   const updated = [newEntry, ...existing];
   saveAgentsQueue(uidStr, updated);
+  logAppliedJobToFirebase(roleName, params.roleUrl, "queued");
   return newEntry;
 }
 
 export function toggleAgentSentStatus(uidStr: string, entryId: string): AgentResumeEntry[] {
   const existing = loadAgentsQueue(uidStr);
   const now = new Date().toISOString();
+  let toggledEntry: AgentResumeEntry | null = null;
   const updated = existing.map((entry) => {
     if (entry.id !== entryId) return entry;
     const nextSent = !entry.sentToCompany;
-    return {
+    toggledEntry = {
       ...entry,
       sentToCompany: nextSent,
       sentAt: nextSent ? now : undefined,
       archived: nextSent ? entry.archived : false,
       archivedAt: nextSent ? entry.archivedAt : undefined,
     };
+    return toggledEntry;
   });
   saveAgentsQueue(uidStr, updated);
+  if (toggledEntry && (toggledEntry as AgentResumeEntry).sentToCompany) {
+    logAppliedJobToFirebase(
+      (toggledEntry as AgentResumeEntry).roleName,
+      (toggledEntry as AgentResumeEntry).roleUrl,
+      "applied"
+    );
+  }
   return updated;
 }
 

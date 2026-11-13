@@ -10,6 +10,7 @@ import {
   signOut as firebaseSignOut,
 } from "firebase/auth";
 import { auth, isFirebaseConfigured } from "@/lib/firebase";
+import { initOfflineSyncListener } from "@/lib/offlineSync";
 
 export interface AppUser {
   uid: string;
@@ -36,6 +37,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    const cleanupSync = initOfflineSyncListener();
+
     if (isFirebaseConfigured) {
       const unsubscribe = onAuthStateChanged(auth, (fbUser: FirebaseUser | null) => {
         if (fbUser) {
@@ -53,7 +56,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
         setLoading(false);
       });
-      return () => unsubscribe();
+      return () => {
+        unsubscribe();
+        cleanupSync();
+      };
     } else {
       // Localhost / offline fallback mode
       try {
@@ -65,6 +71,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         console.error("Failed to restore local session", e);
       }
       setLoading(false);
+      return () => cleanupSync();
     }
   }, []);
 

@@ -1,5 +1,5 @@
-import { db, isFirebaseConfigured } from "@/lib/firebase";
-import { doc, getDoc, setDoc } from "firebase/firestore";
+import { rtdb, isFirebaseConfigured } from "@/lib/firebase";
+import { ref, get, set } from "firebase/database";
 import type { LarpAlignmentRun } from "./larpEngine";
 import type { MasterResume } from "./types";
 import { uid } from "./utils";
@@ -83,9 +83,10 @@ export async function loadPreviewQueueAsync(uidStr: string): Promise<PreviewQueu
 
   if (isFirebaseConfigured && uidStr) {
     try {
-      const snap = await getDoc(doc(db, "previewQueues", uidStr));
+      const snap = await get(ref(rtdb, `previewQueues/${uidStr}`));
       if (snap.exists()) {
-        const data = snap.data().data;
+        const val = snap.val();
+        const data = val?.data;
         if (typeof data === "string") {
           const items = normalizeQueueItems(JSON.parse(data));
           savePreviewQueue(uidStr, items);
@@ -93,7 +94,7 @@ export async function loadPreviewQueueAsync(uidStr: string): Promise<PreviewQueu
         }
       }
     } catch (e) {
-      console.warn("Firestore preview queue read failed, using local copy:", e);
+      console.warn("RTDB preview queue read failed, using local copy:", e);
     }
   }
   return local;
@@ -112,11 +113,11 @@ export function savePreviewQueue(uidStr: string, items: PreviewQueueItem[]): voi
   }
 
   if (isFirebaseConfigured && uidStr) {
-    setDoc(doc(db, "previewQueues", uidStr), {
+    set(ref(rtdb, `previewQueues/${uidStr}`), {
       data: serialized,
       updatedAt: new Date().toISOString(),
     }).catch((e) => {
-      console.warn("Firestore preview queue sync skipped:", e);
+      console.warn("RTDB preview queue sync skipped:", e);
     });
   }
 }
