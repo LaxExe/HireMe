@@ -1214,7 +1214,7 @@ function tryMinimalKeywordInjection(
 
 export interface MalleableBulletOption {
   id: string;
-  styleLabel: "Casual & Direct" | "Simple Integration" | "Workflow & Ops";
+  styleLabel: "Casual & Direct" | "Simple Integration" | "Workflow & Ops" | "Testing & Quality" | string;
   markup: string;
   latex: string;
   chars: number;
@@ -1524,10 +1524,9 @@ export function synthesizeMalleableOneLineBullets(
     }
   }
 
-  // Template 2: Simple Cloud Hosting / Webhooks / PM Tracking (zero-stretch)
+  // Template 2: Balanced options across API development, DevOps, Testing, and Workflow
   if (hasAws || hasWebhooks || hasDocker || pmTool) {
     const cloudKw = hasAws ? "AWS" : hasDocker ? "Docker" : "CI/CD";
-    const secondKw = hasWebhooks ? "Webhooks" : pmTool || primaryMatchedStack;
     const kws = Array.from(
       new Set([
         ...(hasAws ? ["AWS"] : []),
@@ -1542,61 +1541,88 @@ export function synthesizeMalleableOneLineBullets(
         {
           styleLabel: "Casual & Direct",
           variants: [
-            `Deployed **${primaryMatchedStack}** service updates on **${cloudKw}** and tracked sprint tasks and bug fixes in **${pmTool || "Git"}**.`,
-            `Hosted **${primaryMatchedStack}** backend services on **${cloudKw}** and coordinated feature releases in **${pmTool || "Agile"}** sprints.`,
+            `Built modular **${primaryMatchedStack}** API endpoints and request validators for internal services.`,
+            `Developed **${primaryMatchedStack}** backend services to process and format core application data.`,
+            `Implemented **${primaryMatchedStack}** business logic and clean error handling across core service routes.`,
           ],
           easyExplanation:
-            "Everyone pushes code to an existing cloud environment and moves tickets in Jira/Linear—zero technical risk.",
+            "Focused directly on code and API features in your primary language—clean, believable, and zero buzzwords.",
         },
         {
           styleLabel: "Simple Integration",
           variants: [
-            `Wired up **${secondKw}** status notifications for **${primaryMatchedStack}** services running on **${cloudKw}**.`,
-            `Configured **${cloudKw}** environment variables and **${secondKw}** callbacks for internal **${primaryMatchedStack}** APIs.`,
+            hasWebhooks
+              ? `Integrated **Webhooks** and event listeners to trigger automated **${primaryMatchedStack}** job runs.`
+              : `Configured **${cloudKw}** environment variables and automated deployment triggers for **${primaryMatchedStack}** APIs.`,
+            `Configured **${cloudKw}** build pipelines and containerized **${primaryMatchedStack}** services for consistent staging.`,
+            `Set up **${cloudKw}** deployment workflows to automate builds for **${primaryMatchedStack}** tools.`,
           ],
           easyExplanation:
-            "Simple config and webhook callback handling that takes 15 minutes in real life.",
+            "Standard developer tasks: packaging code, configuring deployment triggers, and setting environment variables.",
+        },
+        {
+          styleLabel: "Testing & Quality",
+          variants: [
+            `Wrote automated **${primaryMatchedStack}** unit and integration tests to prevent regressions across service releases.`,
+            `Added structured **${primaryMatchedStack}** request logging and health checks to simplify API debugging.`,
+            `Authored integration test suites for **${primaryMatchedStack}** endpoints to catch bugs prior to staging.`,
+          ],
+          easyExplanation:
+            "Demonstrates solid engineering discipline without claiming complex architectural overhauls.",
         },
         {
           styleLabel: "Workflow & Ops",
           variants: [
-            `Managed **${pmTool || "Agile"}** sprint tickets and routine **${cloudKw}** deployments for internal **${primaryMatchedStack}** tools.`,
+            `Collaborated in **${pmTool || "Agile"}** sprints to deliver feature updates and resolve critical issue tickets.`,
+            `Coordinated feature releases and tracked issue triage across cross-functional **${pmTool || "Agile"}** sprints.`,
+            `Participated in **${pmTool || "Agile"}** standups and sprint planning to deliver bi-weekly product milestones.`,
           ],
           easyExplanation:
-            "Pure day-to-day workflow and routine deployment.",
+            "Demonstrates team collaboration, sprint delivery, and ticket lifecycle tracking in Jira/Agile.",
         },
       ],
       keywords: kws.length > 0 ? kws : [cloudKw],
       believabilityScore: 95,
       critique:
-        "Zero stretch: deploying your existing code to AWS/Docker and tracking sprint tickets in Jira/Linear is standard day-to-day work.",
+        "Low-stretch, balanced options covering core API development, testing, deployments, and sprint collaboration.",
     });
   }
 
-  // Template 3: Simple testing / logging / sprint hygiene fallback
+  // Template 3: Simple testing / logging / API fallback
   candidateTemplates.push({
     optionTemplates: [
       {
         styleLabel: "Casual & Direct",
         variants: [
-          `Wrote **${primaryMatchedStack}** API integration tests and tracked bug fixes across **${pmTool || "Agile"}** sprint cycles.`,
+          `Developed **${primaryMatchedStack}** service utilities and API routes to handle routine application workflows.`,
+          `Maintained **${primaryMatchedStack}** backend endpoints and structured request handlers for internal tools.`,
         ],
         easyExplanation:
-          "Writing basic API tests and tracking tickets is 100% natural for any intern or junior engineer.",
+          "Straightforward day-to-day coding in your primary language.",
       },
       {
-        styleLabel: "Simple Integration",
+        styleLabel: "Testing & Quality",
         variants: [
           `Added structured **${primaryMatchedStack}** request logging and error alerts to simplify debugging across internal APIs.`,
+          `Wrote automated **${primaryMatchedStack}** integration tests to verify endpoint stability across releases.`,
         ],
         easyExplanation:
           "Simple logging and error handling in your main language.",
+      },
+      {
+        styleLabel: "Workflow & Ops",
+        variants: [
+          `Tracked bug fixes and coordinated feature releases across **${pmTool || "Agile"}** sprint cycles.`,
+          `Managed issue tickets and assisted with team code reviews in **${pmTool || "Agile"}** sprints.`,
+        ],
+        easyExplanation:
+          "Everyday team communication and sprint ticket tracking.",
       },
     ],
     keywords: pmTool ? [pmTool, primaryMatchedStack] : [primaryMatchedStack],
     believabilityScore: 93,
     critique:
-      "Completely grounded in your real language stack—just basic testing, logging, and sprint tracking.",
+      "Completely grounded in your real language stack—just basic features, testing, and team delivery.",
   });
 
   const results: MalleableSynthesizedBullet[] = [];
