@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import {
   Eye,
@@ -18,6 +18,7 @@ import {
   RotateCw,
   ChevronDown,
   ChevronUp,
+  ShieldAlert,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import {
@@ -37,6 +38,7 @@ import {
   updateBulletProposalWithCustomMarkup,
   updateMalleableOptionWithCustomMarkup,
 } from "@/lib/resume/larpEngine";
+import { matchJobDescriptionWithResume, type KeywordMatchResult } from "@/lib/resume/keywordMatch";
 import { pushResumeToAgents } from "@/lib/resume/agentsQueue";
 import { compileResumePdfBlobUrl, downloadResumePdf } from "@/lib/resume/exportPdf";
 import { parseMarkup } from "@/lib/resume/utils";
@@ -90,6 +92,11 @@ export default function PreviewPage() {
   }
 
   const activeItem = queue.find((item) => item.id === selectedId) ?? queue[0] ?? null;
+
+  const matchResult = useMemo<KeywordMatchResult | null>(() => {
+    if (!activeItem?.jobDescription || !activeItem?.baseResume) return null;
+    return matchJobDescriptionWithResume(activeItem.jobDescription, activeItem.baseResume);
+  }, [activeItem?.jobDescription, activeItem?.baseResume]);
 
   const updateActiveItem = (
     patch: Partial<
@@ -643,6 +650,266 @@ export default function PreviewPage() {
                 </div>
               </div>
 
+              {/* Summary Score Bar */}
+              {matchResult && (
+                <div className="bg-[#fafafa] rounded-xl border border-[#ebebeb] p-4 sm:p-5 space-y-3">
+                  <div className="flex flex-wrap items-baseline justify-between gap-4">
+                    <div className="flex items-baseline gap-3">
+                      <span className="text-2xl sm:text-3xl font-bold font-mono tracking-tight text-neutral-900">
+                        {matchResult.scorePercent}%
+                      </span>
+                      <span className="text-xs font-semibold text-neutral-800">
+                        Keyword Match
+                      </span>
+                      <span className="font-mono text-[11px] text-neutral-500">
+                        ({matchResult.matchedCount} of {matchResult.totalDetected} technologies & skills on resume)
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {activeItem.larpRun.guardrailVerifiedZeroBanned && (
+                        <span className="inline-flex items-center gap-1 font-mono text-[10px] text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-full">
+                          <Check className="w-3 h-3" />
+                          <span>Tier-2 Banned Guardrail: 0 Injected</span>
+                        </span>
+                      )}
+                      {activeItem.baseResume?.contact?.name && (
+                        <span className="font-mono text-[11px] text-neutral-500 bg-white border border-[#ebebeb] px-2.5 py-1 rounded-full">
+                          {activeItem.baseResume.contact.name}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Progress Bar */}
+                  <div className="w-full h-2 rounded-full bg-neutral-200/70 overflow-hidden border border-[#ebebeb]">
+                    <div
+                      className={`h-full rounded-full transition-all duration-300 ${
+                        matchResult.scorePercent >= 75
+                          ? "bg-emerald-500"
+                          : matchResult.scorePercent >= 45
+                          ? "bg-amber-400"
+                          : "bg-red-500"
+                      }`}
+                      style={{ width: `${matchResult.scorePercent}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* 4-Tier Defensibility Classification Spec */}
+              <div className="bg-white rounded-xl border border-[#ebebeb] shadow-subtle p-4 sm:p-5 space-y-3.5">
+                <div className="flex items-center justify-between border-b border-[#ebebeb] pb-2.5">
+                  <div>
+                    <h2 className="text-xs font-semibold text-neutral-900 uppercase tracking-wide">
+                      4-Tier Defensibility Classification
+                    </h2>
+                    <p className="text-[11px] text-neutral-500 mt-0.5">
+                      Extracted JD keywords bucketed by live-interview defensibility
+                    </p>
+                  </div>
+                  <span className="font-mono text-[10px] text-neutral-500 bg-[#fafafa] border border-[#ebebeb] px-2 py-0.5 rounded">
+                    Cap: ≤ Tier 1 in Bullets
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2.5">
+                  {/* MATCHED */}
+                  <div className="rounded-lg border border-[#ebebeb] bg-[#fafafa] p-3 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="font-mono text-[10px] font-semibold text-emerald-700 uppercase">
+                        Matched
+                      </span>
+                      <span className="font-mono text-[10px] text-neutral-400">
+                        {activeItem.larpRun.tiers.matched.length}
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap gap-1">
+                      {activeItem.larpRun.tiers.matched.map((k) => (
+                        <span
+                          key={k}
+                          className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-800 font-medium"
+                        >
+                          {k}
+                        </span>
+                      ))}
+                      {activeItem.larpRun.tiers.matched.length === 0 && (
+                        <span className="text-[11px] font-mono text-neutral-400">none</span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* TIER 0: WORKFLOW */}
+                  <div className="rounded-lg border border-[#ebebeb] bg-[#fafafa] p-3 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="font-mono text-[10px] font-semibold text-blue-700 uppercase">
+                        Tier 0 · Workflow
+                      </span>
+                      <span className="font-mono text-[10px] text-neutral-400">
+                        {activeItem.larpRun.tiers.tier_0_workflow.length}
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap gap-1">
+                      {activeItem.larpRun.tiers.tier_0_workflow.map((k) => (
+                        <span
+                          key={k}
+                          className="text-[11px] px-2 py-0.5 rounded-full bg-blue-50 border border-blue-200 text-blue-800 font-medium"
+                        >
+                          {k}
+                        </span>
+                      ))}
+                      {activeItem.larpRun.tiers.tier_0_workflow.length === 0 && (
+                        <span className="text-[11px] font-mono text-neutral-400">none</span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* TIER 1: FRAMING */}
+                  <div className="rounded-lg border border-[#ebebeb] bg-[#fafafa] p-3 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="font-mono text-[10px] font-semibold text-indigo-700 uppercase">
+                        Tier 1 · Framing
+                      </span>
+                      <span className="font-mono text-[10px] text-neutral-400">
+                        {activeItem.larpRun.tiers.tier_1_framing.length}
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap gap-1">
+                      {activeItem.larpRun.tiers.tier_1_framing.map((k) => (
+                        <span
+                          key={k}
+                          className="text-[11px] px-2 py-0.5 rounded-full bg-indigo-50 border border-indigo-200 text-indigo-800 font-medium"
+                        >
+                          {k}
+                        </span>
+                      ))}
+                      {activeItem.larpRun.tiers.tier_1_framing.length === 0 && (
+                        <span className="text-[11px] font-mono text-neutral-400">none</span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* TIER 1.5: SKILLS ONLY */}
+                  <div className="rounded-lg border border-[#ebebeb] bg-[#fafafa] p-3 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="font-mono text-[10px] font-semibold text-violet-700 uppercase">
+                        Tier 1.5 · Skills Only
+                      </span>
+                      <span className="font-mono text-[10px] text-neutral-400">
+                        {activeItem.larpRun.tiers.tier_1_5_skills_only.length}
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap gap-1">
+                      {activeItem.larpRun.tiers.tier_1_5_skills_only.map((k) => (
+                        <span
+                          key={k}
+                          className="text-[11px] px-2 py-0.5 rounded-full bg-violet-50 border border-violet-200 text-violet-800 font-medium"
+                        >
+                          {k}
+                        </span>
+                      ))}
+                      {activeItem.larpRun.tiers.tier_1_5_skills_only.length === 0 && (
+                        <span className="text-[11px] font-mono text-neutral-400">none</span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* TIER 2: BANNED */}
+                  <div className="rounded-lg border border-red-200/70 bg-red-50/30 p-3 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="inline-flex items-center gap-1 font-mono text-[10px] font-semibold text-red-700 uppercase">
+                        <ShieldAlert className="w-3 h-3" />
+                        <span>Tier 2 · Banned</span>
+                      </span>
+                      <span className="font-mono text-[10px] text-red-500">
+                        {activeItem.larpRun.tiers.tier_2_banned.length}
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap gap-1">
+                      {activeItem.larpRun.tiers.tier_2_banned.map((k) => (
+                        <span
+                          key={k}
+                          className="text-[11px] px-2 py-0.5 rounded-full bg-red-100/80 border border-red-200 text-red-800 font-medium line-through"
+                        >
+                          {k}
+                        </span>
+                      ))}
+                      {activeItem.larpRun.tiers.tier_2_banned.length === 0 && (
+                        <span className="text-[11px] font-mono text-neutral-400">none</span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* AI Believability Reviewer & Top Recommendation */}
+              {activeItem.larpRun.aiRecommendation && (
+                <div className="rounded-xl border border-neutral-900 bg-[#fafafa] p-4 sm:p-5 space-y-3">
+                  <div className="flex items-start justify-between gap-3 flex-wrap">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="inline-flex items-center gap-1 font-mono text-[10px] uppercase tracking-wider px-2 py-0.5 rounded bg-neutral-900 text-white">
+                          <Sparkles className="w-3 h-3" />
+                          AI Believability Recommendation
+                        </span>
+                        <span className="font-mono text-[11px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded">
+                          {activeItem.larpRun.aiRecommendation.believabilityScore}% Believability Score
+                        </span>
+                      </div>
+                      <h3 className="text-xs font-semibold text-neutral-900 pt-0.5">
+                        {activeItem.larpRun.aiRecommendation.verdictSummary}
+                      </h3>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={handleSelectOnlyTopRecommended}
+                      className="px-3 py-1.5 text-xs font-medium text-neutral-900 bg-white hover:bg-neutral-100 border border-[#ebebeb] rounded-full shadow-2xs active:scale-95 transition-all cursor-pointer"
+                    >
+                      Select Only Most Believable Pick
+                    </button>
+                  </div>
+
+                  <p className="text-xs text-neutral-600 leading-relaxed">
+                    {activeItem.larpRun.aiRecommendation.whyMostBelievable}
+                  </p>
+
+                  {activeItem.larpRun.aiRecommendation.interviewTalkingPoint && (
+                    <div className="rounded-lg bg-white border border-[#ebebeb] p-3 text-xs text-neutral-700 font-mono">
+                      <span className="block font-sans text-[10px] uppercase tracking-wider text-neutral-400 font-semibold mb-1">
+                        Interview Talking Point
+                      </span>
+                      {activeItem.larpRun.aiRecommendation.interviewTalkingPoint}
+                    </div>
+                  )}
+
+                  {activeItem.larpRun.aiRecommendation.verificationPasses &&
+                    activeItem.larpRun.aiRecommendation.verificationPasses.length > 0 && (
+                      <div className="space-y-1.5 pt-1">
+                        <span className="block font-mono text-[10px] text-neutral-400 uppercase">
+                          AI Multi-Check Log ({activeItem.larpRun.aiRecommendation.iterationsRun} passes verified)
+                        </span>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          {activeItem.larpRun.aiRecommendation.verificationPasses.map((vp) => (
+                            <div
+                              key={vp.passNumber}
+                              className="rounded-lg bg-white border border-[#ebebeb] p-2.5 text-xs space-y-1"
+                            >
+                              <div className="flex items-center justify-between font-mono text-[10px]">
+                                <span className="font-semibold text-neutral-900">{vp.name}</span>
+                                <span className="text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded">
+                                  {vp.status}
+                                </span>
+                              </div>
+                              <p className="text-[11px] text-neutral-500">{vp.detail}</p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                </div>
+              )}
+
               {/* Job Description & Extracted Main Skills Banner */}
               <div className="rounded-xl border border-[#ebebeb] bg-[#fafafa] p-4 space-y-3">
                 <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -890,43 +1157,54 @@ export default function PreviewPage() {
                     Existing Bullet Edits ({activeItem.acceptedBulletIds.length} of{" "}
                     {activeItem.larpRun.bulletProposals.length} selected · click text to edit)
                   </span>
-                  <div className="space-y-2">
+                  <div className="space-y-3">
                     {activeItem.larpRun.bulletProposals.map((prop) => {
                       const checked = activeItem.acceptedBulletIds.includes(prop.bulletId);
                       const isEditing = editingBulletId === prop.bulletId;
                       return (
                         <div
                           key={prop.bulletId}
-                          className={`rounded-xl border p-3 transition-colors ${
+                          className={`rounded-xl border p-3.5 space-y-2.5 transition-colors ${
                             checked
                               ? "border-neutral-900 bg-white"
                               : "border-[#ebebeb] bg-[#fafafa] opacity-70"
                           }`}
                         >
-                          <div className="flex items-center justify-between gap-2 flex-wrap mb-1.5">
-                            <label className="inline-flex items-center gap-2 cursor-pointer select-none">
-                              <input
-                                type="checkbox"
-                                checked={checked}
-                                onChange={() => handleToggleBullet(prop.bulletId)}
-                                className="rounded border-neutral-300 text-neutral-900 focus:ring-0"
-                              />
-                              <span className="text-xs font-semibold text-neutral-900">
-                                {prop.containerTitle}
-                              </span>
+                          <div className="flex items-center justify-between gap-2 flex-wrap">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <label className="inline-flex items-center gap-2 cursor-pointer select-none">
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={() => handleToggleBullet(prop.bulletId)}
+                                  className="rounded border-neutral-300 text-neutral-900 focus:ring-0"
+                                />
+                                <span className="text-xs font-semibold text-neutral-900">
+                                  {prop.containerTitle}
+                                </span>
+                              </label>
+                              {prop.contextCategory && (
+                                <span className="font-mono text-[10px] text-neutral-500 bg-neutral-100 border border-[#ebebeb] px-1.5 py-0.5 rounded">
+                                  {prop.contextCategory}
+                                </span>
+                              )}
+                            </div>
+
+                            <div className="flex flex-wrap items-center gap-1.5">
                               {prop.injectedKeywords.map((kw) => (
                                 <span
                                   key={kw}
-                                  className="font-mono text-[10px] px-2 py-0.5 rounded-full bg-blue-50 border border-blue-200 text-blue-700"
+                                  className="font-mono text-[10px] px-2 py-0.5 rounded-full bg-blue-50 border border-blue-200 text-blue-700 font-medium"
                                 >
-                                  +{kw}
+                                  +{kw} (1 spot only)
                                 </span>
                               ))}
-                            </label>
-
-                            <div className="flex items-center gap-2">
                               <span className="font-mono text-[10px] text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded">
-                                {prop.budget.candFit.badge} · {prop.budget.candChars} chars
+                                {prop.budget.candFit.badge} · {prop.budget.candFit.label} ({prop.budget.candChars} chars)
+                              </span>
+                              <span className="font-mono text-[10px] px-2 py-0.5 rounded bg-neutral-100 border border-[#ebebeb] text-neutral-600">
+                                {prop.budget.origChars} → {prop.budget.candChars} chars · {prop.budget.origWidth} →{" "}
+                                {prop.budget.candWidth} NCU
                               </span>
                               <button
                                 type="button"
@@ -941,37 +1219,69 @@ export default function PreviewPage() {
                             </div>
                           </div>
 
-                          {isEditing ? (
-                            <div className="pl-5 pt-1">
-                              <textarea
-                                autoFocus
-                                rows={2}
-                                value={prop.mutatedMarkup}
-                                onChange={(e) =>
-                                  handleEditBulletProposalInPreview(prop.bulletId, e.target.value)
-                                }
-                                onKeyDown={(e) => {
-                                  if (e.key === "Escape") setEditingBulletId(null);
-                                }}
-                                className="w-full text-xs font-mono text-neutral-900 bg-white border border-emerald-400 rounded-md p-2 focus:outline-none resize-none"
-                              />
-                            </div>
-                          ) : (
-                            <p
-                              onClick={() => setEditingBulletId(prop.bulletId)}
-                              className="text-xs text-neutral-800 pl-5 leading-relaxed cursor-text"
-                            >
-                              {parseMarkup(prop.mutatedMarkup).map((seg, idx) =>
-                                seg.bold ? (
-                                  <strong key={idx} className="font-semibold text-neutral-900">
-                                    {seg.text}
-                                  </strong>
-                                ) : (
-                                  <span key={idx}>{seg.text}</span>
-                                )
-                              )}
+                          {prop.reason && (
+                            <p className="text-[11px] text-neutral-500 font-mono">
+                              Why this spot: {prop.reason}
                             </p>
                           )}
+
+                          <div className="grid grid-cols-1 lg:grid-cols-2 gap-2.5 text-xs leading-relaxed pt-1">
+                            <div className="rounded-lg bg-[#fafafa] border border-[#ebebeb] p-2.5">
+                              <span className="block font-mono text-[10px] text-neutral-400 uppercase mb-1">
+                                Original ({prop.budget.origChars} chars · {prop.budget.origFit.badge} · {prop.budget.origWidth} NCU)
+                              </span>
+                              <p className="text-neutral-600">
+                                {parseMarkup(prop.originalMarkup).map((seg, idx) =>
+                                  seg.bold ? (
+                                    <strong key={idx} className="font-semibold text-neutral-900">
+                                      {seg.text}
+                                    </strong>
+                                  ) : (
+                                    <span key={idx}>{seg.text}</span>
+                                  )
+                                )}
+                              </p>
+                            </div>
+
+                            <div
+                              onClick={() => setEditingBulletId(prop.bulletId)}
+                              className="rounded-lg bg-emerald-50/30 border border-emerald-200/70 hover:border-emerald-400 p-2.5 cursor-text transition-colors"
+                            >
+                              <div className="flex items-center justify-between gap-2 mb-1">
+                                <span className="block font-mono text-[10px] text-emerald-700 uppercase">
+                                  Rewritten to Fit {prop.budget.candFit.badge} Area ({prop.budget.candChars} chars · {prop.budget.candWidth} NCU)
+                                </span>
+                              </div>
+
+                              {isEditing ? (
+                                <textarea
+                                  autoFocus
+                                  rows={2}
+                                  value={prop.mutatedMarkup}
+                                  onClick={(e) => e.stopPropagation()}
+                                  onChange={(e) =>
+                                    handleEditBulletProposalInPreview(prop.bulletId, e.target.value)
+                                  }
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Escape") setEditingBulletId(null);
+                                  }}
+                                  className="w-full text-xs font-mono text-neutral-900 bg-white border border-emerald-400 rounded-md p-2 focus:outline-none resize-none"
+                                />
+                              ) : (
+                                <p className="text-neutral-900">
+                                  {parseMarkup(prop.mutatedMarkup).map((seg, idx) =>
+                                    seg.bold ? (
+                                      <strong key={idx} className="font-semibold text-neutral-900">
+                                        {seg.text}
+                                      </strong>
+                                    ) : (
+                                      <span key={idx}>{seg.text}</span>
+                                    )
+                                  )}
+                                </p>
+                              )}
+                            </div>
+                          </div>
                         </div>
                       );
                     })}
@@ -1047,7 +1357,7 @@ export default function PreviewPage() {
                                       </span>
                                       <div className="flex items-center gap-2">
                                         <span className="font-mono text-[10px] text-neutral-500">
-                                          {opt.chars}/{opt.maxChars} chars · {opt.fit.badge}
+                                          {opt.chars}/{opt.maxChars} chars · {opt.widthNcu} NCU · {opt.fit.badge}
                                         </span>
                                         <button
                                           type="button"
@@ -1065,6 +1375,12 @@ export default function PreviewPage() {
                                         </button>
                                       </div>
                                     </div>
+
+                                    {opt.easyExplanation && (
+                                      <p className="font-mono text-[10px] text-neutral-500 mb-1">
+                                        Talking point: {opt.easyExplanation}
+                                      </p>
+                                    )}
 
                                     {isEditingOpt ? (
                                       <textarea
