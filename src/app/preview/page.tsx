@@ -19,6 +19,7 @@ import {
   ChevronDown,
   ChevronUp,
   ShieldAlert,
+  CheckCircle2,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import {
@@ -38,7 +39,12 @@ import {
   updateBulletProposalWithCustomMarkup,
   updateMalleableOptionWithCustomMarkup,
 } from "@/lib/resume/larpEngine";
-import { matchJobDescriptionWithResume, type KeywordMatchResult } from "@/lib/resume/keywordMatch";
+import {
+  matchJobDescriptionWithResume,
+  extractMinimumQualifications,
+  type KeywordMatchResult,
+  type MinimumQualificationsResult,
+} from "@/lib/resume/keywordMatch";
 import { pushResumeToAgents } from "@/lib/resume/agentsQueue";
 import { compileResumePdfBlobUrl, downloadResumePdf } from "@/lib/resume/exportPdf";
 import { parseMarkup } from "@/lib/resume/utils";
@@ -97,6 +103,14 @@ export default function PreviewPage() {
     if (!activeItem?.jobDescription || !activeItem?.baseResume) return null;
     return matchJobDescriptionWithResume(activeItem.jobDescription, activeItem.baseResume);
   }, [activeItem?.jobDescription, activeItem?.baseResume]);
+
+  const minimumQualifications = useMemo<MinimumQualificationsResult | null>(() => {
+    if (!activeItem?.jobDescription) return null;
+    return (
+      matchResult?.minimumQualifications ??
+      extractMinimumQualifications(activeItem.jobDescription)
+    );
+  }, [matchResult?.minimumQualifications, activeItem?.jobDescription]);
 
   const updateActiveItem = (
     patch: Partial<
@@ -995,6 +1009,36 @@ export default function PreviewPage() {
                     </div>
                   )}
                 </div>
+
+                {/* Minimum Qualifications (if present in the job description) */}
+                {minimumQualifications && minimumQualifications.items.length > 0 && (
+                  <div className="rounded-lg border border-[#ebebeb] bg-white p-3.5 space-y-2.5 shadow-2xs">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <div className="flex items-center gap-1.5">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-neutral-900" />
+                        <span className="font-mono text-[11px] uppercase tracking-wider text-neutral-900 font-semibold">
+                          {minimumQualifications.heading}
+                        </span>
+                      </div>
+                      <span className="font-mono text-[10px] text-neutral-500 bg-[#fafafa] border border-[#ebebeb] px-2 py-0.5 rounded">
+                        {minimumQualifications.items.length}{" "}
+                        {minimumQualifications.items.length === 1 ? "requirement" : "requirements"}
+                      </span>
+                    </div>
+
+                    <ul className="space-y-1.5 pt-0.5">
+                      {minimumQualifications.items.map((qual, idx) => (
+                        <li
+                          key={idx}
+                          className="flex items-start gap-2 text-xs text-neutral-700 leading-relaxed"
+                        >
+                          <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-neutral-900 flex-shrink-0" />
+                          <span className="flex-1">{qual}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
 
                 {/* Expandable Raw Job Description */}
                 {showJdDrawer && (

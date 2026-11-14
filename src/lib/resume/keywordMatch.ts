@@ -12,6 +12,11 @@ export interface KeywordMatchItem {
   foundIn: ("skills" | "experience" | "projects")[];
 }
 
+export interface MinimumQualificationsResult {
+  heading: string;
+  items: string[];
+}
+
 export interface KeywordMatchResult {
   totalDetected: number;
   matchedCount: number;
@@ -19,6 +24,7 @@ export interface KeywordMatchResult {
   scorePercent: number;
   matched: KeywordMatchItem[];
   missing: KeywordMatchItem[];
+  minimumQualifications?: MinimumQualificationsResult | null;
 }
 
 interface TechEntry {
@@ -270,5 +276,75 @@ export function matchJobDescriptionWithResume(
     scorePercent,
     matched,
     missing,
+    minimumQualifications: extractMinimumQualifications(jdText),
+  };
+}
+
+/**
+ * Extracts the minimum, basic, or required qualifications section from a raw job description text.
+ */
+export function extractMinimumQualifications(
+  jd: string
+): MinimumQualificationsResult | null {
+  if (!jd || typeof jd !== "string") return null;
+
+  // 1. Explicit Minimum / Basic / Required qualifications patterns
+  const primaryPatterns = [
+    /(?:^|\n)[ \t]*(?:#+\s*)?(minimum\s+qualifications?|basic\s+qualifications?|required\s+qualifications?|minimum\s+requirements?|minimum\s+experience)[ \t]*:?[ \t]*(?:\r?\n|$)/i,
+    /(?:^|\n)[ \t]*(?:#+\s*)?(what\s+you(?:'ll|\s+will)?\s+need|must\s+haves?|who\s+you\s+are|key\s+qualifications?)[ \t]*:?[ \t]*(?:\r?\n|$)/i,
+    /(?:^|\n)[ \t]*(?:#+\s*)?(qualifications?|requirements?)[ \t]*:?[ \t]*(?:\r?\n|$)/i,
+  ];
+
+  let match: RegExpExecArray | null = null;
+  let matchedHeading = "";
+  for (const pat of primaryPatterns) {
+    match = pat.exec(jd);
+    if (match) {
+      matchedHeading = match[1].trim();
+      break;
+    }
+  }
+
+  if (!match) return null;
+
+  const startIndex = match.index + match[0].length;
+  const afterHeading = jd.slice(startIndex);
+
+  // Stop boundary: Preferred qualifications, Responsibilities, About, Benefits, etc.
+  const nextHeadingPattern =
+    /(?:^|\n)[ \t]*(?:#+\s*)?(preferred\s+qualifications?|preferred\s+requirements?|nice\s+to\s+haves?|bonus\s+points?|bonus\s+qualifications?|responsibilities|what\s+you(?:'ll|\s+will)?\s+do|about\s+(?:the\s+role|the\s+team|the\s+job|us|our\s+team|company)|benefits|compensation|salary|how\s+to\s+apply|equal\s+opportunity)[ \t]*:?[ \t]*(?:\r?\n|$)/i;
+
+  const nextMatch = nextHeadingPattern.exec(afterHeading);
+  const sectionContent = nextMatch ? afterHeading.slice(0, nextMatch.index) : afterHeading;
+
+  const lines = sectionContent.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const items: string[] = [];
+
+  for (const line of lines) {
+    const bulletMatch = /^(?:[•\-\*\u2022\u25E6\u2043\u2219·▪✓]|(?:\d+[\.\)]))\s*(.*)/.exec(line);
+    if (bulletMatch) {
+      const text = bulletMatch[1].trim();
+      if (text) items.push(text);
+    } else if (items.length > 0 && !line.endsWith(":") && line.length > 0 && !/^[A-Z\s]{4,}:?$/.test(line)) {
+      items[items.length - 1] += " " + line;
+    } else if (line.length > 10 && !line.endsWith(":")) {
+      items.push(line);
+    }
+  }
+
+  if (items.length === 0) {
+    const raw = sectionContent.trim();
+    if (raw) items.push(raw);
+  }
+
+  if (items.length === 0) return null;
+
+  const headingWords = matchedHeading
+    .split(/\s+/)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
+
+  return {
+    heading: headingWords.join(" "),
+    items: items.slice(0, 15),
   };
 }
