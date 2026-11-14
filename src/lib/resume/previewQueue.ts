@@ -1,5 +1,6 @@
 import { rtdb, isFirebaseConfigured } from "@/lib/firebase";
-import { ref, get, set } from "firebase/database";
+import { ref, get, set, onValue } from "firebase/database";
+import { isOnline, enqueueOfflineItem } from "@/lib/offlineSync";
 import type { LarpAlignmentRun } from "./larpEngine";
 import type { MasterResume } from "./types";
 import { uid } from "./utils";
@@ -113,7 +114,10 @@ export async function loadPreviewQueueAsync(uidStr: string): Promise<PreviewQueu
           const unpushed = items.filter(
             (item) => !item.pushedToAgentsAt && !pushedIds.has(item.id)
           );
-          savePreviewQueue(uidStr, unpushed);
+          if (typeof window !== "undefined") {
+            localStorage.setItem(PREVIEW_QUEUE_KEY(uidStr), JSON.stringify(unpushed));
+            localStorage.setItem(PREVIEW_QUEUE_GLOBAL_KEY, JSON.stringify(unpushed));
+          }
           return unpushed;
         }
       }
@@ -124,9 +128,99 @@ export async function loadPreviewQueueAsync(uidStr: string): Promise<PreviewQueu
   return loadPreviewQueue(uidStr);
 }
 
+/**
+ * Subscribes to live real-time updates from Firebase Realtime Database for preview items.
+ * Immediately yields local cache, then streams live cloud changes across devices.
+ */
+export function subscribePreviewQueue(
+  uidStr: string,
+  callback: (items: PreviewQueueItem[]) => void
+): () => void {
+  if (typeof window === "undefined" || !uidStr) return () => {};
+
+  // Instant local cache paint for zero-flicker UI
+  const local = loadPreviewQueue(uidStr);
+  if (local.length > 0) {
+    callback(local);
+  }
+
+  if (isFirebaseConfigured && uidStr) {
+    try {
+      const qRef = ref(rtdb, `previewQueues/${uidStr}`);
+      const unsubscribe = onValue(
+        qRef,
+        (snap) => {
+          if (snap.exists()) {
+            const val = snap.val();
+            const data = val?.data;
+            if (typeof data === "string") {
+              const remoteItems = normalizeQueueItems(JSON.parse(data));
+              const pushedIds = new Set(
+                loadAgentsQueue(uidStr)
+                  .map((a) => a.sourcePreviewId)
+                  .filter(Boolean)
+              );
+              const unpushed = remoteItems.filter(
+                (item) => !item.pushedToAgentsAt && !pushedIds.has(item.id)
+              );
+              if (typeof window !== "undefined") {
+                localStorage.setItem(PREVIEW_QUEUE_KEY(uidStr), JSON.stringify(unpushed));
+                localStorage.setItem(PREVIEW_QUEUE_GLOBAL_KEY, JSON.stringify(unpushed));
+              }
+              callback(unpushed);
+              return;
+            }
+          }
+          if (!snap.exists()) {
+            const currentLocal = loadPreviewQueue(uidStr);
+            if (currentLocal.length === 0) {
+              callback([]);
+            }
+          }
+        },
+        (error) => {
+          console.warn("Live RTDB preview queue sync warning:", error);
+        }
+      );
+      return unsubscribe;
+    } catch (e) {
+      console.warn("Could not attach RTDB preview queue listener:", e);
+    }
+  }
+
+  return () => {};
+}
+
 export function savePreviewQueue(uidStr: string, items: PreviewQueueItem[]): void {
   if (typeof window === "undefined") return;
   const serialized = JSON.stringify(items);
+  const now = new Date().toISOString();
+
+  // If online and Firebase is configured, write directly
+  if (isOnline() && isFirebaseConfigured && uidStr) {
+    set(ref(rtdb, `previewQueues/${uidStr}`), {
+      data: serialized,
+      updatedAt: now,
+    }).catch((e) => {
+      console.warn("RTDB preview queue direct sync failed, falling back to offline queue:", e);
+      enqueueOfflineItem({
+        type: "previewQueue",
+        uid: uidStr,
+        data: serialized,
+        timestamp: now,
+      });
+    });
+  } else if (uidStr) {
+    // Offline mode: queue for upload when WiFi returns
+    enqueueOfflineItem({
+      type: "previewQueue",
+      uid: uidStr,
+      data: serialized,
+      timestamp: now,
+    });
+  }
+
+  // Fast local storage cache
   try {
     if (uidStr) {
       localStorage.setItem(PREVIEW_QUEUE_KEY(uidStr), serialized);
@@ -134,15 +228,6 @@ export function savePreviewQueue(uidStr: string, items: PreviewQueueItem[]): voi
     localStorage.setItem(PREVIEW_QUEUE_GLOBAL_KEY, serialized);
   } catch (e) {
     console.warn("Failed to save preview queue to localStorage:", e);
-  }
-
-  if (isFirebaseConfigured && uidStr) {
-    set(ref(rtdb, `previewQueues/${uidStr}`), {
-      data: serialized,
-      updatedAt: new Date().toISOString(),
-    }).catch((e) => {
-      console.warn("RTDB preview queue sync skipped:", e);
-    });
   }
 }
 

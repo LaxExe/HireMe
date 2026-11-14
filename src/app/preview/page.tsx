@@ -23,6 +23,7 @@ import { useAuth } from "@/context/AuthContext";
 import {
   loadPreviewQueue,
   loadPreviewQueueAsync,
+  subscribePreviewQueue,
   updatePreviewQueueItem,
   deletePreviewQueueItem,
   type PreviewQueueItem,
@@ -69,25 +70,14 @@ export default function PreviewPage() {
 
   useEffect(() => {
     if (!user) return;
-    let cancelled = false;
-    const syncLoaded = loadPreviewQueue(user.uid);
-    if (syncLoaded.length > 0) {
-      setQueue(syncLoaded);
+    const unsubscribe = subscribePreviewQueue(user.uid, (freshQueue) => {
+      setQueue(freshQueue);
       setSelectedId((prev) =>
-        prev && syncLoaded.some((i) => i.id === prev) ? prev : syncLoaded[0].id
+        prev && freshQueue.some((i) => i.id === prev) ? prev : (freshQueue[0]?.id ?? null)
       );
-    }
-    loadPreviewQueueAsync(user.uid).then((asyncLoaded) => {
-      if (cancelled) return;
-      setQueue(asyncLoaded);
-      if (asyncLoaded.length > 0) {
-        setSelectedId((prev) =>
-          prev && asyncLoaded.some((i) => i.id === prev) ? prev : asyncLoaded[0].id
-        );
-      }
     });
     return () => {
-      cancelled = true;
+      unsubscribe();
     };
   }, [user]);
 

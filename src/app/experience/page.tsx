@@ -3,7 +3,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
-import { loadMasterResume, saveMasterResume } from "@/lib/resume/store";
+import { loadMasterResume, saveMasterResume, subscribeMasterResume } from "@/lib/resume/store";
 import { knownTools } from "@/lib/resume/utils";
 import {
   DEFAULT_RESUME_FORMAT,
@@ -37,18 +37,16 @@ export default function ExperiencePage() {
     if (!loading && !user) router.push("/login");
   }, [user, loading, router]);
 
-  // Load the saved master resume (Firestore or local database).
+  // Load and subscribe to live master resume changes across devices
   useEffect(() => {
     if (!user) return;
-    let cancelled = false;
-    loadMasterResume(user.uid).then((saved) => {
-      if (cancelled) return;
+    const unsubscribe = subscribeMasterResume(user.uid, (saved) => {
       skipSave.current = true;
       setResume(saved);
       setReady(true);
     });
     return () => {
-      cancelled = true;
+      unsubscribe();
     };
   }, [user]);
 

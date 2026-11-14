@@ -14,7 +14,7 @@ import {
   X,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
-import { loadMasterResume } from "@/lib/resume/store";
+import { loadMasterResume, subscribeMasterResume } from "@/lib/resume/store";
 import { isEmptyResume } from "@/lib/resume/latex";
 import {
   matchJobDescriptionWithResume,
@@ -74,17 +74,15 @@ export default function OperationsPage() {
 
   useEffect(() => {
     if (!user) return;
-    let cancelled = false;
     clearStoredOperationsDraft(user.uid);
 
-    loadMasterResume(user.uid).then((loaded) => {
-      if (cancelled) return;
+    const unsubscribe = subscribeMasterResume(user.uid, (loaded) => {
       setResume(loaded);
       setResumeReady(true);
     });
 
     return () => {
-      cancelled = true;
+      unsubscribe();
     };
   }, [user]);
 

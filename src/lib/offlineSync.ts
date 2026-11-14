@@ -41,11 +41,27 @@ export interface PendingAgentsQueue {
   timestamp: string;
 }
 
+export interface PendingPreviewQueue {
+  type: "previewQueue";
+  uid: string;
+  data: string;
+  timestamp: string;
+}
+
+export interface PendingMasterResume {
+  type: "masterResume";
+  uid: string;
+  data: string;
+  timestamp: string;
+}
+
 export type PendingSyncItem =
   | PendingAppliedJob
   | PendingCandidate
   | PendingRole
-  | PendingAgentsQueue;
+  | PendingAgentsQueue
+  | PendingPreviewQueue
+  | PendingMasterResume;
 
 const OFFLINE_QUEUE_KEY = "hireme_offline_sync_queue";
 
@@ -114,6 +130,16 @@ export async function flushOfflineQueue(): Promise<void> {
         await set(ref(rtdb, `roles/${item.role.id}`), item.role);
       } else if (item.type === "agentsQueue") {
         await set(ref(rtdb, `agentsQueues/${item.uid}`), {
+          data: item.data,
+          updatedAt: item.timestamp,
+        });
+      } else if (item.type === "previewQueue") {
+        await set(ref(rtdb, `previewQueues/${item.uid}`), {
+          data: item.data,
+          updatedAt: item.timestamp,
+        });
+      } else if (item.type === "masterResume") {
+        await set(ref(rtdb, `masterResumes/${item.uid}`), {
           data: item.data,
           updatedAt: item.timestamp,
         });
