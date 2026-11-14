@@ -27,6 +27,15 @@ export interface PreviewQueueItem {
 const PREVIEW_QUEUE_KEY = (uidStr: string) => `hireme_preview_queue_${uidStr}`;
 const PREVIEW_QUEUE_GLOBAL_KEY = "hireme_preview_queue_global";
 
+const memoryPreviewQueue: Record<string, PreviewQueueItem[]> = {};
+
+export function getCachedPreviewQueue(uidStr: string): PreviewQueueItem[] {
+  if (uidStr && memoryPreviewQueue[uidStr] && memoryPreviewQueue[uidStr].length > 0) {
+    return memoryPreviewQueue[uidStr];
+  }
+  return loadPreviewQueue(uidStr);
+}
+
 function normalizeQueueItems(parsed: unknown): PreviewQueueItem[] {
   if (!Array.isArray(parsed)) return [];
   return parsed.map((raw) => {
@@ -139,7 +148,7 @@ export function subscribePreviewQueue(
   if (typeof window === "undefined" || !uidStr) return () => {};
 
   // Instant local cache paint for zero-flicker UI
-  const local = loadPreviewQueue(uidStr);
+  const local = getCachedPreviewQueue(uidStr);
   if (local.length > 0) {
     callback(local);
   }
@@ -163,6 +172,7 @@ export function subscribePreviewQueue(
               const unpushed = remoteItems.filter(
                 (item) => !item.pushedToAgentsAt && !pushedIds.has(item.id)
               );
+              memoryPreviewQueue[uidStr] = unpushed;
               if (typeof window !== "undefined") {
                 localStorage.setItem(PREVIEW_QUEUE_KEY(uidStr), JSON.stringify(unpushed));
                 localStorage.setItem(PREVIEW_QUEUE_GLOBAL_KEY, JSON.stringify(unpushed));
@@ -172,8 +182,13 @@ export function subscribePreviewQueue(
             }
           }
           if (!snap.exists()) {
-            const currentLocal = loadPreviewQueue(uidStr);
-            if (currentLocal.length === 0) {
+            const currentLocal = getCachedPreviewQueue(uidStr);
+            if (currentLocal.length > 0) {
+              // Automatically sync existing local items up to the cloud database!
+              savePreviewQueue(uidStr, currentLocal);
+              callback(currentLocal);
+            } else {
+              memoryPreviewQueue[uidStr] = [];
               callback([]);
             }
           }
@@ -192,12 +207,21 @@ export function subscribePreviewQueue(
 }
 
 export function savePreviewQueue(uidStr: string, items: PreviewQueueItem[]): void {
-  if (typeof window === "undefined") return;
+  if (typeof window === "undefined" || !uidStr) return;
+  memoryPreviewQueue[uidStr] = items;
   const serialized = JSON.stringify(items);
   const now = new Date().toISOString();
 
+  // Fast local storage cache
+  try {
+    localStorage.setItem(PREVIEW_QUEUE_KEY(uidStr), serialized);
+    localStorage.setItem(PREVIEW_QUEUE_GLOBAL_KEY, serialized);
+  } catch (e) {
+    console.warn("Failed to save preview queue to localStorage:", e);
+  }
+
   // If online and Firebase is configured, write directly
-  if (isOnline() && isFirebaseConfigured && uidStr) {
+  if (isOnline() && isFirebaseConfigured) {
     set(ref(rtdb, `previewQueues/${uidStr}`), {
       data: serialized,
       updatedAt: now,
@@ -210,7 +234,7 @@ export function savePreviewQueue(uidStr: string, items: PreviewQueueItem[]): voi
         timestamp: now,
       });
     });
-  } else if (uidStr) {
+  } else {
     // Offline mode: queue for upload when WiFi returns
     enqueueOfflineItem({
       type: "previewQueue",
@@ -218,16 +242,6 @@ export function savePreviewQueue(uidStr: string, items: PreviewQueueItem[]): voi
       data: serialized,
       timestamp: now,
     });
-  }
-
-  // Fast local storage cache
-  try {
-    if (uidStr) {
-      localStorage.setItem(PREVIEW_QUEUE_KEY(uidStr), serialized);
-    }
-    localStorage.setItem(PREVIEW_QUEUE_GLOBAL_KEY, serialized);
-  } catch (e) {
-    console.warn("Failed to save preview queue to localStorage:", e);
   }
 }
 
@@ -260,9 +274,10 @@ export function enqueuePreviewItem(
     applySkillsSwap: boolean;
     selectedSkillNames?: string[];
     customSkillCategoryByName?: Record<string, string>;
-  }
+  },
+  currentQueue?: PreviewQueueItem[]
 ): PreviewQueueItem {
-  const existing = loadPreviewQueue(uidStr);
+  const existing = currentQueue ?? getCachedPreviewQueue(uidStr);
   const resolvedTitle = inferJdTitle(
     params.roleName || "",
     params.jobDescription,
@@ -289,7 +304,7 @@ export function enqueuePreviewItem(
     selectedSkillNames: defaultSkillNames,
     customSkillCategoryByName: { ...(params.customSkillCategoryByName || {}) },
   };
-  const updated = [newItem, ...existing];
+  const updated = [newItem, ...existing.filter((i) => i.id !== newItem.id)];
   savePreviewQueue(uidStr, updated);
   return newItem;
 }
@@ -312,9 +327,10 @@ export function updatePreviewQueueItem(
       | "customSkillCategoryByName"
       | "pushedToAgentsAt"
     >
-  >
+  >,
+  currentQueue?: PreviewQueueItem[]
 ): PreviewQueueItem[] {
-  const existing = loadPreviewQueue(uidStr);
+  const existing = currentQueue ?? getCachedPreviewQueue(uidStr);
   const updated = existing.map((item) => {
     if (item.id !== itemId) return item;
     const syncedPatch =
@@ -327,8 +343,12 @@ export function updatePreviewQueueItem(
   return updated;
 }
 
-export function deletePreviewQueueItem(uidStr: string, itemId: string): PreviewQueueItem[] {
-  const existing = loadPreviewQueue(uidStr);
+export function deletePreviewQueueItem(
+  uidStr: string,
+  itemId: string,
+  currentQueue?: PreviewQueueItem[]
+): PreviewQueueItem[] {
+  const existing = currentQueue ?? getCachedPreviewQueue(uidStr);
   const updated = existing.filter((item) => item.id !== itemId);
   savePreviewQueue(uidStr, updated);
   return updated;

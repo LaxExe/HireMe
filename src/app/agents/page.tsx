@@ -77,19 +77,19 @@ export default function AgentsPage() {
   };
 
   const handleToggleSent = (entryId: string) => {
-    setEntries(toggleAgentSentStatus(user.uid, entryId));
+    setEntries(toggleAgentSentStatus(user.uid, entryId, entries));
   };
 
   const handleArchive = (entryId: string) => {
-    setEntries(archiveAgentEntry(user.uid, entryId));
+    setEntries(archiveAgentEntry(user.uid, entryId, entries));
   };
 
   const handleRestore = (entryId: string) => {
-    setEntries(unarchiveAgentEntry(user.uid, entryId));
+    setEntries(unarchiveAgentEntry(user.uid, entryId, entries));
   };
 
   const handleDelete = (entryId: string) => {
-    setEntries(deleteAgentEntry(user.uid, entryId));
+    setEntries(deleteAgentEntry(user.uid, entryId, entries));
   };
 
   return (

@@ -110,7 +110,7 @@ export default function PreviewPage() {
     >
   ) => {
     if (!activeItem) return;
-    const nextQueue = updatePreviewQueueItem(user.uid, activeItem.id, patch);
+    const nextQueue = updatePreviewQueueItem(user.uid, activeItem.id, patch, queue);
     setQueue(nextQueue);
   };
 
@@ -272,7 +272,7 @@ export default function PreviewPage() {
       delete next[slotId];
       return next;
     });
-    const nextQueue = deletePreviewQueueItem(user.uid, slotId);
+    const nextQueue = deletePreviewQueueItem(user.uid, slotId, queue);
     setQueue(nextQueue);
     if (selectedId === slotId || activeItem?.id === slotId) {
       setSelectedId(nextQueue[0]?.id ?? null);

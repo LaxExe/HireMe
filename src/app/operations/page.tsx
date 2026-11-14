@@ -28,7 +28,12 @@ import {
   PYLON_TEST_JD,
   type LarpAlignmentRun,
 } from "@/lib/resume/larpEngine";
-import { enqueuePreviewItem, loadPreviewQueue } from "@/lib/resume/previewQueue";
+import {
+  enqueuePreviewItem,
+  loadPreviewQueue,
+  subscribePreviewQueue,
+  type PreviewQueueItem,
+} from "@/lib/resume/previewQueue";
 import { parseMarkup } from "@/lib/resume/utils";
 import type { MasterResume } from "@/lib/resume/types";
 
@@ -53,6 +58,7 @@ export default function OperationsPage() {
   const [editingBulletId, setEditingBulletId] = useState<string | null>(null);
   const [editingMalleableOptId, setEditingMalleableOptId] = useState<string | null>(null);
   const [applySkillsSwap, setApplySkillsSwap] = useState(true);
+  const [previewQueue, setPreviewQueue] = useState<PreviewQueueItem[]>([]);
   const [queuedSlotBanner, setQueuedSlotBanner] = useState<{
     count: number;
     latestTitle: string;
@@ -76,13 +82,18 @@ export default function OperationsPage() {
     if (!user) return;
     clearStoredOperationsDraft(user.uid);
 
-    const unsubscribe = subscribeMasterResume(user.uid, (loaded) => {
+    const unsubMaster = subscribeMasterResume(user.uid, (loaded) => {
       setResume(loaded);
       setResumeReady(true);
     });
 
+    const unsubPreview = subscribePreviewQueue(user.uid, (items) => {
+      setPreviewQueue(items);
+    });
+
     return () => {
-      unsubscribe();
+      unsubMaster();
+      unsubPreview();
     };
   }, [user]);
 
@@ -207,21 +218,25 @@ export default function OperationsPage() {
 
   const handleQueueIntoPreviewSlot = () => {
     if (!resume || !larpRun) return;
-    const item = enqueuePreviewItem(user.uid, {
-      roleName,
-      roleUrl,
-      jobDescription,
-      baseResume: resume,
-      larpRun,
-      acceptedBulletIds: Array.from(acceptedBullets),
-      acceptedMalleableIds: Array.from(acceptedMalleable),
-      selectedMalleableOptionBySlotId: selectedMalleableOption,
-      applySkillsSwap,
-      selectedSkillNames: applySkillsSwap
-        ? larpRun.skillSwaps.flatMap((s) => s.added)
-        : [],
-    });
-    const totalCount = loadPreviewQueue(user.uid).length;
+    const item = enqueuePreviewItem(
+      user.uid,
+      {
+        roleName,
+        roleUrl,
+        jobDescription,
+        baseResume: resume,
+        larpRun,
+        acceptedBulletIds: Array.from(acceptedBullets),
+        acceptedMalleableIds: Array.from(acceptedMalleable),
+        selectedMalleableOptionBySlotId: selectedMalleableOption,
+        applySkillsSwap,
+        selectedSkillNames: applySkillsSwap
+          ? larpRun.skillSwaps.flatMap((s) => s.added)
+          : [],
+      },
+      previewQueue
+    );
+    const totalCount = previewQueue.length + 1;
 
     clearStoredOperationsDraft(user.uid);
     setRoleName("");

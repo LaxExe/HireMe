@@ -21,6 +21,15 @@ export interface AgentResumeEntry {
 const AGENTS_QUEUE_KEY = (uidStr: string) => `hireme_agents_queue_${uidStr}`;
 const AGENTS_QUEUE_GLOBAL_KEY = "hireme_agents_queue_global";
 
+const memoryAgentsQueue: Record<string, AgentResumeEntry[]> = {};
+
+export function getCachedAgentsQueue(uidStr: string): AgentResumeEntry[] {
+  if (uidStr && memoryAgentsQueue[uidStr] && memoryAgentsQueue[uidStr].length > 0) {
+    return memoryAgentsQueue[uidStr];
+  }
+  return loadAgentsQueue(uidStr);
+}
+
 export function buildResumePdfFileName(roleName: string, resumeName?: string): string {
   const cleanPart = (val: string, fallback: string) =>
     (val || fallback)
@@ -110,7 +119,7 @@ export function subscribeAgentsQueue(
   if (typeof window === "undefined" || !uidStr) return () => {};
 
   // Instant local cache paint for responsive UI
-  const local = loadAgentsQueue(uidStr);
+  const local = getCachedAgentsQueue(uidStr);
   if (local.length > 0) {
     callback(local);
   }
@@ -127,6 +136,7 @@ export function subscribeAgentsQueue(
             const data = val?.data;
             if (typeof data === "string") {
               const remoteItems = normalizeAgentEntries(JSON.parse(data));
+              memoryAgentsQueue[uidStr] = remoteItems;
               if (typeof window !== "undefined") {
                 localStorage.setItem(AGENTS_QUEUE_KEY(uidStr), JSON.stringify(remoteItems));
                 localStorage.setItem(AGENTS_QUEUE_GLOBAL_KEY, JSON.stringify(remoteItems));
@@ -136,8 +146,13 @@ export function subscribeAgentsQueue(
             }
           }
           if (!snap.exists()) {
-            const currentLocal = loadAgentsQueue(uidStr);
-            if (currentLocal.length === 0) {
+            const currentLocal = getCachedAgentsQueue(uidStr);
+            if (currentLocal.length > 0) {
+              // Automatically sync existing local items up to the cloud database!
+              saveAgentsQueue(uidStr, currentLocal);
+              callback(currentLocal);
+            } else {
+              memoryAgentsQueue[uidStr] = [];
               callback([]);
             }
           }
@@ -156,12 +171,21 @@ export function subscribeAgentsQueue(
 }
 
 export function saveAgentsQueue(uidStr: string, items: AgentResumeEntry[]): void {
-  if (typeof window === "undefined") return;
+  if (typeof window === "undefined" || !uidStr) return;
+  memoryAgentsQueue[uidStr] = items;
   const serialized = JSON.stringify(items);
   const now = new Date().toISOString();
 
+  // Fast local storage cache
+  try {
+    localStorage.setItem(AGENTS_QUEUE_KEY(uidStr), serialized);
+    localStorage.setItem(AGENTS_QUEUE_GLOBAL_KEY, serialized);
+  } catch (e) {
+    console.warn("Local storage cache warning:", e);
+  }
+
   // If online and Firebase is configured, write directly to the database
-  if (isOnline() && isFirebaseConfigured && uidStr) {
+  if (isOnline() && isFirebaseConfigured) {
     set(ref(rtdb, `agentsQueues/${uidStr}`), {
       data: serialized,
       updatedAt: now,
@@ -182,16 +206,6 @@ export function saveAgentsQueue(uidStr: string, items: AgentResumeEntry[]): void
       data: serialized,
       timestamp: now,
     });
-  }
-
-  // Also maintain fast local in-memory/cache for responsive UI
-  try {
-    if (uidStr) {
-      localStorage.setItem(AGENTS_QUEUE_KEY(uidStr), serialized);
-    }
-    localStorage.setItem(AGENTS_QUEUE_GLOBAL_KEY, serialized);
-  } catch (e) {
-    console.warn("Local storage cache warning:", e);
   }
 }
 
@@ -247,9 +261,10 @@ export function pushResumeToAgents(
     roleUrl: string;
     tailoredResume: MasterResume;
     fileName?: string;
-  }
+  },
+  currentEntries?: AgentResumeEntry[]
 ): AgentResumeEntry {
-  const existing = loadAgentsQueue(uidStr);
+  const existing = currentEntries ?? getCachedAgentsQueue(uidStr);
   const roleName = params.roleName.trim() || "Software Engineer Role";
   const resolvedFileName =
     params.fileName ||
@@ -269,14 +284,18 @@ export function pushResumeToAgents(
     createdAt: new Date().toISOString(),
   };
 
-  const updated = [newEntry, ...existing];
+  const updated = [newEntry, ...existing.filter((e) => e.id !== newEntry.id)];
   saveAgentsQueue(uidStr, updated);
   logAppliedJobToFirebase(roleName, params.roleUrl, "queued");
   return newEntry;
 }
 
-export function toggleAgentSentStatus(uidStr: string, entryId: string): AgentResumeEntry[] {
-  const existing = loadAgentsQueue(uidStr);
+export function toggleAgentSentStatus(
+  uidStr: string,
+  entryId: string,
+  currentEntries?: AgentResumeEntry[]
+): AgentResumeEntry[] {
+  const existing = currentEntries ?? getCachedAgentsQueue(uidStr);
   const now = new Date().toISOString();
   let toggledEntry: AgentResumeEntry | null = null;
   const updated = existing.map((entry) => {
@@ -302,8 +321,12 @@ export function toggleAgentSentStatus(uidStr: string, entryId: string): AgentRes
   return updated;
 }
 
-export function archiveAgentEntry(uidStr: string, entryId: string): AgentResumeEntry[] {
-  const existing = loadAgentsQueue(uidStr);
+export function archiveAgentEntry(
+  uidStr: string,
+  entryId: string,
+  currentEntries?: AgentResumeEntry[]
+): AgentResumeEntry[] {
+  const existing = currentEntries ?? getCachedAgentsQueue(uidStr);
   const now = new Date().toISOString();
   const updated = existing.map((entry) => {
     if (entry.id !== entryId || !entry.sentToCompany) return entry;
@@ -317,8 +340,12 @@ export function archiveAgentEntry(uidStr: string, entryId: string): AgentResumeE
   return updated;
 }
 
-export function unarchiveAgentEntry(uidStr: string, entryId: string): AgentResumeEntry[] {
-  const existing = loadAgentsQueue(uidStr);
+export function unarchiveAgentEntry(
+  uidStr: string,
+  entryId: string,
+  currentEntries?: AgentResumeEntry[]
+): AgentResumeEntry[] {
+  const existing = currentEntries ?? getCachedAgentsQueue(uidStr);
   const updated = existing.map((entry) =>
     entry.id === entryId
       ? { ...entry, archived: false, archivedAt: undefined }
@@ -328,8 +355,12 @@ export function unarchiveAgentEntry(uidStr: string, entryId: string): AgentResum
   return updated;
 }
 
-export function deleteAgentEntry(uidStr: string, entryId: string): AgentResumeEntry[] {
-  const existing = loadAgentsQueue(uidStr);
+export function deleteAgentEntry(
+  uidStr: string,
+  entryId: string,
+  currentEntries?: AgentResumeEntry[]
+): AgentResumeEntry[] {
+  const existing = currentEntries ?? getCachedAgentsQueue(uidStr);
   const updated = existing.filter((entry) => entry.id !== entryId);
   saveAgentsQueue(uidStr, updated);
   return updated;

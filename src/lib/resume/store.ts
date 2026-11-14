@@ -79,7 +79,10 @@ export function subscribeMasterResume(
           }
           if (!snap.exists()) {
             const currentLocal = readLocal(uid);
-            if (!currentLocal) {
+            if (currentLocal) {
+              saveMasterResume(uid, currentLocal);
+              callback(currentLocal);
+            } else {
               callback(null);
             }
           }
