@@ -1359,7 +1359,8 @@ function selectBestContainerForMalleableLines(resume: MasterResume): {
 export function synthesizeMalleableOneLineBullets(
   resume: MasterResume,
   tiers: LarpTierClassification,
-  malleableCount: number
+  malleableCount: number,
+  variantOffset = 0
 ): MalleableSynthesizedBullet[] {
   const count = Math.max(0, Math.min(6, Math.round(malleableCount)));
   if (count === 0) return [];
@@ -1625,13 +1626,22 @@ export function synthesizeMalleableOneLineBullets(
       "Completely grounded in your real language stack—just basic features, testing, and team delivery.",
   });
 
+  const rotatedTemplates =
+    candidateTemplates.length > 0
+      ? candidateTemplates
+          .slice(variantOffset % candidateTemplates.length)
+          .concat(candidateTemplates.slice(0, variantOffset % candidateTemplates.length))
+      : candidateTemplates;
+
   const results: MalleableSynthesizedBullet[] = [];
 
-  for (let i = 0; i < Math.min(count, candidateTemplates.length); i++) {
-    const tpl = candidateTemplates[i];
+  for (let i = 0; i < Math.min(count, rotatedTemplates.length); i++) {
+    const tpl = rotatedTemplates[i];
     const builtOptions: MalleableBulletOption[] = tpl.optionTemplates.map((optTpl, optIdx) => {
-      let chosen = fitBulletToCalibratedLineArea(optTpl.variants[0], cal);
-      for (const v of optTpl.variants) {
+      const preferredVariantIdx = variantOffset % optTpl.variants.length;
+      let chosen = fitBulletToCalibratedLineArea(optTpl.variants[preferredVariantIdx], cal);
+      for (let vIdx = 0; vIdx < optTpl.variants.length; vIdx++) {
+        const v = optTpl.variants[(preferredVariantIdx + vIdx) % optTpl.variants.length];
         const fitted = fitBulletToCalibratedLineArea(v, cal);
         const len = plainText(fitted).trim().length;
         if (len >= minOneLineChars && len <= oneLineMax) {
@@ -1804,7 +1814,8 @@ export interface LarpAlignmentRun {
 
 export function runLarpAlignmentPipeline(
   jobDescription: string,
-  resume: MasterResume
+  resume: MasterResume,
+  variantOffset = 0
 ): LarpAlignmentRun {
   const tiers = classifyJobDescriptionTiers(jobDescription, resume);
   const { updatedCategories, changes: skillSwaps } = smartSwapSkillsSection(
@@ -1887,14 +1898,14 @@ export function runLarpAlignmentPipeline(
   ];
 
   for (const keyword of centralizedTargetKeywords) {
-    let bestProposal: {
+    const validProposals: Array<{
       slot: CandidateBulletSlot;
       mutatedMarkup: string;
       reason: string;
       score: number;
       budget: LineBudgetCheck;
       wordStats: WordReframeStats;
-    } | null = null;
+    }> = [];
 
     for (const slot of slots) {
       if (usedBulletIds.has(slot.bullet.id)) continue;
@@ -1919,19 +1930,21 @@ export function runLarpAlignmentPipeline(
       const totalScore =
         attempt.fitScore + slot.defensibilityBonus + greenBonus + Math.min(8, slot.charSlack / 6);
 
-      if (!bestProposal || totalScore > bestProposal.score) {
-        bestProposal = {
-          slot,
-          mutatedMarkup: fittedMarkup,
-          reason: attempt.reason,
-          score: totalScore,
-          budget,
-          wordStats,
-        };
-      }
+      validProposals.push({
+        slot,
+        mutatedMarkup: fittedMarkup,
+        reason: attempt.reason,
+        score: totalScore,
+        budget,
+        wordStats,
+      });
     }
 
-    if (bestProposal) {
+    if (validProposals.length > 0) {
+      validProposals.sort((a, b) => b.score - a.score);
+      const chosenIdx = variantOffset % validProposals.length;
+      const bestProposal = validProposals[chosenIdx];
+
       usedBulletIds.add(bestProposal.slot.bullet.id);
       const origLatex = `\\item ${markupToLatex(bestProposal.slot.bullet.text)}`;
       const candLatex = `\\item ${markupToLatex(bestProposal.mutatedMarkup)}`;
@@ -1956,7 +1969,7 @@ export function runLarpAlignmentPipeline(
   }
 
   const malleableCount = cal.malleableLines ?? 1;
-  const malleableBullets = synthesizeMalleableOneLineBullets(resume, tiers, malleableCount);
+  const malleableBullets = synthesizeMalleableOneLineBullets(resume, tiers, malleableCount, variantOffset);
   const aiRecommendation = evaluateBelievabilityAndRecommend(malleableBullets, bulletProposals);
 
   const allMutatedText = [

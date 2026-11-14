@@ -15,6 +15,9 @@ import {
   Check,
   Plus,
   X,
+  RotateCw,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import {
@@ -29,6 +32,7 @@ import {
   applySelectedSkillsToResumeCategories,
   evaluateBelievabilityAndRecommend,
   getAvailableSkillCandidates,
+  runLarpAlignmentPipeline,
   updateBulletProposalWithCustomMarkup,
   updateMalleableOptionWithCustomMarkup,
 } from "@/lib/resume/larpEngine";
@@ -48,6 +52,9 @@ export default function PreviewPage() {
   const [visualizingId, setVisualizingId] = useState<string | null>(null);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [customSkillInput, setCustomSkillInput] = useState("");
+  const [variantOffsetsBySlot, setVariantOffsetsBySlot] = useState<Record<string, number>>({});
+  const [showJdDrawer, setShowJdDrawer] = useState(false);
+  const [regeneratingId, setRegeneratingId] = useState<string | null>(null);
   const [pushedAgentBanner, setPushedAgentBanner] = useState<{
     slotId: string;
     fileName: string;
@@ -210,6 +217,59 @@ export default function PreviewPage() {
         acceptedBulletIds: [top.topPickId],
       });
     }
+  };
+
+  const handleRegenerateOptions = () => {
+    if (!activeItem) return;
+    setRegeneratingId(activeItem.id);
+    const currentOffset = variantOffsetsBySlot[activeItem.id] || 0;
+    const nextOffset = currentOffset + 1;
+    setVariantOffsetsBySlot((prev) => ({ ...prev, [activeItem.id]: nextOffset }));
+
+    const freshRun = runLarpAlignmentPipeline(
+      activeItem.jobDescription,
+      activeItem.baseResume,
+      nextOffset
+    );
+
+    const topPick = freshRun.aiRecommendation?.topPickId;
+    const nextAcceptedBullets =
+      topPick && freshRun.bulletProposals.some((b) => b.bulletId === topPick)
+        ? [topPick]
+        : freshRun.bulletProposals.length > 0
+        ? [freshRun.bulletProposals[0].bulletId]
+        : [];
+
+    const nextAcceptedMalleable =
+      topPick && freshRun.malleableBullets.some((m) => m.id === topPick)
+        ? [topPick]
+        : freshRun.malleableBullets.length > 0
+        ? [freshRun.malleableBullets[0].id]
+        : [];
+
+    const nextSelectedMalleableOpt = freshRun.malleableBullets.reduce((acc, m) => {
+      acc[m.id] = m.options[0]?.id;
+      return acc;
+    }, {} as Record<string, string>);
+
+    updateActiveItem({
+      larpRun: freshRun,
+      acceptedBulletIds: nextAcceptedBullets,
+      acceptedMalleableIds: nextAcceptedMalleable,
+      selectedMalleableOptionBySlotId: nextSelectedMalleableOpt,
+    });
+
+    setVisualizedUrlBySlot((prev) => {
+      if (prev[activeItem.id]) {
+        URL.revokeObjectURL(prev[activeItem.id]);
+        const next = { ...prev };
+        delete next[activeItem.id];
+        return next;
+      }
+      return prev;
+    });
+
+    setTimeout(() => setRegeneratingId(null), 350);
   };
 
   const handleDeleteSlot = (slotId: string) => {
@@ -540,6 +600,27 @@ export default function PreviewPage() {
 
                   <button
                     type="button"
+                    disabled={regeneratingId === activeItem.id}
+                    onClick={handleRegenerateOptions}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-neutral-700 bg-[#fafafa] hover:bg-neutral-100 border border-[#ebebeb] rounded-full active:scale-95 transition-all cursor-pointer disabled:opacity-50"
+                    title="Regenerate alternative bullet phrasings and malleable options"
+                  >
+                    <RotateCw
+                      className={`w-3.5 h-3.5 ${
+                        regeneratingId === activeItem.id
+                          ? "animate-spin text-neutral-900"
+                          : "text-neutral-500"
+                      }`}
+                    />
+                    <span>
+                      {regeneratingId === activeItem.id
+                        ? "Regenerating..."
+                        : "Regenerate Options"}
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
                     disabled={visualizingId === activeItem.id}
                     onClick={() => handleVisualizeSlot(activeItem)}
                     className="inline-flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium text-white bg-neutral-900 hover:bg-neutral-800 rounded-full disabled:opacity-40 shadow-subtle active:scale-95 transition-all cursor-pointer"
@@ -570,6 +651,106 @@ export default function PreviewPage() {
                     <span>Download</span>
                   </button>
                 </div>
+              </div>
+
+              {/* Job Description & Extracted Main Skills Banner */}
+              <div className="rounded-xl border border-[#ebebeb] bg-[#fafafa] p-4 space-y-3">
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-mono text-[10px] uppercase tracking-wider text-neutral-500 font-semibold">
+                      Extracted Job Skills
+                    </span>
+                    <span className="font-mono text-[10px] px-2 py-0.5 rounded-full bg-white border border-[#ebebeb] text-neutral-600">
+                      {activeItem.larpRun.tiers.tier_1_framing.length +
+                        activeItem.larpRun.tiers.tier_0_workflow.length +
+                        activeItem.larpRun.tiers.matched.length}{" "}
+                      signals
+                    </span>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setShowJdDrawer((prev) => !prev)}
+                    className="inline-flex items-center gap-1.5 font-mono text-[11px] text-neutral-700 hover:text-neutral-900 bg-white hover:bg-neutral-50 border border-[#ebebeb] px-2.5 py-1 rounded-md cursor-pointer transition-colors shadow-2xs"
+                  >
+                    <FileText className="w-3.5 h-3.5 text-neutral-500" />
+                    <span>{showJdDrawer ? "Hide Job Description" : "View Job Description"}</span>
+                    {showJdDrawer ? (
+                      <ChevronUp className="w-3 h-3 text-neutral-400" />
+                    ) : (
+                      <ChevronDown className="w-3 h-3 text-neutral-400" />
+                    )}
+                  </button>
+                </div>
+
+                {/* Badges for Framing Tech, Workflow Tools, and Matched Stack */}
+                <div className="flex flex-wrap gap-2.5 items-center">
+                  {activeItem.larpRun.tiers.tier_1_framing.length > 0 && (
+                    <div className="flex items-center gap-1 flex-wrap">
+                      <span className="font-mono text-[10px] text-neutral-400 mr-0.5">
+                        Target Tech:
+                      </span>
+                      {activeItem.larpRun.tiers.tier_1_framing.map((skill) => (
+                        <span
+                          key={skill}
+                          className="font-mono text-[11px] px-2 py-0.5 rounded-md bg-blue-50 border border-blue-200 text-blue-700 font-medium"
+                        >
+                          {skill}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+
+                  {activeItem.larpRun.tiers.tier_0_workflow.length > 0 && (
+                    <div className="flex items-center gap-1 flex-wrap">
+                      <span className="font-mono text-[10px] text-neutral-400 mr-0.5">
+                        Workflow & PM:
+                      </span>
+                      {activeItem.larpRun.tiers.tier_0_workflow.map((tool) => (
+                        <span
+                          key={tool}
+                          className="font-mono text-[11px] px-2 py-0.5 rounded-md bg-purple-50 border border-purple-200 text-purple-700 font-medium"
+                        >
+                          {tool}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+
+                  {activeItem.larpRun.tiers.matched.length > 0 && (
+                    <div className="flex items-center gap-1 flex-wrap">
+                      <span className="font-mono text-[10px] text-neutral-400 mr-0.5">
+                        Matched Stack:
+                      </span>
+                      {activeItem.larpRun.tiers.matched.slice(0, 6).map((skill) => (
+                        <span
+                          key={skill}
+                          className="font-mono text-[11px] px-2 py-0.5 rounded-md bg-emerald-50 border border-emerald-200 text-emerald-700"
+                        >
+                          {skill}
+                        </span>
+                      ))}
+                      {activeItem.larpRun.tiers.matched.length > 6 && (
+                        <span className="font-mono text-[10px] text-neutral-400">
+                          +{activeItem.larpRun.tiers.matched.length - 6} more
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* Expandable Raw Job Description */}
+                {showJdDrawer && (
+                  <div className="pt-2 border-t border-[#ebebeb] space-y-1.5 animate-fadeIn">
+                    <div className="flex items-center justify-between text-[11px] font-mono text-neutral-500">
+                      <span>Job Description Text</span>
+                      <span>{activeItem.jobDescription.length} characters</span>
+                    </div>
+                    <div className="max-h-64 overflow-y-auto rounded-lg border border-[#ebebeb] bg-white p-3 font-mono text-[11px] text-neutral-700 leading-relaxed whitespace-pre-wrap selection:bg-neutral-200">
+                      {activeItem.jobDescription || "No job description text provided."}
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* 1. Independent Skills Section Additions */}
