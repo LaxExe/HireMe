@@ -20,12 +20,20 @@ export interface Job {
   isLeadership?: boolean;
 }
 
+export interface ProjectLink {
+  id: string;
+  label: string;
+  url: string;
+}
+
 export interface Project {
   id: string;
   name: string;
   url: string;
   /** Preserved FontAwesome icon macro from LaTeX, e.g. `\faGithub` or `\faLink`. */
   linkIcon?: string;
+  /** Additional links for the project (e.g. GitHub, Write-up, Demo). */
+  links?: ProjectLink[];
   techStack: string[];
   meta: string;
   bullets: Bullet[];
@@ -34,6 +42,8 @@ export interface Project {
 export interface Education {
   id: string;
   institution: string;
+  /** Optional link for the institution website. */
+  url?: string;
   location: string;
   degree: string;
   dates: string;
@@ -118,6 +128,7 @@ export interface ResumeFormat {
     showIcons: boolean;
     underlineLinks: boolean;
     separator: "cdot" | "bar" | "bullet";
+    useResumeLinkMacro?: boolean;
   };
   sectionStyle: {
     macroName?: string;
@@ -225,8 +236,10 @@ export interface MasterResume {
   sections?: ResumeSectionKey[];
   /** Extracted formatting and layout style from the uploaded LaTeX file. */
   format?: ResumeFormat;
-  /** Original uploaded LaTeX source for reference/reconstruction. */
+  /** Original uploaded or generated LaTeX source for reference/reconstruction. */
   rawLatex?: string;
+  /** ISO timestamp of when the LaTeX document was compiled or reconstructed. */
+  latexGeneratedAt?: string;
   contact: Contact;
   education: Education[];
   skills: SkillCategory[];

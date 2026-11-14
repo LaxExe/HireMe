@@ -122,6 +122,7 @@ export function ContactSection({
 
 const eduFields = (e?: Education) => [
   { key: "institution", label: "Institution", value: e?.institution ?? "", required: true, wide: true },
+  { key: "url", label: "School Link", value: e?.url ?? "", mono: true, wide: true },
   { key: "degree", label: "Degree", value: e?.degree ?? "", wide: true },
   { key: "location", label: "Location", value: e?.location ?? "" },
   { key: "dates", label: "Dates", value: e?.dates ?? "", mono: true },
@@ -157,7 +158,20 @@ function EducationRow({
       className="scroll-mt-20 bg-white rounded-xl border border-[#ebebeb] shadow-subtle px-4 py-3.5 flex items-start justify-between gap-4"
     >
       <div className="min-w-0">
-        <h3 className="text-sm font-semibold tracking-tight text-neutral-900">{item.institution}</h3>
+        <h3 className="text-sm font-semibold tracking-tight text-neutral-900">
+          {item.url ? (
+            <a
+              href={item.url.startsWith("http") ? item.url : `https://${item.url}`}
+              target="_blank"
+              rel="noreferrer"
+              className="text-neutral-900 hover:underline decoration-[#ebebeb] underline-offset-2"
+            >
+              {item.institution}
+            </a>
+          ) : (
+            item.institution
+          )}
+        </h3>
         <p className="text-xs text-neutral-500 mt-0.5">
           {item.degree}
           {item.location && <span> · {item.location}</span>}
@@ -220,6 +234,7 @@ export function EducationSection({
               {
                 id: uid("e"),
                 institution: v.institution,
+                url: v.url || undefined,
                 degree: v.degree,
                 location: v.location,
                 dates: v.dates,

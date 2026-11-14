@@ -39,6 +39,7 @@ function ProjectCard({
   onDelete: () => void;
 }) {
   const [editing, setEditing] = useState(false);
+  const [addingLink, setAddingLink] = useState(false);
 
   if (editing) {
     return (
@@ -86,20 +87,22 @@ function ProjectCard({
             >
               <GripVertical className="w-4 h-4" />
             </span>
-            <h3 className="text-sm font-semibold tracking-tight text-neutral-900 min-w-0">
-              {project.url ? (
-                <a
-                  href={project.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="hover:underline decoration-[#ebebeb] underline-offset-2"
-                >
-                  {project.name}
-                </a>
-              ) : (
-                project.name
-              )}
-            </h3>
+            <div className="min-w-0">
+              <h3 className="text-sm font-semibold tracking-tight text-neutral-900 min-w-0">
+                {project.url ? (
+                  <a
+                    href={project.url.startsWith("http") ? project.url : `https://${project.url}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="hover:underline decoration-[#ebebeb] underline-offset-2"
+                  >
+                    {project.name}
+                  </a>
+                ) : (
+                  project.name
+                )}
+              </h3>
+            </div>
           </div>
           <div className="flex items-center gap-1 flex-shrink-0">
             {project.meta && (
@@ -121,6 +124,63 @@ function ProjectCard({
             </button>
           </div>
         </div>
+
+        <div className="flex flex-wrap items-center gap-1.5 pl-6">
+          {project.links &&
+            project.links.map((l) => (
+              <Chip
+                key={l.id}
+                variant="skill"
+                onRemove={() =>
+                  onChange({
+                    ...project,
+                    links: project.links?.filter((x) => x.id !== l.id),
+                  })
+                }
+              >
+                <a
+                  href={l.url.startsWith("http") ? l.url : `https://${l.url}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="hover:underline font-mono text-[11px]"
+                >
+                  {l.label}
+                </a>
+              </Chip>
+            ))}
+          <button
+            type="button"
+            onClick={() => setAddingLink(true)}
+            className="inline-flex items-center gap-1 text-[11px] leading-none px-2 py-1 rounded-full border border-dashed border-[#d4d4d4] text-neutral-500 hover:text-neutral-900 hover:border-neutral-900 transition-colors active:scale-95 cursor-pointer"
+          >
+            <Plus className="w-3 h-3" />
+            <span>Link</span>
+          </button>
+        </div>
+
+        {addingLink && (
+          <div className="pl-6 pt-1">
+            <FieldEditor
+              fields={[
+                { key: "label", label: "Label (e.g. GitHub, Write-up, Demo)", value: "", required: true },
+                { key: "url", label: "URL", value: "", mono: true, required: true },
+              ]}
+              submitLabel="Add Link"
+              onCancel={() => setAddingLink(false)}
+              onSave={(v) => {
+                onChange({
+                  ...project,
+                  links: [
+                    ...(project.links || []),
+                    { id: uid("l"), label: v.label, url: v.url },
+                  ],
+                });
+                setAddingLink(false);
+              }}
+            />
+          </div>
+        )}
+
         {project.techStack.length > 0 && (
           <div className="flex flex-wrap gap-1.5 pl-6">
             {project.techStack.map((t) => (

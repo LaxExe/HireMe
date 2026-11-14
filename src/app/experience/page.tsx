@@ -108,6 +108,9 @@ export default function ExperiencePage() {
     setExporting(true);
     try {
       await downloadResumePdf(resume, exportName || "Resume");
+      if (user) {
+        saveMasterResume(user.uid, resume);
+      }
       setExportModalOpen(false);
     } finally {
       setExporting(false);
@@ -262,7 +265,10 @@ export default function ExperiencePage() {
                 <button
                   type="button"
                   disabled={exporting}
-                  onClick={() => downloadResumeTex(resume, exportName || "Resume")}
+                  onClick={() => {
+                    downloadResumeTex(resume, exportName || "Resume");
+                    if (user) saveMasterResume(user.uid, resume);
+                  }}
                   className="px-3 py-1.5 text-xs font-mono text-neutral-600 hover:text-neutral-900 bg-[#fafafa] hover:bg-neutral-100 border border-[#ebebeb] rounded-full transition-colors active:scale-95 cursor-pointer disabled:opacity-40"
                 >
                   .tex
