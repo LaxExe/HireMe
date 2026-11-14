@@ -347,12 +347,45 @@ function wrapTokens(tokens: WordToken[], maxWidthPt: number): WordToken[][] {
 }
 
 function markupToSpans(markup: string, baseGray = 0.08): StyledSpan[] {
-  const segments = parseMarkup(markup);
-  return segments.map((seg) => ({
-    text: seg.text,
-    font: seg.bold ? "bold" : "regular",
-    gray: baseGray,
-  }));
+  const links: { label: string; url: string }[] = [];
+  const tokenized = markup.replace(
+    /\[([^\]]+)\]\((https?:\/\/[^\s)]+|mailto:[^\s)]+|[^\s)]+)\)/g,
+    (_, label, url) => {
+      const idx = links.length;
+      links.push({ label, url });
+      return `\u0000LINK_${idx}\u0000`;
+    }
+  );
+
+  const segments = parseMarkup(tokenized);
+  const spans: StyledSpan[] = [];
+
+  for (const seg of segments) {
+    const tokens = seg.text.split(/(\u0000LINK_\d+\u0000)/g);
+    for (const t of tokens) {
+      const match = t.match(/\u0000LINK_(\d+)\u0000/);
+      if (match) {
+        const link = links[Number(match[1])];
+        const isBold = seg.bold || /\*\*[^*]+\*\*/.test(link.label);
+        const cleanLabel = link.label.replace(/\*\*/g, "");
+        spans.push({
+          text: cleanLabel,
+          font: isBold ? "bold" : "regular",
+          gray: baseGray,
+          underline: true,
+          linkUrl: link.url,
+        });
+      } else if (t) {
+        spans.push({
+          text: t,
+          font: seg.bold ? "bold" : "regular",
+          gray: baseGray,
+        });
+      }
+    }
+  }
+
+  return spans;
 }
 
 /**
@@ -720,6 +753,35 @@ export function generateResumePdfBytes(resume: MasterResume): Uint8Array {
           ],
           edu.dates
         );
+        if (edu.relevantCoursework) {
+          const cwSpans = [
+            { text: "Relevant Coursework: ", font: "bold" as const, gray: bodyGray },
+            ...markupToSpans(edu.relevantCoursework, bodyGray),
+          ];
+          const tokens = tokenizeSpans(cwSpans, smallPt);
+          const lines = wrapTokens(tokens, contentWidth);
+          for (const line of lines) {
+            ensureSpace(smallPt * lineFactor + 2);
+            cursorY -= smallPt * lineFactor;
+            drawTokenLine(line, marginLeft, cursorY, smallPt);
+          }
+        }
+        if (edu.other) {
+          const hasPrefix = /^(Awards?|Honours?|Honors?|Scholarships?|Other)\s*:\s*/i.exec(edu.other);
+          const prefix = hasPrefix ? hasPrefix[1] : "Awards";
+          const cleanOther = hasPrefix ? edu.other.slice(hasPrefix[0].length) : edu.other;
+          const otherSpans = [
+            { text: `${prefix}: `, font: "bold" as const, gray: bodyGray },
+            ...markupToSpans(cleanOther, bodyGray),
+          ];
+          const tokens = tokenizeSpans(otherSpans, smallPt);
+          const lines = wrapTokens(tokens, contentWidth);
+          for (const line of lines) {
+            ensureSpace(smallPt * lineFactor + 2);
+            cursorY -= smallPt * lineFactor;
+            drawTokenLine(line, marginLeft, cursorY, smallPt);
+          }
+        }
         if (edu.bullets && edu.bullets.length > 0) {
           drawBullets(edu.bullets);
         }

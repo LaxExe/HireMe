@@ -47,6 +47,10 @@ export interface Education {
   location: string;
   degree: string;
   dates: string;
+  /** Optional relevant coursework text. */
+  relevantCoursework?: string;
+  /** Optional other info (awards, scholarships, honors attached to education). */
+  other?: string;
   bullets?: Bullet[];
 }
 

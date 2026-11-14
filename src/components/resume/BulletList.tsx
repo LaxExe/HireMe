@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
-import { GripVertical, Pencil, Plus, Trash2 } from "lucide-react";
+import { GripVertical, Pencil, Plus, Trash2, Link as LinkIcon, Bold as BoldIcon } from "lucide-react";
 import type { Bullet } from "@/lib/resume/types";
 import { bulletFit, makeBullet, parseMarkup, analyzeBullet } from "@/lib/resume/utils";
 import { useCalibration } from "@/context/CalibrationContext";
@@ -90,6 +90,55 @@ function FitMeter({ text, detailed = false }: { text: string; detailed?: boolean
   );
 }
 
+interface BulletSegment {
+  type: "text" | "link";
+  text?: string;
+  label?: string;
+  url?: string;
+  bold: boolean;
+}
+
+function parseBulletSegments(markup: string): BulletSegment[] {
+  const links: { label: string; url: string }[] = [];
+  const withLinkTokens = markup.replace(
+    /\[([^\]]+)\]\((https?:\/\/[^\s)]+|mailto:[^\s)]+|[^\s)]+)\)/g,
+    (_, label, url) => {
+      const idx = links.length;
+      links.push({ label, url });
+      return `\u0000LINK_${idx}\u0000`;
+    }
+  );
+
+  const segments: BulletSegment[] = [];
+  const parts = withLinkTokens.split("**");
+  parts.forEach((part, i) => {
+    const bold = i % 2 === 1;
+    const tokens = part.split(/(\u0000LINK_\d+\u0000)/g);
+    for (const t of tokens) {
+      const match = t.match(/\u0000LINK_(\d+)\u0000/);
+      if (match) {
+        const link = links[Number(match[1])];
+        const isBold = bold || /\*\*[^*]+\*\*/.test(link.label);
+        const cleanLabel = link.label.replace(/\*\*/g, "");
+        segments.push({
+          type: "link",
+          label: cleanLabel,
+          url: link.url,
+          bold: isBold,
+        });
+      } else if (t) {
+        segments.push({
+          type: "text",
+          text: t,
+          bold,
+        });
+      }
+    }
+  });
+
+  return segments;
+}
+
 function BulletEditor({
   initial,
   onSubmit,
@@ -102,7 +151,12 @@ function BulletEditor({
   submitLabel: string;
 }) {
   const [text, setText] = useState(initial);
+  const [showLinkModal, setShowLinkModal] = useState(false);
+  const [linkLabel, setLinkLabel] = useState("");
+  const [linkUrl, setLinkUrl] = useState("");
+  const [selectionRange, setSelectionRange] = useState<[number, number]>([0, 0]);
   const ref = useRef<HTMLTextAreaElement>(null);
+  const urlInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const el = ref.current;
@@ -111,13 +165,154 @@ function BulletEditor({
     el.style.height = `${el.scrollHeight}px`;
   }, [text]);
 
+  const openLinkModal = () => {
+    const el = ref.current;
+    if (el) {
+      const start = el.selectionStart;
+      const end = el.selectionEnd;
+      setSelectionRange([start, end]);
+      const selected = text.slice(start, end).trim();
+      setLinkLabel(selected || "");
+    } else {
+      setSelectionRange([text.length, text.length]);
+      setLinkLabel("");
+    }
+    setLinkUrl("https://");
+    setShowLinkModal(true);
+    setTimeout(() => {
+      urlInputRef.current?.focus();
+      urlInputRef.current?.select();
+    }, 50);
+  };
+
+  const applyLink = () => {
+    const label = linkLabel.trim() || "link";
+    const rawUrl = linkUrl.trim();
+    if (!rawUrl) {
+      setShowLinkModal(false);
+      return;
+    }
+    const cleanUrl =
+      rawUrl.startsWith("http://") || rawUrl.startsWith("https://") || rawUrl.startsWith("mailto:")
+        ? rawUrl
+        : `https://${rawUrl}`;
+    const md = `[${label}](${cleanUrl})`;
+
+    const [start, end] = selectionRange;
+    const next = text.slice(0, start) + md + text.slice(end);
+    setText(next);
+    setShowLinkModal(false);
+    setTimeout(() => {
+      if (ref.current) {
+        ref.current.focus();
+        const cursor = start + md.length;
+        ref.current.setSelectionRange(cursor, cursor);
+      }
+    }, 50);
+  };
+
+  const toggleBold = () => {
+    const el = ref.current;
+    if (!el) return;
+    const start = el.selectionStart;
+    const end = el.selectionEnd;
+    const selected = text.slice(start, end);
+    if (selected) {
+      if (selected.startsWith("**") && selected.endsWith("**") && selected.length >= 4) {
+        const unbolded = selected.slice(2, -2);
+        const next = text.slice(0, start) + unbolded + text.slice(end);
+        setText(next);
+      } else {
+        const bolded = `**${selected}**`;
+        const next = text.slice(0, start) + bolded + text.slice(end);
+        setText(next);
+      }
+    } else {
+      const next = text.slice(0, start) + "**bold**" + text.slice(end);
+      setText(next);
+    }
+  };
+
   const submit = () => {
     const t = text.trim();
     if (t) onSubmit(t);
   };
 
   return (
-    <div className="bg-white rounded-lg border border-neutral-900 p-3 space-y-2 animate-scaleIn">
+    <div className="bg-white rounded-lg border border-neutral-900 p-3 space-y-2.5 animate-scaleIn">
+      {/* Mini toolbar for markdown formatting */}
+      <div className="flex items-center gap-1 pb-1 border-b border-[#ebebeb]">
+        <button
+          type="button"
+          onClick={toggleBold}
+          title="Bold (Cmd+B)"
+          className="p-1 rounded text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 transition-colors active:scale-95 cursor-pointer text-xs font-bold px-1.5"
+        >
+          <BoldIcon className="w-3.5 h-3.5" />
+        </button>
+        <button
+          type="button"
+          onClick={openLinkModal}
+          title="Add Link (Cmd+K)"
+          className="inline-flex items-center gap-1 p-1 rounded text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 transition-colors active:scale-95 cursor-pointer text-xs px-1.5"
+        >
+          <LinkIcon className="w-3.5 h-3.5" />
+          <span className="text-[11px] font-medium">Link</span>
+        </button>
+      </div>
+
+      {showLinkModal && (
+        <div className="p-2.5 bg-neutral-50 rounded-md border border-[#ebebeb] space-y-2 animate-scaleIn">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <div>
+              <label className="block text-[10px] font-medium text-neutral-600 mb-0.5">Link Text</label>
+              <input
+                type="text"
+                value={linkLabel}
+                onChange={(e) => setLinkLabel(e.target.value)}
+                placeholder="Words to link"
+                className="w-full px-2 py-1 text-xs bg-white border border-[#ebebeb] rounded focus:outline-none focus:border-neutral-900"
+              />
+            </div>
+            <div>
+              <label className="block text-[10px] font-medium text-neutral-600 mb-0.5">URL</label>
+              <input
+                ref={urlInputRef}
+                type="text"
+                value={linkUrl}
+                onChange={(e) => setLinkUrl(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    applyLink();
+                  } else if (e.key === "Escape") {
+                    setShowLinkModal(false);
+                  }
+                }}
+                placeholder="https://..."
+                className="w-full px-2 py-1 text-xs font-mono bg-white border border-[#ebebeb] rounded focus:outline-none focus:border-neutral-900"
+              />
+            </div>
+          </div>
+          <div className="flex justify-end gap-1.5">
+            <button
+              type="button"
+              onClick={() => setShowLinkModal(false)}
+              className="px-2 py-0.5 text-[11px] text-neutral-500 hover:text-neutral-800 transition-colors cursor-pointer"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={applyLink}
+              className="px-2.5 py-0.5 text-[11px] font-medium text-white bg-neutral-900 hover:bg-neutral-800 rounded shadow-2xs active:scale-95 transition-all cursor-pointer"
+            >
+              Insert Link
+            </button>
+          </div>
+        </div>
+      )}
+
       <textarea
         ref={ref}
         value={text}
@@ -125,7 +320,18 @@ function BulletEditor({
         rows={2}
         onChange={(e) => setText(e.target.value)}
         onKeyDown={(e) => {
-          if (e.key === "Escape") onCancel();
+          if (e.key === "Escape") {
+            if (showLinkModal) setShowLinkModal(false);
+            else onCancel();
+          }
+          if (e.key === "k" && (e.metaKey || e.ctrlKey)) {
+            e.preventDefault();
+            openLinkModal();
+          }
+          if (e.key === "b" && (e.metaKey || e.ctrlKey)) {
+            e.preventDefault();
+            toggleBold();
+          }
           if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) submit();
         }}
         className="w-full resize-none text-xs leading-relaxed text-neutral-900 bg-transparent focus:outline-none"
@@ -216,16 +422,37 @@ function BulletCard({
       </span>
 
       <div className="flex-1 min-w-0 space-y-2.5">
-        <p className="text-xs leading-relaxed text-neutral-700">
-          {parseMarkup(bullet.text).map((seg, i) =>
-            seg.bold ? (
-              <strong key={i} className="font-semibold text-neutral-900">
+        <p className="text-xs leading-relaxed text-neutral-700 font-sans">
+          {parseBulletSegments(bullet.text).map((seg, i) => {
+            if (seg.type === "link") {
+              const href =
+                seg.url?.startsWith("http") || seg.url?.startsWith("mailto:")
+                  ? seg.url
+                  : `https://${seg.url}`;
+              return (
+                <a
+                  key={i}
+                  href={href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={`underline underline-offset-2 decoration-neutral-300 hover:decoration-neutral-900 transition-colors ${
+                    seg.bold ? "font-semibold text-neutral-900" : "text-neutral-700"
+                  }`}
+                  style={{ fontFamily: "inherit", fontSize: "inherit" }}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  {seg.label}
+                </a>
+              );
+            }
+            return seg.bold ? (
+              <strong key={i} className="font-semibold text-neutral-900" style={{ fontFamily: "inherit", fontSize: "inherit" }}>
                 {seg.text}
               </strong>
             ) : (
-              <span key={i}>{seg.text}</span>
-            )
-          )}
+              <span key={i} style={{ fontFamily: "inherit", fontSize: "inherit" }}>{seg.text}</span>
+            );
+          })}
         </p>
         <div className="flex items-end justify-between gap-3">
           <div className="flex flex-wrap gap-1.5 min-w-0">

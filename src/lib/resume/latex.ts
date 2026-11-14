@@ -200,8 +200,8 @@ export function toMarkup(raw: string): string {
   ]) {
     s = replaceCmd(s, cmd, 1, () => "");
   }
-  s = replaceCmd(s, "href", 2, (a) => a[1]);
-  s = replaceCmd(s, "resumeLink", 2, (a) => a[1]);
+  s = replaceCmd(s, "href", 2, (a) => (a[0]?.trim() ? `[${a[1]}](${a[0].trim()})` : a[1]));
+  s = replaceCmd(s, "resumeLink", 2, (a) => (a[0]?.trim() ? `[${a[1]}](${a[0].trim()})` : a[1]));
   s = replaceCmd(s, "underline", 1, (a) => a[0]);
   s = replaceCmd(s, "textit", 1, (a) => a[0]);
   s = replaceCmd(s, "emph", 1, (a) => a[0]);
@@ -768,35 +768,68 @@ function parseEducation(content: string): Education[] {
       });
     }
   }
-  if (hasSubheading) return educations;
-
   // Style B: Raw LaTeX (Institution \hfill Location \\ Degree \hfill Dates)
-  const itemizeIdx = content.indexOf("\\begin{itemize}");
-  const headerPart = itemizeIdx >= 0 ? content.slice(0, itemizeIdx) : content;
-  const bulletsPart = itemizeIdx >= 0 ? content.slice(itemizeIdx) : "";
+  if (!hasSubheading) {
+    const itemizeIdx = content.indexOf("\\begin{itemize}");
+    const headerPart = itemizeIdx >= 0 ? content.slice(0, itemizeIdx) : content;
+    const bulletsPart = itemizeIdx >= 0 ? content.slice(itemizeIdx) : "";
 
-  const lines = headerPart
-    .split(/\\\\|\n/)
-    .map((l) => l.trim())
-    .filter((l) => l && !l.startsWith("\\begin") && !l.startsWith("\\end") && !l.startsWith("\\hrule"));
+    const lines = headerPart
+      .split(/\\\\|\n/)
+      .map((l) => l.trim())
+      .filter((l) => l && !l.startsWith("\\begin") && !l.startsWith("\\end") && !l.startsWith("\\hrule"));
 
-  if (lines.length >= 2) {
-    const l1 = lines[0].split(/\\hfill|&/).map(toPlain);
-    const l2 = lines[1].split(/\\hfill|&/).map(toPlain);
-    if (l1[0] && l2[0]) {
-      const eduBullets = bulletsPart ? extractBullets(bulletsPart) : [];
-      const href = firstHref(lines[0]);
-      educations.push({
-        id: uid("e"),
-        institution: l1[0],
-        url: href?.url ?? "",
-        location: l1[1] || "",
-        degree: l2[0],
-        dates: l2[1] || "",
-        bullets: eduBullets.length > 0 ? eduBullets : undefined,
-      });
+    if (lines.length >= 2) {
+      const l1 = lines[0].split(/\\hfill|&/).map(toPlain);
+      const l2 = lines[1].split(/\\hfill|&/).map(toPlain);
+      if (l1[0] && l2[0]) {
+        const eduBullets = bulletsPart ? extractBullets(bulletsPart) : [];
+        const href = firstHref(lines[0]);
+        educations.push({
+          id: uid("e"),
+          institution: l1[0],
+          url: href?.url ?? "",
+          location: l1[1] || "",
+          degree: l2[0],
+          dates: l2[1] || "",
+          bullets: eduBullets.length > 0 ? eduBullets : undefined,
+        });
+      }
     }
   }
+
+  // Extract optional relevant coursework or other/awards attached to education
+  if (educations.length > 0) {
+    const cwMatch =
+      /(?:\\textbf\{)?(?:Relevant\s+Coursework|Coursework)(?:\})?[:\s]+([\s\S]*?)(?=(?:\\par|\\textbf|\\section|\\resumeSubHeading|\\end\{|\n\n|$))/i.exec(
+        content
+      );
+    if (cwMatch) {
+      const cw = toPlain(cwMatch[1]).replace(/^[;,\s]+|[;,\s]+$/g, "").trim();
+      if (cw) educations[0].relevantCoursework = cw;
+    }
+
+    const otherMatch =
+      /(?:\\textbf\{)?(?:Awards?|Honours?|Honors?|Scholarships?|Other)\s*(?:\})?[:\s]+([\s\S]*?)(?=(?:\\par|\\section|\\resumeSubHeading|\\end\{|\n\n|$))/i.exec(
+        content
+      );
+    if (otherMatch) {
+      const sanitized = otherMatch[1].replace(/\\char36/g, "$");
+      const otherText = toPlain(sanitized).replace(/^[;,\s]+|[;,\s]+$/g, "").trim();
+      if (otherText) educations[0].other = otherText;
+    } else {
+      const vspaceMatch =
+        /\\vspace(?:\[[^\]]*\]|\{[^}]*\})?\s*\{\s*(?:\\resumeBody)?\s*(?:\\hspace\*?\{[^}]*\})?\s*([\s\S]*?)\\par\s*\}/.exec(
+          content
+        );
+      if (vspaceMatch) {
+        const sanitized = vspaceMatch[1].replace(/\\char36/g, "$");
+        const otherText = toPlain(sanitized).trim();
+        if (otherText) educations[0].other = otherText;
+      }
+    }
+  }
+
   return educations;
 }
 
@@ -1117,8 +1150,9 @@ export function parseLatexResume(source: string): MasterResume {
     }
   }
 
-  // Also check if education or general content contains inline awards e.g. \textbf{Awards}: ...
-  if (resume.awards.length === 0) {
+  // Also check if general content contains standalone inline awards (only if not attached to education)
+  const eduHasOther = resume.education.some((e) => !!e.other);
+  if (resume.awards.length === 0 && !eduHasOther) {
     const awardsInlineMatch =
       /\\textbf\{Awards\}[:\s]*([\s\S]*?)(?=(?:\\par|\\section|\\resumeSubHeadingList|\\end\{|\n\n|$))/i.exec(
         body
@@ -1296,13 +1330,34 @@ export function escapeLatexWithMath(text: string): string {
     .join("");
 }
 
-export function markupToLatex(markup: string): string {
-  return parseMarkup(markup)
+export function markupToLatex(markup: string, useResumeLink = false): string {
+  const linkCmd = useResumeLink ? "resumeLink" : "href";
+  const LINK_RE = /\[([^\]]+)\]\((https?:\/\/[^\s)]+|mailto:[^\s)]+|[^\s)]+)\)/g;
+
+  const links: { label: string; url: string }[] = [];
+  const tokenized = markup.replace(LINK_RE, (_, label, url) => {
+    const token = `ZZXLINKINDEX${links.length}XZZ`;
+    links.push({ label, url });
+    return token;
+  });
+
+  const parsed = parseMarkup(tokenized)
     .map((seg) => {
       const escaped = escapeLatexWithMath(seg.text);
       return seg.bold ? `\\textbf{${escaped}}` : escaped;
     })
     .join("");
+
+  return parsed.replace(/ZZXLINKINDEX(\d+)XZZ/g, (_, idx) => {
+    const { label, url } = links[Number(idx)];
+    const escapedLabel = parseMarkup(label)
+      .map((seg) => {
+        const escaped = escapeLatexWithMath(seg.text);
+        return seg.bold ? `\\textbf{${escaped}}` : escaped;
+      })
+      .join("");
+    return `\\${linkCmd}{${url}}{${escapedLabel}}`;
+  });
 }
 
 function datesToLatex(dates: string): string {
@@ -1459,6 +1514,29 @@ export function reconstructLatexResume(resume: MasterResume): string {
           lines.push(`      {${escapeLatexText(edu.degree)}}{${datesToLatex(edu.dates)}}`);
         }
         lines.push("  \\resumeSubHeadingListEnd");
+
+        const hasResumeBody = preamble.includes("\\resumeBody");
+        for (const edu of resume.education) {
+          if (edu.relevantCoursework) {
+            const bodyCmd = hasResumeBody ? "\\resumeBody" : "";
+            lines.push(
+              `  \\vspace{-2pt}{${bodyCmd}\\hspace*{0.15in}\\textbf{Relevant Coursework}: ${escapeLatexWithMath(
+                edu.relevantCoursework
+              )}\\par}`
+            );
+          }
+          if (edu.other) {
+            const bodyCmd = hasResumeBody ? "\\resumeBody" : "";
+            const hasPrefix = /^(Awards?|Honours?|Honors?|Scholarships?|Other)\s*:\s*/i.exec(edu.other);
+            const prefix = hasPrefix ? hasPrefix[1] : "Awards";
+            const cleanOther = hasPrefix ? edu.other.slice(hasPrefix[0].length) : edu.other;
+            lines.push(
+              `  \\vspace{-2pt}{${bodyCmd}\\hspace*{0.15in}\\textbf{${escapeLatexText(
+                prefix
+              )}}: ${escapeLatexWithMath(cleanOther)}\\par}`
+            );
+          }
+        }
       } else {
         resume.education.forEach((edu, idx) => {
           if (idx > 0) lines.push("\\vspace{5pt}");
@@ -1473,10 +1551,23 @@ export function reconstructLatexResume(resume: MasterResume): string {
           lines.push(
             `\\textbf{${escapeLatexText(edu.degree)}} \\hfill \\textit{${datesToLatex(edu.dates)}}`
           );
+          if (edu.relevantCoursework) {
+            lines.push(
+              `\\textbf{Relevant Coursework}: ${escapeLatexWithMath(edu.relevantCoursework)}\\\\`
+            );
+          }
+          if (edu.other) {
+            const hasPrefix = /^(Awards?|Honours?|Honors?|Scholarships?|Other)\s*:\s*/i.exec(edu.other);
+            const prefix = hasPrefix ? hasPrefix[1] : "Awards";
+            const cleanOther = hasPrefix ? edu.other.slice(hasPrefix[0].length) : edu.other;
+            lines.push(
+              `\\textbf{${escapeLatexText(prefix)}}: ${escapeLatexWithMath(cleanOther)}\\\\`
+            );
+          }
           if (edu.bullets && edu.bullets.length > 0) {
             lines.push("\\begin{itemize}");
             for (const b of edu.bullets) {
-              lines.push(`    \\item ${markupToLatex(b.text)}`);
+              lines.push(`    \\item ${markupToLatex(b.text, useResumeLink)}`);
             }
             lines.push("\\end{itemize}");
           }
@@ -1543,7 +1634,7 @@ export function reconstructLatexResume(resume: MasterResume): string {
             if (job.bullets.length > 0) {
               lines.push("      \\resumeItemListStart");
               for (const b of job.bullets) {
-                lines.push(`        \\resumeItem{${markupToLatex(b.text)}}`);
+                lines.push(`        \\resumeItem{${markupToLatex(b.text, useResumeLink)}}`);
               }
               lines.push("      \\resumeItemListEnd");
             }
@@ -1564,7 +1655,7 @@ export function reconstructLatexResume(resume: MasterResume): string {
             if (job.bullets.length > 0) {
               lines.push("\\begin{itemize}");
               for (const b of job.bullets) {
-                lines.push(`    \\item ${markupToLatex(b.text)}`);
+                lines.push(`    \\item ${markupToLatex(b.text, useResumeLink)}`);
               }
               lines.push("\\end{itemize}");
             }
@@ -1613,7 +1704,7 @@ export function reconstructLatexResume(resume: MasterResume): string {
           if (proj.bullets.length > 0) {
             lines.push("      \\resumeItemListStart");
             for (const b of proj.bullets) {
-              lines.push(`        \\resumeItem{${markupToLatex(b.text)}}`);
+              lines.push(`        \\resumeItem{${markupToLatex(b.text, useResumeLink)}}`);
             }
             lines.push("      \\resumeItemListEnd");
           }
@@ -1629,7 +1720,7 @@ export function reconstructLatexResume(resume: MasterResume): string {
           if (proj.bullets.length > 0) {
             lines.push("\\begin{itemize}");
             for (const b of proj.bullets) {
-              lines.push(`    \\item ${markupToLatex(b.text)}`);
+              lines.push(`    \\item ${markupToLatex(b.text, useResumeLink)}`);
             }
             lines.push("\\end{itemize}");
           }

@@ -126,6 +126,8 @@ const eduFields = (e?: Education) => [
   { key: "degree", label: "Degree", value: e?.degree ?? "", wide: true },
   { key: "location", label: "Location", value: e?.location ?? "" },
   { key: "dates", label: "Dates", value: e?.dates ?? "", mono: true },
+  { key: "relevantCoursework", label: "Relevant Coursework (Optional)", value: e?.relevantCoursework ?? "", wide: true },
+  { key: "other", label: "Other / Scholarships / Awards (Optional)", value: e?.other ?? "", wide: true },
 ];
 
 function EducationRow({
@@ -145,7 +147,13 @@ function EducationRow({
         fields={eduFields(item)}
         onCancel={() => setEditing(false)}
         onSave={(v) => {
-          onChange({ ...item, ...v });
+          onChange({
+            ...item,
+            ...v,
+            url: v.url || undefined,
+            relevantCoursework: v.relevantCoursework || undefined,
+            other: v.other || undefined,
+          });
           setEditing(false);
         }}
       />
@@ -157,7 +165,7 @@ function EducationRow({
       id={`edu-${item.id}`}
       className="scroll-mt-20 bg-white rounded-xl border border-[#ebebeb] shadow-subtle px-4 py-3.5 flex items-start justify-between gap-4"
     >
-      <div className="min-w-0">
+      <div className="min-w-0 flex-1">
         <h3 className="text-sm font-semibold tracking-tight text-neutral-900">
           {item.url ? (
             <a
@@ -176,6 +184,17 @@ function EducationRow({
           {item.degree}
           {item.location && <span> · {item.location}</span>}
         </p>
+        {item.relevantCoursework && (
+          <p className="text-xs text-neutral-600 mt-1.5 leading-relaxed">
+            <span className="font-medium text-neutral-800">Relevant Coursework:</span>{" "}
+            {item.relevantCoursework}
+          </p>
+        )}
+        {item.other && (
+          <p className="text-xs text-neutral-600 mt-1 leading-relaxed">
+            <span className="font-medium text-neutral-800">Other:</span> {item.other}
+          </p>
+        )}
       </div>
       <div className="flex items-center gap-1 flex-shrink-0">
         <span className="text-[11px] font-mono text-neutral-500 mr-1">{item.dates}</span>
@@ -238,6 +257,8 @@ export function EducationSection({
                 degree: v.degree,
                 location: v.location,
                 dates: v.dates,
+                relevantCoursework: v.relevantCoursework || undefined,
+                other: v.other || undefined,
               },
             ]);
             setAdding(false);
