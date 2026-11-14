@@ -1,5 +1,5 @@
 import { rtdb, isFirebaseConfigured } from "@/lib/firebase";
-import { ref, get, set, push } from "firebase/database";
+import { ref, get, set, push, onValue } from "firebase/database";
 import { isOnline, enqueueOfflineItem } from "@/lib/offlineSync";
 import type { MasterResume } from "./types";
 import { uid } from "./utils";
@@ -77,9 +77,6 @@ export function loadAgentsQueue(uidStr: string): AgentResumeEntry[] {
 }
 
 export async function loadAgentsQueueAsync(uidStr: string): Promise<AgentResumeEntry[]> {
-  const local = loadAgentsQueue(uidStr);
-  if (local.length > 0) return local;
-
   if (isFirebaseConfigured && uidStr) {
     try {
       const snap = await get(ref(rtdb, `agentsQueues/${uidStr}`));
@@ -88,7 +85,10 @@ export async function loadAgentsQueueAsync(uidStr: string): Promise<AgentResumeE
         const data = val?.data;
         if (typeof data === "string") {
           const items = normalizeAgentEntries(JSON.parse(data));
-          saveAgentsQueue(uidStr, items);
+          if (typeof window !== "undefined") {
+            localStorage.setItem(AGENTS_QUEUE_KEY(uidStr), JSON.stringify(items));
+            localStorage.setItem(AGENTS_QUEUE_GLOBAL_KEY, JSON.stringify(items));
+          }
           return items;
         }
       }
@@ -96,7 +96,63 @@ export async function loadAgentsQueueAsync(uidStr: string): Promise<AgentResumeE
       console.warn("RTDB agents queue read failed, using local copy:", e);
     }
   }
-  return local;
+  return loadAgentsQueue(uidStr);
+}
+
+/**
+ * Subscribes to live real-time updates from Firebase Realtime Database.
+ * Immediately yields local cache, then streams live cloud changes across devices.
+ */
+export function subscribeAgentsQueue(
+  uidStr: string,
+  callback: (items: AgentResumeEntry[]) => void
+): () => void {
+  if (typeof window === "undefined" || !uidStr) return () => {};
+
+  // Instant local cache paint for responsive UI
+  const local = loadAgentsQueue(uidStr);
+  if (local.length > 0) {
+    callback(local);
+  }
+
+  // Subscribe to live Realtime Database cloud stream
+  if (isFirebaseConfigured && uidStr) {
+    try {
+      const qRef = ref(rtdb, `agentsQueues/${uidStr}`);
+      const unsubscribe = onValue(
+        qRef,
+        (snap) => {
+          if (snap.exists()) {
+            const val = snap.val();
+            const data = val?.data;
+            if (typeof data === "string") {
+              const remoteItems = normalizeAgentEntries(JSON.parse(data));
+              if (typeof window !== "undefined") {
+                localStorage.setItem(AGENTS_QUEUE_KEY(uidStr), JSON.stringify(remoteItems));
+                localStorage.setItem(AGENTS_QUEUE_GLOBAL_KEY, JSON.stringify(remoteItems));
+              }
+              callback(remoteItems);
+              return;
+            }
+          }
+          if (!snap.exists()) {
+            const currentLocal = loadAgentsQueue(uidStr);
+            if (currentLocal.length === 0) {
+              callback([]);
+            }
+          }
+        },
+        (error) => {
+          console.warn("Live RTDB agents queue sync warning:", error);
+        }
+      );
+      return unsubscribe;
+    } catch (e) {
+      console.warn("Could not attach RTDB agents queue listener:", e);
+    }
+  }
+
+  return () => {};
 }
 
 export function saveAgentsQueue(uidStr: string, items: AgentResumeEntry[]): void {

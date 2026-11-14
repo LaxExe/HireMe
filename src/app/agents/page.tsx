@@ -17,6 +17,7 @@ import {
   deleteAgentEntry,
   loadAgentsQueue,
   loadAgentsQueueAsync,
+  subscribeAgentsQueue,
   toggleAgentSentStatus,
   unarchiveAgentEntry,
   type AgentResumeEntry,
@@ -45,18 +46,11 @@ export default function AgentsPage() {
 
   useEffect(() => {
     if (!user) return;
-    let cancelled = false;
-    const syncLoaded = loadAgentsQueue(user.uid);
-    if (syncLoaded.length > 0) {
-      setEntries(syncLoaded);
-    }
-    loadAgentsQueueAsync(user.uid).then((asyncLoaded) => {
-      if (!cancelled) {
-        setEntries(asyncLoaded);
-      }
+    const unsubscribe = subscribeAgentsQueue(user.uid, (freshEntries) => {
+      setEntries(freshEntries);
     });
     return () => {
-      cancelled = true;
+      unsubscribe();
     };
   }, [user]);
 

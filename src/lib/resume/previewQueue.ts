@@ -97,16 +97,6 @@ export function loadPreviewQueue(uidStr: string): PreviewQueueItem[] {
 }
 
 export async function loadPreviewQueueAsync(uidStr: string): Promise<PreviewQueueItem[]> {
-  const rawUser =
-    typeof window !== "undefined" && uidStr
-      ? localStorage.getItem(PREVIEW_QUEUE_KEY(uidStr))
-      : null;
-
-  // If this device already has an established local state for this user (even if 0 items), use it
-  if (rawUser !== null) {
-    return loadPreviewQueue(uidStr);
-  }
-
   if (isFirebaseConfigured && uidStr) {
     try {
       const snap = await get(ref(rtdb, `previewQueues/${uidStr}`));
