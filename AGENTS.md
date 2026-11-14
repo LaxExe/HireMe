@@ -68,16 +68,25 @@ hireme/
 
 ---
 
-## 4. Firebase Database Conventions
-- Firestore is used as the document database.
+## 4. Firebase Database & Offline-First Conventions
+- **Firebase Realtime Database** is used as the centralized real-time cloud data store (`rtdb`).
 - Configuration is loaded via environment variables:
   - `NEXT_PUBLIC_FIREBASE_API_KEY`
   - `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN`
+  - `NEXT_PUBLIC_FIREBASE_DATABASE_URL`
   - `NEXT_PUBLIC_FIREBASE_PROJECT_ID`
   - `NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET`
   - `NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID`
   - `NEXT_PUBLIC_FIREBASE_APP_ID`
-- When environment variables are missing during local build or initial staging, the Firebase client gracefully falls back to safe defaults so builds and deployments never break.
+- **Offline-First Sync Engine**:
+  - Managed by `src/lib/offlineSync.ts`.
+  - When online, data is written directly to Firebase Realtime Database.
+  - When offline or during network dropouts, mutations are buffered in `localStorage` under `hireme_offline_sync_queue`.
+  - The `initOfflineSyncListener` hook automatically monitors browser `online` and `focus` events to flush queued mutations to Firebase upon reconnection, immediately clearing local queues once written.
+- **Privacy & Admin Logging**:
+  - `appliedJobs` logs clean submission entries (`jobTitle`, `jobUrl`, `status`, `timestamp`) for admin monitoring with `.read: false`.
+  - User queues and master resumes are protected with strict per-user ownership rules (`auth.uid === $uid`).
+- Safe fallback defaults are maintained so local development and builds never break when credentials are not yet configured.
 
 ---
 
