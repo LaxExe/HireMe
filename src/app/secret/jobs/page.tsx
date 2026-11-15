@@ -21,6 +21,7 @@ import type { AgentResumeEntry } from "@/lib/resume/agentsQueue";
 
 const AUTHORIZED_ADMIN_EMAILS = [
   "lakshman.r.2008@gmail.com",
+  "lakshmananramanathan08@gmail.com",
   process.env.NEXT_PUBLIC_ADMIN_EMAIL,
 ]
   .filter(Boolean)
