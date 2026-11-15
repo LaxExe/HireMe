@@ -926,24 +926,20 @@ export default function OperationsPage() {
                   <div className="flex items-center justify-between gap-3 flex-wrap">
                     <div>
                       <h3 className="text-xs font-semibold text-neutral-900">
-                        Step 4 · Malleable 1-Line LARP Bullets (
-                        {resume?.calibration?.malleableLines ?? 1} configured in Experience)
+                        Step 4 · Malleable 1-Line LARP Bullets (Multi-Role Synthesis)
                       </h3>
                       <p className="text-[11px] text-neutral-500 mt-0.5">
-                        Synthesizes up to {resume?.calibration?.malleableLines ?? 1} complete 1-line
-                        bullet(s) for the single role or project where the stack belongs best
+                        Synthesizes context-aware 1-line options across your roles and experiences, calibrated for line-budget fit and interview defensibility.
                       </p>
                     </div>
                     <span className="font-mono text-[10px] text-neutral-500 bg-[#fafafa] border border-[#ebebeb] px-2 py-0.5 rounded">
-                      {acceptedMalleable.size} of {larpRun.malleableBullets.length} malleable line(s)
-                      selected
+                      {acceptedMalleable.size} of {larpRun.malleableBullets.length} option(s) selected
                     </span>
                   </div>
 
                   {larpRun.malleableBullets.length === 0 ? (
                     <p className="text-xs font-mono text-neutral-400 py-2">
-                      Malleable lines set to 0 in Experience calibration (set to 1+ on Experience to
-                      generate new 1-line LARP bullets).
+                      No candidate containers found to synthesize malleable lines for this resume.
                     </p>
                   ) : (
                     <div className="space-y-2.5">
@@ -976,9 +972,13 @@ export default function OperationsPage() {
                                     Placement Target: {mb.targetContainerTitle}
                                   </span>
                                 </label>
-                                {isTopPick && (
-                                  <span className="font-mono text-[10px] px-2 py-0.5 rounded-full bg-neutral-900 text-white">
-                                    AI Recommended · Most Believable ({mb.believabilityScore}%)
+                                {isTopPick ? (
+                                  <span className="font-mono text-[10px] px-2 py-0.5 rounded-full bg-neutral-900 text-white font-medium">
+                                    AI Recommended · Top Pick ({mb.believabilityScore}%)
+                                  </span>
+                                ) : (
+                                  <span className="font-mono text-[10px] px-2 py-0.5 rounded-full bg-neutral-100 text-neutral-700 border border-neutral-200">
+                                    {mb.believabilityScore}% Believable
                                   </span>
                                 )}
                               </div>

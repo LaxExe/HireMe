@@ -1369,7 +1369,10 @@ export default function PreviewPage() {
                                 New 1L Bullet in {mb.targetContainerTitle}
                               </span>
                             </label>
-                            <div className="flex items-center gap-1.5">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="font-mono text-[10px] px-2 py-0.5 rounded-full bg-neutral-100 text-neutral-700 border border-neutral-200">
+                                {mb.believabilityScore}% Believable
+                              </span>
                               {mb.injectedKeywords.map((kw) => (
                                 <span
                                   key={kw}
