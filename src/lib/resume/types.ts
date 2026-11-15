@@ -24,6 +24,8 @@ export interface ProjectLink {
   id: string;
   label: string;
   url: string;
+  /** Optional FontAwesome icon macro from LaTeX, e.g. `\faGithub` or `\faLink`. */
+  icon?: string;
 }
 
 export interface Project {

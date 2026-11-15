@@ -863,12 +863,28 @@ export function generateResumePdfBytes(resume: MasterResume): Uint8Array {
             linkUrl: proj.url || undefined,
             iconAfter:
               proj.url && fmt.entryStyle.showLinkIcons
-                ? proj.linkIcon === "\\faLink"
-                  ? "link"
-                  : "github"
+                ? proj.linkIcon === "\\faGithub" ||
+                  (/github\.com/i.test(proj.url) && !/github\.io/i.test(proj.url))
+                  ? "github"
+                  : "link"
                 : undefined,
           },
         ];
+        if (fmt.entryStyle.showLinkIcons && proj.links && proj.links.length > 0) {
+          for (const l of proj.links) {
+            if (proj.url && l.url === proj.url) continue;
+            const isGh =
+              l.icon === "\\faGithub" ||
+              /github\.com/i.test(l.url) ||
+              /^github$/i.test(l.label);
+            leftSpans.push({
+              text: " ",
+              font: "regular",
+              linkUrl: l.url,
+              iconAfter: isGh ? "github" : "link",
+            });
+          }
+        }
         if (proj.techStack.length > 0) {
           leftSpans.push({
             text: "  |  ",

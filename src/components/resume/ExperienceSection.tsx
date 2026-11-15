@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { GripVertical, Pencil, Plus, Trash2 } from "lucide-react";
+import { ExternalLink, GripVertical, Pencil, Plus, Trash2 } from "lucide-react";
 import type { Job } from "@/lib/resume/types";
 import { uid } from "@/lib/resume/utils";
 import { useCalibration } from "@/context/CalibrationContext";
@@ -88,9 +88,10 @@ function JobCard({
                   href={job.companyUrl}
                   target="_blank"
                   rel="noreferrer"
-                  className="text-neutral-700 hover:text-neutral-900 underline decoration-[#ebebeb] underline-offset-2"
+                  className="inline-flex items-center gap-1 text-neutral-700 hover:text-neutral-900 underline decoration-[#ebebeb] underline-offset-2"
                 >
-                  {job.company}
+                  <span>{job.company}</span>
+                  <ExternalLink className="w-3 h-3 text-neutral-400" />
                 </a>
               ) : (
                 <span className="text-neutral-700">{job.company}</span>

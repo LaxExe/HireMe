@@ -81,7 +81,7 @@ export function parseMarkup(markup: string): Segment[] {
 }
 
 export const plainText = (markup: string) =>
-  markup.replace(/\*\*/g, "").replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
+  markup.replace(/\*\*/g, "").replace(/\[([^\]]*)\]\([^)]+\)/g, "$1");
 
 const isMetric = (s: string) =>
   /^[~≈<>]?\s*(over\s+|under\s+|about\s+)?\d/i.test(s) || /%\+?$/.test(s);

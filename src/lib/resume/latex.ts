@@ -85,6 +85,10 @@ export function cleanCorruptedMarkdownLinks(latex: string): string {
   // 7. General cleanup of residual ](url...)
   s = s.replace(/\]\([a-zA-Z0-9_.:\/?#=%&~+-]+(?:\s*\{[^}]*\})*\)/g, "");
 
+  // 8. Repair escaped FontAwesome macros (\textbackslash{}faLink or \{}faLink -> \faLink)
+  s = s.replace(/\\textbackslash\{\}\s*(fa[A-Za-z0-9]+\*?)/g, "\\$1");
+  s = s.replace(/\\?\{\}\s*(fa[A-Za-z0-9]+\*?)/g, "\\$1");
+
   return s;
 }
 
@@ -200,8 +204,20 @@ export function toMarkup(raw: string): string {
   ]) {
     s = replaceCmd(s, cmd, 1, () => "");
   }
-  s = replaceCmd(s, "href", 2, (a) => (a[0]?.trim() ? `[${a[1]}](${a[0].trim()})` : a[1]));
-  s = replaceCmd(s, "resumeLink", 2, (a) => (a[0]?.trim() ? `[${a[1]}](${a[0].trim()})` : a[1]));
+  s = s.replace(/\\textbackslash\{\}\s*fa[A-Za-z0-9]+\*?/g, "");
+  s = s.replace(/\\?\{\}\s*fa[A-Za-z0-9]+\*?/g, "");
+  s = s.replace(/\\fa[A-Za-z0-9]+\*?/g, "");
+
+  s = replaceCmd(s, "href", 2, (a) => {
+    const label = a[1]?.trim() ?? "";
+    if (!label) return "";
+    return a[0]?.trim() ? `[${label}](${a[0].trim()})` : label;
+  });
+  s = replaceCmd(s, "resumeLink", 2, (a) => {
+    const label = a[1]?.trim() ?? "";
+    if (!label) return "";
+    return a[0]?.trim() ? `[${label}](${a[0].trim()})` : label;
+  });
   s = replaceCmd(s, "underline", 1, (a) => a[0]);
   s = replaceCmd(s, "textit", 1, (a) => a[0]);
   s = replaceCmd(s, "emph", 1, (a) => a[0]);
@@ -214,7 +230,6 @@ export function toMarkup(raw: string): string {
     /\\(?:Huge|huge|LARGE|Large|large|small|footnotesize|tiny|normalsize)(?![A-Za-z])/g,
     ""
   );
-  s = s.replace(/\\fa[A-Za-z0-9]+\*?/g, "");
 
   for (let pass = 0; pass < 4; pass++) {
     s = replaceCmd(s, "textbf", 1, (a) => "**" + replaceCmd(a[0], "textbf", 1, (b) => b[0]) + "**");
@@ -856,13 +871,16 @@ function parseExperience(content: string, isLeadership = false): Job[] {
         const hrefCompany = firstHref(args[2]);
         const hrefTitle = firstHref(args[0]);
         const companyIcon = extractFaIcon(args[2]) || extractFaIcon(args[0]);
+        const cleanCompany = toPlain(args[2])
+          .replace(/\s*(?:\\textbackslash\{\}|\\?\{\})?fa[A-Za-z0-9]+\*?/g, "")
+          .trim();
         jobs.push({
           id: uid("j"),
           title: toPlain(args[0]),
           dates: splitDates(toPlain(args[1])),
-          company: toPlain(args[2]),
+          company: cleanCompany,
           companyUrl: hrefCompany?.url ?? hrefTitle?.url ?? "",
-          companyIcon,
+          companyIcon: companyIcon || (hrefCompany ? "\\faLink" : undefined),
           location: toPlain(args[3]),
           bullets: extractBullets(block),
           isLeadership: isLeadership || undefined,
@@ -986,22 +1004,62 @@ function parseProjects(content: string): Project[] {
       if (args.length >= 2) {
         const segments = args[0].split(/\$\|\$|\|/).map((s) => s.trim()).filter(Boolean);
         const nameSeg = segments[0] || "";
-        const nameHref = firstHref(nameSeg);
-        const name = toPlain(nameSeg);
-        const linkIcon = extractFaIcon(nameSeg);
+        const nameHrefs = extractAllHrefs(nameSeg);
+
+        let primaryUrl = "";
+        let linkIcon = extractFaIcon(nameSeg);
+        const links: { id: string; label: string; url: string; icon?: string }[] = [];
+
+        if (nameHrefs.length > 0) {
+          // Find the primary title href (the first one with non-empty plain text)
+          const titleHrefIdx = nameHrefs.findIndex((h) => toPlain(h.text).length > 0);
+          if (titleHrefIdx >= 0) {
+            primaryUrl = nameHrefs[titleHrefIdx].url;
+            linkIcon = extractFaIcon(nameHrefs[titleHrefIdx].text) || linkIcon;
+          }
+          // Any additional hrefs in nameSeg (e.g. \href{https://github.com/...}{\faGithub})
+          nameHrefs.forEach((h, idx) => {
+            if (idx === titleHrefIdx) return;
+            const icon = extractFaIcon(h.text);
+            const plainLabel = toPlain(h.text);
+            const isGh = icon === "\\faGithub" || /github\.com/i.test(h.url);
+            links.push({
+              id: uid("l"),
+              label: plainLabel || (isGh ? "GitHub" : "Link"),
+              url: h.url,
+              icon: icon || (isGh ? "\\faGithub" : undefined),
+            });
+          });
+        }
+
+        const name = toPlain(nameSeg)
+          .replace(/\s*(?:\\textbackslash\{\}|\\?\{\})?fa[A-Za-z0-9]+\*?/g, "")
+          .trim();
 
         let techPart = "";
-        const links: { id: string; label: string; url: string }[] = [];
 
         for (let s = 1; s < segments.length; s++) {
           const seg = segments[s];
           const hrefs = extractAllHrefs(seg);
           if (hrefs.length > 0) {
             for (const h of hrefs) {
+              const icon = extractFaIcon(h.text);
+              const plainLabel = toPlain(h.text);
+              // If primaryUrl wasn't set on the title and this is a trailing "| Link", promote it to primaryUrl
+              if (!primaryUrl && (plainLabel === "Link" || !plainLabel)) {
+                primaryUrl = h.url;
+                linkIcon = icon || linkIcon || "\\faLink";
+                continue;
+              }
+              if (primaryUrl && h.url === primaryUrl && (plainLabel === "Link" || !plainLabel)) {
+                continue;
+              }
+              const isGh = icon === "\\faGithub" || /github\.com/i.test(h.url);
               links.push({
                 id: uid("l"),
-                label: toPlain(h.text) || h.text || "Link",
+                label: plainLabel || (isGh ? "GitHub" : "Link"),
                 url: h.url,
+                icon: icon || (isGh ? "\\faGithub" : undefined),
               });
             }
           } else {
@@ -1009,14 +1067,16 @@ function parseProjects(content: string): Project[] {
           }
         }
 
-        const primaryUrl = nameHref?.url || (links.length > 0 ? links[0].url : "");
+        if (!primaryUrl && links.length > 0 && !links[0].icon) {
+          primaryUrl = links[0].url;
+        }
 
         projects.push({
           id: uid("p"),
           name,
           url: primaryUrl,
           links: links.length > 0 ? links : undefined,
-          linkIcon,
+          linkIcon: linkIcon || (primaryUrl ? "\\faLink" : undefined),
           techStack: splitCommaPreservingSlashes(toPlain(techPart)),
           meta: toPlain(args[1]),
           bullets: extractBullets(block),
@@ -1401,9 +1461,20 @@ export function reconstructLatexResume(resume: MasterResume): string {
     fmt.sectionStyle.macroName ||
     (/\\newcommand\{\\ressection\}/.test(preamble) ? "ressection" : "section");
 
-  const renderLink = (url: string, label: string) => {
+  const renderLink = (
+    url: string,
+    label: string,
+    opts?: { iconLatex?: string; underline?: boolean }
+  ) => {
     const rawUrl = url.startsWith("http") || url.startsWith("mailto:") ? url : `https://${url}`;
-    const display = escapeLatexText(label);
+    const escapedLabel = escapeLatexText(label);
+    let display = escapedLabel;
+    if (opts?.iconLatex) {
+      display = display ? `${display} ${opts.iconLatex}` : opts.iconLatex;
+    }
+    if (opts?.underline && !useResumeLink) {
+      display = `\\underline{${display}}`;
+    }
     if (useResumeLink) {
       return `\\resumeLink{${rawUrl}}{${display}}`;
     }
@@ -1445,18 +1516,16 @@ export function reconstructLatexResume(resume: MasterResume): string {
       );
     }
     if (contact.email) {
-      const emailHref = useResumeLink
-        ? `\\resumeLink{mailto:${contact.email}}{${escapeLatexText(contact.email)}}`
-        : `\\href{mailto:${contact.email}}{${
-            fmt.headerStyle.underlineLinks
-              ? `\\underline{${escapeLatexText(contact.email)}}`
-              : escapeLatexText(contact.email)
-          }}`;
+      const emailHref = renderLink(`mailto:${contact.email}`, contact.email, {
+        underline: fmt.headerStyle.underlineLinks,
+      });
       parts.push(showHeaderIcons ? `\\faEnvelope~${emailHref}` : emailHref);
     }
     for (const link of contact.links) {
-      const labelEsc = link.label || link.url;
-      const formattedLink = renderLink(link.url, labelEsc);
+      const labelRaw = link.label || link.url;
+      const formattedLink = renderLink(link.url, labelRaw, {
+        underline: fmt.headerStyle.underlineLinks,
+      });
 
       if (showHeaderIcons) {
         const icon =
@@ -1474,11 +1543,16 @@ export function reconstructLatexResume(resume: MasterResume): string {
     }
 
     if (parts.length > 0) {
+      const usesSpaceCdot = resume.rawLatex
+        ? /\\\s+\$\\cdot\$\s+\\/.test(resume.rawLatex)
+        : false;
       const sep =
         fmt.headerStyle.separator === "bar"
           ? " $|$ "
           : showHeaderIcons
-          ? " \\ $\\cdot$ \\ "
+          ? usesSpaceCdot
+            ? " \\ $\\cdot$ \\ "
+            : " ~$\\cdot$~ "
           : " $\\cdot$ ";
       const prefix = isSubheadingMacro
         ? /\\resumeBody/.test(preamble)
@@ -1611,10 +1685,13 @@ export function reconstructLatexResume(resume: MasterResume): string {
         if (isSubheadingMacro) {
           lines.push("  \\resumeSubHeadingListStart");
           for (const job of groupJobs) {
-            let companyField = escapeLatexText(job.company);
+            const cleanCompany = job.company
+              .replace(/\s*(?:\\textbackslash\{\}|\\?\{\})?fa[A-Za-z0-9]+\*?/g, "")
+              .trim();
+            let companyField = escapeLatexText(cleanCompany);
             if (job.companyUrl) {
-              const icon = showEntryIcons ? ` ${job.companyIcon || "\\faLink"}` : "";
-              companyField = renderLink(job.companyUrl, `${job.company}${icon}`);
+              const iconLatex = showEntryIcons ? job.companyIcon || "\\faLink" : undefined;
+              companyField = renderLink(job.companyUrl, cleanCompany, { iconLatex });
             }
 
             if (job.isLeadership && /\\resumeProjectHeading/.test(preamble)) {
@@ -1680,25 +1757,56 @@ export function reconstructLatexResume(resume: MasterResume): string {
       if (isSubheadingMacro) {
         lines.push("  \\resumeSubHeadingListStart");
         for (const proj of resume.projects) {
-          const nameField = `\\textbf{${escapeLatexText(proj.name)}}`;
+          const cleanProjName = proj.name
+            .replace(/\s*(?:\\textbackslash\{\}|\\?\{\})?fa[A-Za-z0-9]+\*?/g, "")
+            .trim();
           const techStr = proj.techStack.map((t) => escapeLatexText(t)).join(", ");
-          const techFormatted = /\\emph\{/.test(resume.rawLatex || "")
-            ? `\\emph{${techStr}}`
-            : `\\textcolor{muted}{${techStr}}`;
+          const useMutedTech =
+            fmt.entryStyle.projectTechStyle === "muted" || /\\definecolor\{muted\}/.test(preamble);
+          const techFormatted = useMutedTech
+            ? `\\textcolor{muted}{${techStr}}`
+            : `\\emph{${techStr}}`;
 
-          const linkItems: string[] = [];
-          if (proj.links && proj.links.length > 0) {
-            for (const l of proj.links) {
-              linkItems.push(renderLink(l.url, l.label));
+          let nameField = `\\textbf{${escapeLatexText(cleanProjName)}}`;
+          const trailingLinkItems: string[] = [];
+
+          if (showEntryIcons) {
+            if (proj.url) {
+              const primaryIcon =
+                proj.linkIcon ||
+                (/github\.com/i.test(proj.url) && !/github\.io/i.test(proj.url)
+                  ? "\\faGithub"
+                  : "\\faLink");
+              nameField = `\\textbf{${renderLink(proj.url, cleanProjName, {
+                iconLatex: primaryIcon,
+              })}}`;
             }
-          } else if (proj.url) {
-            linkItems.push(renderLink(proj.url, "Link"));
+            if (proj.links && proj.links.length > 0) {
+              for (const l of proj.links) {
+                if (proj.url && l.url === proj.url) continue;
+                const isGh =
+                  l.icon === "\\faGithub" ||
+                  /github\.com/i.test(l.url) ||
+                  /^github$/i.test(l.label);
+                const iconLatex = l.icon || (isGh ? "\\faGithub" : "\\faLink");
+                nameField += ` \\ ${renderLink(l.url, "", { iconLatex })}`;
+              }
+            }
+          } else {
+            if (proj.links && proj.links.length > 0) {
+              for (const l of proj.links) {
+                trailingLinkItems.push(renderLink(l.url, l.label));
+              }
+            } else if (proj.url) {
+              trailingLinkItems.push(renderLink(proj.url, "Link"));
+            }
           }
 
           let leftArg = nameField;
           if (techStr) leftArg += ` $|$ ${techFormatted}`;
-          if (linkItems.length > 0) leftArg += ` $|$ ${linkItems.join(" $|$ ")}`;
+          if (trailingLinkItems.length > 0) leftArg += ` $|$ ${trailingLinkItems.join(" $|$ ")}`;
 
+          lines.push("");
           lines.push("    \\resumeProjectHeading");
           lines.push(`      {${leftArg}}{${escapeLatexText(proj.meta)}}`);
           if (proj.bullets.length > 0) {
@@ -1709,6 +1817,7 @@ export function reconstructLatexResume(resume: MasterResume): string {
             lines.push("      \\resumeItemListEnd");
           }
         }
+        lines.push("");
         lines.push("  \\resumeSubHeadingListEnd");
       } else {
         resume.projects.forEach((proj, idx) => {
