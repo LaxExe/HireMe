@@ -363,6 +363,7 @@ export default function PreviewPage() {
       roleName: item.roleName || item.title,
       roleUrl: item.roleUrl,
       tailoredResume: tailored,
+      jobDescription: item.jobDescription,
     });
     handleDeleteSlot(item.id);
     router.push("/agents");

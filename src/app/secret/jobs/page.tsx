@@ -54,7 +54,8 @@ export interface CandidateAppliedJob {
   applicantId: string;
   applicantName: string;
   applicantEmail: string;
-  source: "appliedJobs" | "agentsQueue";
+  source: "appliedJobs" | "agentsQueue" | "previewQueue";
+  jobDescription?: string;
 }
 
 function formatDate(iso: string): string {
@@ -175,6 +176,7 @@ export default function SecretJobsPage() {
   // Tab: "active" vs "archived"
   const [viewTab, setViewTab] = useState<"active" | "archived">("active");
   const [archivedKeys, setArchivedKeys] = useState<string[]>([]);
+  const [importingId, setImportingId] = useState<string | null>(null);
 
   // Current user's own queue items (to exclude jobs already applied to or queued)
   const [myAgentsEntries, setMyAgentsEntries] = useState<AgentResumeEntry[]>([]);
@@ -293,7 +295,8 @@ export default function SecretJobsPage() {
 
     const updateFromSnapshot = (
       appliedVal: Record<string, any> | null,
-      queuesVal: Record<string, any> | null
+      queuesVal: Record<string, any> | null,
+      previewVal: Record<string, any> | null
     ) => {
       // 1. Ingest from global appliedJobs table
       if (appliedVal && typeof appliedVal === "object") {
@@ -305,9 +308,13 @@ export default function SecretJobsPage() {
           const email = (val.userEmail || "").trim();
           const applicantId = val.userId || "unknown";
           const name = email ? email.split("@")[0] : "Candidate";
+          const jd = (val.jobDescription || "").trim();
 
           const dedupeKey = `${title.toLowerCase().trim()}|${url.toLowerCase().trim()}`;
-          if (!jobMap.has(dedupeKey)) {
+          const existing = jobMap.get(dedupeKey);
+          if (existing) {
+            if (jd && !existing.jobDescription) existing.jobDescription = jd;
+          } else {
             jobMap.set(dedupeKey, {
               id: key,
               jobTitle: title,
@@ -317,6 +324,7 @@ export default function SecretJobsPage() {
               applicantName: name,
               applicantEmail: email,
               source: "appliedJobs",
+              jobDescription: jd || undefined,
             });
           }
         }
@@ -344,9 +352,13 @@ export default function SecretJobsPage() {
             const name =
               entry.tailoredResume?.contact?.name?.trim() ||
               (email ? email.split("@")[0] : `User ${uidKey.slice(0, 5)}`);
+            const jd = (entry.jobDescription || "").trim();
             const dedupeKey = `${title.toLowerCase().trim()}|${url.toLowerCase().trim()}`;
 
-            if (!jobMap.has(dedupeKey)) {
+            const existing = jobMap.get(dedupeKey);
+            if (existing) {
+              if (jd && !existing.jobDescription) existing.jobDescription = jd;
+            } else {
               jobMap.set(dedupeKey, {
                 id: entry.id || dedupeKey,
                 jobTitle: title,
@@ -356,6 +368,52 @@ export default function SecretJobsPage() {
                 applicantName: name,
                 applicantEmail: email,
                 source: "agentsQueue",
+                jobDescription: jd || undefined,
+              });
+            }
+          }
+        }
+      }
+
+      // 3. Ingest / merge from previewQueues table (which preserves full jobDescription)
+      if (previewVal && typeof previewVal === "object") {
+        for (const [uidKey, userNode] of Object.entries(previewVal)) {
+          if (!userNode || typeof userNode !== "object") continue;
+          const rawData = userNode.data;
+          let items: PreviewQueueItem[] = [];
+          if (typeof rawData === "string") {
+            try {
+              items = JSON.parse(rawData);
+            } catch {}
+          } else if (Array.isArray(rawData)) {
+            items = rawData;
+          }
+
+          for (const item of items) {
+            const title = item.roleName || item.title || "Untitled Role";
+            const url = item.roleUrl || "";
+            const time = item.createdAt || new Date().toISOString();
+            const jd = (item.jobDescription || "").trim();
+            const email = (item.baseResume?.contact?.email || "").trim();
+            const name =
+              item.baseResume?.contact?.name?.trim() ||
+              (email ? email.split("@")[0] : `User ${uidKey.slice(0, 5)}`);
+            const dedupeKey = `${title.toLowerCase().trim()}|${url.toLowerCase().trim()}`;
+
+            const existing = jobMap.get(dedupeKey);
+            if (existing) {
+              if (jd && !existing.jobDescription) existing.jobDescription = jd;
+            } else {
+              jobMap.set(dedupeKey, {
+                id: item.id || dedupeKey,
+                jobTitle: title,
+                jobUrl: url,
+                timestamp: time,
+                applicantId: uidKey,
+                applicantName: name,
+                applicantEmail: email,
+                source: "previewQueue",
+                jobDescription: jd || undefined,
               });
             }
           }
@@ -373,12 +431,13 @@ export default function SecretJobsPage() {
     const appliedRef = ref(rtdb, "appliedJobs");
     let currentApplied: Record<string, any> | null = null;
     let currentQueues: Record<string, any> | null = null;
+    let currentPreviews: Record<string, any> | null = null;
 
     const unsubApplied = onValue(
       appliedRef,
       (snap) => {
         currentApplied = snap.exists() ? snap.val() : null;
-        updateFromSnapshot(currentApplied, currentQueues);
+        updateFromSnapshot(currentApplied, currentQueues, currentPreviews);
       },
       (err) => {
         console.warn("appliedJobs stream restricted or unavailable:", err.message);
@@ -392,11 +451,23 @@ export default function SecretJobsPage() {
       .then((snap) => {
         if (snap.exists()) {
           currentQueues = snap.val();
-          updateFromSnapshot(currentApplied, currentQueues);
+          updateFromSnapshot(currentApplied, currentQueues, currentPreviews);
         }
       })
       .catch((err) => {
         console.warn("agentsQueues bulk load restricted or unavailable:", err.message);
+      });
+
+    // Also attempt bulk load of previewQueues for candidates' original job descriptions
+    get(ref(rtdb, "previewQueues"))
+      .then((snap) => {
+        if (snap.exists()) {
+          currentPreviews = snap.val();
+          updateFromSnapshot(currentApplied, currentQueues, currentPreviews);
+        }
+      })
+      .catch((err) => {
+        console.warn("previewQueues bulk load restricted or unavailable:", err.message);
       });
 
     return () => {
@@ -542,8 +613,30 @@ export default function SecretJobsPage() {
     );
   }
 
-  // 1-Click: Add job directly to Operations
-  const handleAddToMyOperations = (job: CandidateAppliedJob) => {
+  // 1-Click: Add job directly to Operations with complete job description
+  const handleAddToMyOperations = async (job: CandidateAppliedJob) => {
+    let jd = (job.jobDescription || "").trim();
+
+    // If description is missing but URL exists, auto-fetch from URL
+    if (!jd && job.jobUrl) {
+      setImportingId(job.id);
+      try {
+        const res = await fetch("/api/jobs/scrape", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url: job.jobUrl }),
+        });
+        const data = await res.json();
+        if (data?.success && data?.jobDescription) {
+          jd = data.jobDescription;
+        }
+      } catch (err) {
+        console.warn("Auto-scrape fallback failed:", err);
+      } finally {
+        setImportingId(null);
+      }
+    }
+
     if (typeof window !== "undefined") {
       try {
         sessionStorage.setItem(
@@ -551,6 +644,7 @@ export default function SecretJobsPage() {
           JSON.stringify({
             roleName: job.jobTitle,
             roleUrl: job.jobUrl,
+            jobDescription: jd,
           })
         );
       } catch {}
@@ -809,6 +903,14 @@ export default function SecretJobsPage() {
                       <ExternalLink className="w-3 h-3 flex-shrink-0" />
                     </a>
                   )}
+
+                  {/* Description status indicator */}
+                  {job.jobDescription && (
+                    <span className="inline-flex items-center gap-1 font-mono text-[10px] text-emerald-700 bg-emerald-50/80 border border-emerald-200/60 px-1.5 py-0.5 rounded">
+                      <Sparkles className="w-2.5 h-2.5 text-emerald-600" />
+                      <span>JD included</span>
+                    </span>
+                  )}
                 </div>
               </div>
 
@@ -829,12 +931,22 @@ export default function SecretJobsPage() {
 
                 <button
                   type="button"
+                  disabled={importingId === job.id}
                   onClick={() => handleAddToMyOperations(job)}
-                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-medium text-white bg-neutral-900 hover:bg-neutral-800 rounded-lg shadow-subtle active:scale-95 transition-all cursor-pointer"
-                  title="Import into your Operations workspace to tailor resume and apply"
+                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-medium text-white bg-neutral-900 hover:bg-neutral-800 rounded-lg shadow-subtle active:scale-95 transition-all cursor-pointer disabled:opacity-75"
+                  title="Import into your Operations workspace with job description"
                 >
-                  <Sliders className="w-3 h-3" />
-                  <span>Add to My Operations</span>
+                  {importingId === job.id ? (
+                    <>
+                      <Sparkles className="w-3 h-3 animate-spin text-neutral-300" />
+                      <span>Fetching Description...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Sliders className="w-3 h-3" />
+                      <span>Add to My Operations</span>
+                    </>
+                  )}
                 </button>
 
                 {/* Archive / Restore Button */}

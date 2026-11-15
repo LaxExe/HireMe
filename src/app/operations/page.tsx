@@ -64,6 +64,31 @@ export default function OperationsPage() {
     latestTitle: string;
   } | null>(null);
   const [missingResumePrompt, setMissingResumePrompt] = useState(false);
+  const [scrapingUrl, setScrapingUrl] = useState(false);
+  const [scrapeError, setScrapeError] = useState<string | null>(null);
+
+  const fetchJobDescriptionFromUrl = async (urlToFetch: string) => {
+    if (!urlToFetch || !urlToFetch.trim()) return;
+    setScrapingUrl(true);
+    setScrapeError(null);
+    try {
+      const res = await fetch("/api/jobs/scrape", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: urlToFetch.trim() }),
+      });
+      const data = await res.json();
+      if (data?.success && data?.jobDescription) {
+        setJobDescription(data.jobDescription);
+      } else {
+        setScrapeError(data?.error || "Could not extract job description from URL");
+      }
+    } catch (err: any) {
+      setScrapeError(err?.message || "Failed to fetch from URL");
+    } finally {
+      setScrapingUrl(false);
+    }
+  };
 
   useEffect(() => {
     if (!loading && !user) {
@@ -104,7 +129,11 @@ export default function OperationsPage() {
 
       if (targetRole) setRoleName(targetRole);
       if (targetUrl) setRoleUrl(targetUrl);
-      if (targetJd) setJobDescription(targetJd);
+      if (targetJd) {
+        setJobDescription(targetJd);
+      } else if (targetUrl) {
+        fetchJobDescriptionFromUrl(targetUrl);
+      }
     }
 
     const unsubMaster = subscribeMasterResume(user.uid, (loaded) => {
@@ -397,9 +426,23 @@ export default function OperationsPage() {
           </div>
 
           <div className="space-y-1">
-            <label className="block text-[11px] font-mono uppercase text-neutral-500">
-              Role Posting URL
-            </label>
+            <div className="flex items-center justify-between">
+              <label className="block text-[11px] font-mono uppercase text-neutral-500">
+                Role Posting URL
+              </label>
+              {roleUrl.trim() && (
+                <button
+                  type="button"
+                  disabled={scrapingUrl}
+                  onClick={() => fetchJobDescriptionFromUrl(roleUrl)}
+                  className="text-[10px] font-mono text-neutral-600 hover:text-neutral-900 bg-white hover:bg-neutral-50 border border-[#ebebeb] px-2 py-0.5 rounded transition-all active:scale-95 disabled:opacity-40 cursor-pointer inline-flex items-center gap-1 shadow-2xs"
+                  title="Extract job description from posting URL"
+                >
+                  <Sparkles className={`w-2.5 h-2.5 ${scrapingUrl ? "animate-spin text-neutral-900" : "text-neutral-500"}`} />
+                  <span>{scrapingUrl ? "Extracting..." : "Fetch from URL"}</span>
+                </button>
+              )}
+            </div>
             <input
               type="url"
               value={roleUrl}
@@ -411,15 +454,31 @@ export default function OperationsPage() {
         </div>
 
         <div className="space-y-1">
-          <label className="block text-[11px] font-mono uppercase text-neutral-500">
-            Job Description
-          </label>
+          <div className="flex items-center justify-between">
+            <label className="block text-[11px] font-mono uppercase text-neutral-500">
+              Job Description
+            </label>
+            {scrapingUrl && (
+              <span className="text-[10px] font-mono text-neutral-500 inline-flex items-center gap-1 animate-pulse">
+                <Sparkles className="w-2.5 h-2.5 animate-spin text-neutral-800" />
+                <span>Extracting from URL...</span>
+              </span>
+            )}
+          </div>
           <textarea
             value={jobDescription}
-            onChange={(e) => setJobDescription(e.target.value)}
+            onChange={(e) => {
+              setJobDescription(e.target.value);
+              if (scrapeError) setScrapeError(null);
+            }}
             placeholder="Paste the full job description, requirements, and qualifications here..."
             className="w-full h-44 p-3 text-xs leading-relaxed bg-[#fafafa] border border-[#ebebeb] rounded-lg focus:outline-none focus:border-neutral-900 focus:bg-white transition-colors resize-y"
           />
+          {scrapeError && (
+            <p className="text-[11px] text-amber-700 font-mono">
+              {scrapeError}. You can paste the description manually above.
+            </p>
+          )}
         </div>
 
         <div className="flex items-center justify-end gap-2 pt-1">

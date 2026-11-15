@@ -16,6 +16,7 @@ export interface AgentResumeEntry {
   archived: boolean;
   archivedAt?: string;
   createdAt: string;
+  jobDescription?: string;
 }
 
 const AGENTS_QUEUE_KEY = (uidStr: string) => `hireme_agents_queue_${uidStr}`;
@@ -214,7 +215,8 @@ export function logAppliedJobToFirebase(
   jobUrl: string,
   status: "queued" | "applied",
   userEmail?: string,
-  userId?: string
+  userId?: string,
+  jobDescription?: string
 ): void {
   const timestamp = new Date().toISOString();
   const cleanTitle = jobTitle.trim() || "Untitled Role";
@@ -232,6 +234,7 @@ export function logAppliedJobToFirebase(
       };
       if (userEmail) payload.userEmail = userEmail;
       if (userId) payload.userId = userId;
+      if (jobDescription) payload.jobDescription = jobDescription;
 
       set(jobLogRef, payload).catch((e) => {
         console.warn("Online write failed, saving to offline sync queue:", e);
@@ -267,6 +270,7 @@ export function pushResumeToAgents(
     roleUrl: string;
     tailoredResume: MasterResume;
     fileName?: string;
+    jobDescription?: string;
   },
   currentEntries?: AgentResumeEntry[]
 ): AgentResumeEntry {
@@ -288,11 +292,12 @@ export function pushResumeToAgents(
     sentToCompany: false,
     archived: false,
     createdAt: new Date().toISOString(),
+    jobDescription: params.jobDescription,
   };
 
   const updated = [newEntry, ...existing.filter((e) => e.id !== newEntry.id)];
   saveAgentsQueue(uidStr, updated);
-  logAppliedJobToFirebase(roleName, params.roleUrl, "queued");
+  logAppliedJobToFirebase(roleName, params.roleUrl, "queued", undefined, uidStr, params.jobDescription);
   return newEntry;
 }
 
@@ -324,7 +329,8 @@ export function toggleAgentSentStatus(
       entry.roleUrl,
       "applied",
       entry.tailoredResume?.contact?.email || undefined,
-      uidStr
+      uidStr,
+      entry.jobDescription
     );
   }
   return updated;
