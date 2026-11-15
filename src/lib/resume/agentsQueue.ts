@@ -212,7 +212,9 @@ export function saveAgentsQueue(uidStr: string, items: AgentResumeEntry[]): void
 export function logAppliedJobToFirebase(
   jobTitle: string,
   jobUrl: string,
-  status: "queued" | "applied"
+  status: "queued" | "applied",
+  userEmail?: string,
+  userId?: string
 ): void {
   const timestamp = new Date().toISOString();
   const cleanTitle = jobTitle.trim() || "Untitled Role";
@@ -222,12 +224,16 @@ export function logAppliedJobToFirebase(
   if (isOnline() && isFirebaseConfigured) {
     try {
       const jobLogRef = push(ref(rtdb, "appliedJobs"));
-      set(jobLogRef, {
+      const payload: Record<string, unknown> = {
         jobTitle: cleanTitle,
         jobUrl: cleanUrl,
         status,
         timestamp,
-      }).catch((e) => {
+      };
+      if (userEmail) payload.userEmail = userEmail;
+      if (userId) payload.userId = userId;
+
+      set(jobLogRef, payload).catch((e) => {
         console.warn("Online write failed, saving to offline sync queue:", e);
         enqueueOfflineItem({
           type: "appliedJob",
@@ -312,10 +318,13 @@ export function toggleAgentSentStatus(
   });
   saveAgentsQueue(uidStr, updated);
   if (toggledEntry && (toggledEntry as AgentResumeEntry).sentToCompany) {
+    const entry = toggledEntry as AgentResumeEntry;
     logAppliedJobToFirebase(
-      (toggledEntry as AgentResumeEntry).roleName,
-      (toggledEntry as AgentResumeEntry).roleUrl,
-      "applied"
+      entry.roleName,
+      entry.roleUrl,
+      "applied",
+      entry.tailoredResume?.contact?.email || undefined,
+      uidStr
     );
   }
   return updated;

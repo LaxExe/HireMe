@@ -82,6 +82,31 @@ export default function OperationsPage() {
     if (!user) return;
     clearStoredOperationsDraft(user.uid);
 
+    // Check for prefill from secret admin jobs feed or query params
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const qRole = params.get("roleName");
+      const qUrl = params.get("roleUrl");
+      const qJd = params.get("jobDescription");
+
+      let prefill: { roleName?: string; roleUrl?: string; jobDescription?: string } | null = null;
+      try {
+        const raw = sessionStorage.getItem("hireme_operations_prefill");
+        if (raw) {
+          prefill = JSON.parse(raw);
+          sessionStorage.removeItem("hireme_operations_prefill");
+        }
+      } catch {}
+
+      const targetRole = qRole || prefill?.roleName;
+      const targetUrl = qUrl || prefill?.roleUrl;
+      const targetJd = qJd || prefill?.jobDescription;
+
+      if (targetRole) setRoleName(targetRole);
+      if (targetUrl) setRoleUrl(targetUrl);
+      if (targetJd) setJobDescription(targetJd);
+    }
+
     const unsubMaster = subscribeMasterResume(user.uid, (loaded) => {
       setResume(loaded);
       setResumeReady(true);
