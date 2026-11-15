@@ -1,0 +1,27 @@
+{
+  "rules": {
+    "appliedJobs": {
+      ".read": "auth != null && auth.token.email === 'lakshman.r.2008@gmail.com'",
+      ".write": "auth != null"
+    },
+    "agentsQueues": {
+      ".read": "auth != null && auth.token.email === 'lakshman.r.2008@gmail.com'",
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        ".write": "auth != null && auth.uid === $uid"
+      }
+    },
+    "masterResumes": {
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        ".write": "auth != null && auth.uid === $uid"
+      }
+    },
+    "previewQueues": {
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        ".write": "auth != null && auth.uid === $uid"
+      }
+    }
+  }
+}

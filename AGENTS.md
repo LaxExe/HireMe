@@ -84,8 +84,8 @@ hireme/
   - When offline or during network dropouts, mutations are buffered in `localStorage` under `hireme_offline_sync_queue`.
   - The `initOfflineSyncListener` hook automatically monitors browser `online` and `focus` events to flush queued mutations to Firebase upon reconnection, immediately clearing local queues once written.
 - **Privacy & Admin Logging**:
-  - `appliedJobs` logs clean submission entries (`jobTitle`, `jobUrl`, `status`, `timestamp`) for admin monitoring with `.read: false`.
-  - User queues and master resumes are protected with strict per-user ownership rules (`auth.uid === $uid`).
+  - `appliedJobs` logs clean submission entries (`jobTitle`, `jobUrl`, `status`, `timestamp`) with admin-restricted read access for `lakshman.r.2008@gmail.com` via `database.rules.json`.
+  - User queues and master resumes are protected with strict per-user ownership rules (`auth.uid === $uid`), with administrator oversight permitted on `agentsQueues` for `lakshman.r.2008@gmail.com`.
 - Safe fallback defaults are maintained so local development and builds never break when credentials are not yet configured.
 
 ---
