@@ -94,10 +94,10 @@ function ProjectCard({
                     href={project.url.startsWith("http") ? project.url : `https://${project.url}`}
                     target="_blank"
                     rel="noreferrer"
-                    className="inline-flex items-center gap-1 hover:underline decoration-[#ebebeb] underline-offset-2"
+                    className="inline-flex items-center gap-1 text-blue-700 hover:text-blue-800 hover:underline decoration-blue-200 underline-offset-2"
                   >
                     <span>{project.name}</span>
-                    <ExternalLink className="w-3 h-3 text-neutral-400" />
+                    <ExternalLink className="w-3 h-3 text-blue-600" />
                   </a>
                 ) : (
                   <span>{project.name}</span>
@@ -115,7 +115,7 @@ function ProjectCard({
                         target="_blank"
                         rel="noreferrer"
                         title={l.label || l.url}
-                        className="inline-flex items-center gap-1 text-neutral-500 hover:text-neutral-900 transition-colors"
+                        className="inline-flex items-center gap-1 text-blue-700 hover:text-blue-800 transition-colors"
                       >
                         {isGh ? (
                           <svg

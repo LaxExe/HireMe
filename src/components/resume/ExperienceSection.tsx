@@ -88,10 +88,10 @@ function JobCard({
                   href={job.companyUrl}
                   target="_blank"
                   rel="noreferrer"
-                  className="inline-flex items-center gap-1 text-neutral-700 hover:text-neutral-900 underline decoration-[#ebebeb] underline-offset-2"
+                  className="inline-flex items-center gap-1 text-blue-700 hover:text-blue-800 underline decoration-blue-200 underline-offset-2"
                 >
                   <span>{job.company}</span>
-                  <ExternalLink className="w-3 h-3 text-neutral-400" />
+                  <ExternalLink className="w-3 h-3 text-blue-600" />
                 </a>
               ) : (
                 <span className="text-neutral-700">{job.company}</span>

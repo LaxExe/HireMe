@@ -653,10 +653,11 @@ function parseContact(headerRegion: string): Contact {
     }
     seenUrls.add(url);
 
-    // Check preceding 28 characters for a FontAwesome icon like \faLinkedin or \faGlobe
+    // Check inside link label or preceding 28 characters for a FontAwesome icon like \faLinkedin or \faGlobe
     const lookbehind = headerRegion.slice(Math.max(0, hm.index - 28), hm.index);
     const iconMatches = lookbehind.match(/\\fa[A-Za-z0-9]+\*?/g);
-    const icon = iconMatches ? iconMatches[iconMatches.length - 1] : undefined;
+    const icon =
+      extractFaIcon(args[1]) || (iconMatches ? iconMatches[iconMatches.length - 1] : undefined);
 
     let kind: ContactLink["kind"] = "other";
     if (/linkedin\.com/i.test(url)) kind = "linkedin";
@@ -1464,16 +1465,19 @@ export function reconstructLatexResume(resume: MasterResume): string {
   const renderLink = (
     url: string,
     label: string,
-    opts?: { iconLatex?: string; underline?: boolean }
+    opts?: { iconLatex?: string; iconBeforeLatex?: string; underline?: boolean }
   ) => {
     const rawUrl = url.startsWith("http") || url.startsWith("mailto:") ? url : `https://${url}`;
     const escapedLabel = escapeLatexText(label);
     let display = escapedLabel;
+    if (opts?.underline && !useResumeLink && display) {
+      display = `\\underline{${display}}`;
+    }
+    if (opts?.iconBeforeLatex) {
+      display = display ? `${opts.iconBeforeLatex}~${display}` : opts.iconBeforeLatex;
+    }
     if (opts?.iconLatex) {
       display = display ? `${display} ${opts.iconLatex}` : opts.iconLatex;
-    }
-    if (opts?.underline && !useResumeLink) {
-      display = `\\underline{${display}}`;
     }
     if (useResumeLink) {
       return `\\resumeLink{${rawUrl}}{${display}}`;
@@ -1515,18 +1519,24 @@ export function reconstructLatexResume(resume: MasterResume): string {
           : escapeLatexText(contact.phone)
       );
     }
+    const hasLinkBlue = /\\definecolor\{linkblue\}/.test(preamble);
     if (contact.email) {
-      const emailHref = renderLink(`mailto:${contact.email}`, contact.email, {
-        underline: fmt.headerStyle.underlineLinks,
-      });
-      parts.push(showHeaderIcons ? `\\faEnvelope~${emailHref}` : emailHref);
+      if (showHeaderIcons && hasLinkBlue) {
+        parts.push(
+          renderLink(`mailto:${contact.email}`, contact.email, {
+            iconBeforeLatex: "\\faEnvelope",
+            underline: fmt.headerStyle.underlineLinks,
+          })
+        );
+      } else {
+        const emailHref = renderLink(`mailto:${contact.email}`, contact.email, {
+          underline: fmt.headerStyle.underlineLinks,
+        });
+        parts.push(showHeaderIcons ? `\\faEnvelope~${emailHref}` : emailHref);
+      }
     }
     for (const link of contact.links) {
       const labelRaw = link.label || link.url;
-      const formattedLink = renderLink(link.url, labelRaw, {
-        underline: fmt.headerStyle.underlineLinks,
-      });
-
       if (showHeaderIcons) {
         const icon =
           link.icon ||
@@ -1536,8 +1546,23 @@ export function reconstructLatexResume(resume: MasterResume): string {
               (/github\.com/i.test(link.url) && !/github\.io/i.test(link.url))
             ? "\\faGithub"
             : "\\faGlobe");
-        parts.push(`${icon}~${formattedLink}`);
+        if (hasLinkBlue) {
+          parts.push(
+            renderLink(link.url, labelRaw, {
+              iconBeforeLatex: icon,
+              underline: fmt.headerStyle.underlineLinks,
+            })
+          );
+        } else {
+          const formattedLink = renderLink(link.url, labelRaw, {
+            underline: fmt.headerStyle.underlineLinks,
+          });
+          parts.push(`${icon}~${formattedLink}`);
+        }
       } else {
+        const formattedLink = renderLink(link.url, labelRaw, {
+          underline: fmt.headerStyle.underlineLinks,
+        });
         parts.push(formattedLink);
       }
     }

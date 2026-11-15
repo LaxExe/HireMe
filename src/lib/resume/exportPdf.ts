@@ -217,11 +217,15 @@ function drawVectorIcon(
   x: number,
   y: number,
   sizePt: number,
-  gray = 0.08
+  gray = 0.08,
+  useLinkBlue = false
 ): number {
   const s = sizePt * 0.78;
   const by = y + sizePt * 0.04;
-  ops.push(`q ${num(gray)} G ${num(gray)} g 0.75 w 1 J 1 j`);
+  const colorCmd = useLinkBlue
+    ? "0.114 0.306 0.847 RG 0.114 0.306 0.847 rg"
+    : `${num(gray)} G ${num(gray)} g`;
+  ops.push(`q ${colorCmd} 0.75 w 1 J 1 j`);
 
   if (kind === "link") {
     // Chain link icon (\faLink)
@@ -430,6 +434,8 @@ export function generateResumePdfBytes(resume: MasterResume): Uint8Array {
     }
   };
 
+  const hasLinkBlue = /\\definecolor\{linkblue\}/.test(resume.rawLatex || "");
+
   const drawTextSpan = (
     text: string,
     x: number,
@@ -444,27 +450,30 @@ export function generateResumePdfBytes(resume: MasterResume): Uint8Array {
   ): number => {
     let curX = x;
     const startX = x;
+    const useLinkBlue = Boolean(linkUrl && hasLinkBlue);
     if (iconBefore) {
-      curX += drawVectorIcon(curPage.ops, iconBefore, curX, y, sizePt, gray);
+      curX += drawVectorIcon(curPage.ops, iconBefore, curX, y, sizePt, gray, useLinkBlue);
     }
     if (text) {
       const w = measureTextPt(text, font, sizePt);
+      const fillColor = useLinkBlue ? "0.114 0.306 0.847 rg" : `${num(gray)} g`;
       curPage.ops.push(
-        `BT ${num(gray)} g ${fontResourceName(font)} ${num(sizePt)} Tf ${num(curX)} ${num(
+        `BT ${fillColor} ${fontResourceName(font)} ${num(sizePt)} Tf ${num(curX)} ${num(
           y
         )} Td ${toPdfLiteralString(text)} Tj ET`
       );
       if (underline) {
         const uy = y - 1.5;
+        const strokeColor = useLinkBlue ? "0.114 0.306 0.847 RG" : `${num(gray)} G`;
         curPage.ops.push(
-          `${num(gray)} G 0.45 w ${num(curX)} ${num(uy)} m ${num(curX + w)} ${num(uy)} l S`
+          `${strokeColor} 0.45 w ${num(curX)} ${num(uy)} m ${num(curX + w)} ${num(uy)} l S`
         );
       }
       curX += w;
     }
     if (iconAfter) {
       curX += 2.5;
-      curX += drawVectorIcon(curPage.ops, iconAfter, curX, y, sizePt, gray);
+      curX += drawVectorIcon(curPage.ops, iconAfter, curX, y, sizePt, gray, useLinkBlue);
     }
     const totalW = curX - startX;
     if (linkUrl && totalW > 0) {
