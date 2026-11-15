@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState, useMemo } from "react";
+import React, { useEffect, useState, useMemo, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
@@ -8,32 +8,39 @@ import {
   Sliders,
   ShieldAlert,
   Search,
-  Briefcase,
   Sparkles,
   ArrowRight,
   User,
   Users,
   CheckCircle2,
   Clock,
-  Filter,
+  Archive,
+  RotateCcw,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { rtdb, isFirebaseConfigured } from "@/lib/firebase";
-import { ref, onValue, get } from "firebase/database";
+import { ref, onValue, get, set } from "firebase/database";
 import {
   subscribeAgentsQueue,
-  loadAgentsQueue,
   type AgentResumeEntry,
 } from "@/lib/resume/agentsQueue";
 import {
   subscribePreviewQueue,
-  loadPreviewQueue,
   type PreviewQueueItem,
 } from "@/lib/resume/previewQueue";
 
+// Known administrator UIDs
+const ADMIN_UIDS = new Set([
+  "PvKPmKmpqSZMTW9w4XVqWK3Y8El1", // lakshman.r.2008@gmail.com
+  "CtF9N7qVfcQse3DsZcPvkQ4dwCT2", // lakshmananramanathan08@gmail.com
+]);
+
+// Authorized administrator email list (with typos/aliases handled)
 const AUTHORIZED_ADMIN_EMAILS = [
   "lakshman.r.2008@gmail.com",
   "lakshmananramanathan08@gmail.com",
+  "lakshmananramanthan08@gmail.com",
+  "l2ramanathan@uwaterloo.ca",
   process.env.NEXT_PUBLIC_ADMIN_EMAIL,
 ]
   .filter(Boolean)
@@ -76,6 +83,85 @@ function getDomainFromUrl(url: string): string {
   }
 }
 
+const ARCHIVE_STORAGE_PREFIX = "hireme_secret_archived_jobs_";
+
+function getJobKey(job: { jobTitle: string; jobUrl: string }): string {
+  const normTitle = (job.jobTitle || "").toLowerCase().replace(/[^a-z0-9]/g, "").trim();
+  const normUrl = (job.jobUrl || "")
+    .toLowerCase()
+    .replace(/^https?:\/\//, "")
+    .replace(/\/+$/, "")
+    .trim();
+  return `${normTitle}|${normUrl}`;
+}
+
+function loadLocalArchivedKeys(uid?: string): string[] {
+  if (typeof window === "undefined" || !uid) return [];
+  try {
+    const raw = localStorage.getItem(`${ARCHIVE_STORAGE_PREFIX}${uid}`);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch {}
+  return [];
+}
+
+function saveLocalArchivedKeys(uid: string | undefined, keys: string[]) {
+  if (typeof window === "undefined" || !uid) return;
+  try {
+    localStorage.setItem(`${ARCHIVE_STORAGE_PREFIX}${uid}`, JSON.stringify(keys));
+  } catch {}
+}
+
+/**
+ * Checks if a job belongs to the current user or administrator identity
+ * to ensure that admin jobs (including lakshmananramanathan08@gmail.com)
+ * are NEVER displayed in the candidate stream.
+ */
+function isJobFromAdminOrSelf(
+  job: CandidateAppliedJob,
+  currentUserUid?: string,
+  currentUserEmail?: string
+): boolean {
+  // 1. Current user UID or known Admin UIDs
+  if (currentUserUid && job.applicantId === currentUserUid) return true;
+  if (ADMIN_UIDS.has(job.applicantId)) return true;
+
+  // 2. Current user email match
+  if (currentUserEmail && job.applicantEmail) {
+    if (job.applicantEmail.toLowerCase().trim() === currentUserEmail.toLowerCase().trim()) {
+      return true;
+    }
+  }
+
+  // 3. Known Admin emails / patterns
+  const emailLower = (job.applicantEmail || "").toLowerCase().trim();
+  if (emailLower) {
+    if (AUTHORIZED_ADMIN_EMAILS.includes(emailLower)) return true;
+    if (
+      emailLower.includes("lakshman") ||
+      emailLower.includes("ramanathan") ||
+      emailLower.includes("ramanthan") ||
+      emailLower.includes("l2ramanathan")
+    ) {
+      return true;
+    }
+  }
+
+  // 4. Admin name match
+  const nameLower = (job.applicantName || "").toLowerCase().trim();
+  if (
+    nameLower.includes("lakshman") ||
+    nameLower.includes("ramanathan") ||
+    nameLower.includes("ramanthan")
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
 export default function SecretJobsPage() {
   const router = useRouter();
   const { user, loading } = useAuth();
@@ -85,6 +171,10 @@ export default function SecretJobsPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedApplicantKey, setSelectedApplicantKey] = useState<string>("all");
   const [permissionError, setPermissionError] = useState(false);
+
+  // Tab: "active" vs "archived"
+  const [viewTab, setViewTab] = useState<"active" | "archived">("active");
+  const [archivedKeys, setArchivedKeys] = useState<string[]>([]);
 
   // Current user's own queue items (to exclude jobs already applied to or queued)
   const [myAgentsEntries, setMyAgentsEntries] = useState<AgentResumeEntry[]>([]);
@@ -101,6 +191,58 @@ export default function SecretJobsPage() {
     if (!user?.email) return false;
     return AUTHORIZED_ADMIN_EMAILS.includes(user.email.toLowerCase().trim());
   }, [user]);
+
+  // Load archived keys on mount & sync with RTDB
+  useEffect(() => {
+    if (!user) return;
+    const local = loadLocalArchivedKeys(user.uid);
+    setArchivedKeys(local);
+
+    if (rtdb && isFirebaseConfigured) {
+      get(ref(rtdb, `userSecretArchivedJobs/${user.uid}`))
+        .then((snap) => {
+          if (snap.exists()) {
+            const remote = snap.val();
+            if (Array.isArray(remote)) {
+              const merged = Array.from(new Set([...local, ...remote]));
+              setArchivedKeys(merged);
+              saveLocalArchivedKeys(user.uid, merged);
+            }
+          }
+        })
+        .catch(() => {});
+    }
+  }, [user]);
+
+  const persistArchivedKeys = useCallback(
+    (keys: string[]) => {
+      if (!user) return;
+      saveLocalArchivedKeys(user.uid, keys);
+      if (rtdb && isFirebaseConfigured) {
+        set(ref(rtdb, `userSecretArchivedJobs/${user.uid}`), keys).catch(() => {});
+      }
+    },
+    [user]
+  );
+
+  const handleArchiveJob = (job: CandidateAppliedJob) => {
+    const key = getJobKey(job);
+    const updated = Array.from(new Set([...archivedKeys, job.id, key]));
+    setArchivedKeys(updated);
+    persistArchivedKeys(updated);
+  };
+
+  const handleUnarchiveJob = (job: CandidateAppliedJob) => {
+    const key = getJobKey(job);
+    const updated = archivedKeys.filter((k) => k !== job.id && k !== key);
+    setArchivedKeys(updated);
+    persistArchivedKeys(updated);
+  };
+
+  const handleRestoreAllArchived = () => {
+    setArchivedKeys([]);
+    persistArchivedKeys([]);
+  };
 
   // Subscribe to current user's own queues to track what they already have
   useEffect(() => {
@@ -199,7 +341,9 @@ export default function SecretJobsPage() {
             const url = entry.roleUrl || "";
             const time = entry.sentAt || entry.createdAt || new Date().toISOString();
             const email = (entry.tailoredResume?.contact?.email || "").trim();
-            const name = entry.tailoredResume?.contact?.name?.trim() || (email ? email.split("@")[0] : `User ${uidKey.slice(0, 5)}`);
+            const name =
+              entry.tailoredResume?.contact?.name?.trim() ||
+              (email ? email.split("@")[0] : `User ${uidKey.slice(0, 5)}`);
             const dedupeKey = `${title.toLowerCase().trim()}|${url.toLowerCase().trim()}`;
 
             if (!jobMap.has(dedupeKey)) {
@@ -260,18 +404,17 @@ export default function SecretJobsPage() {
     };
   }, [user, isAuthorized]);
 
-  // Filter out any jobs the current user already has in Preview or Agents, or their own submissions
+  // Filter out any jobs the current user or admin accounts applied to,
+  // or that already exist in the user's Preview or Agents queues
   const eligibleJobs = useMemo(() => {
     if (!user) return [];
     const myUid = user.uid;
+    const myEmail = user.email || "";
     const { urls, titles, normalizeUrl, normalizeTitle } = myJobIdentifiers;
 
     return rawJobs.filter((job) => {
-      // 1. Exclude if submitted by the current user or admin accounts
-      if (job.applicantId === myUid) return false;
-      if (job.applicantEmail && AUTHORIZED_ADMIN_EMAILS.includes(job.applicantEmail.toLowerCase().trim())) {
-        return false;
-      }
+      // 1. Exclude if submitted by admin, current user, or matches personal admin identity
+      if (isJobFromAdminOrSelf(job, myUid, myEmail)) return false;
 
       // 2. Exclude if the current user already has this job in their Agents or Preview queues
       const normUrl = normalizeUrl(job.jobUrl);
@@ -284,10 +427,31 @@ export default function SecretJobsPage() {
     });
   }, [rawJobs, user, myJobIdentifiers]);
 
-  // Group eligible jobs by applicant for the "by user" navigation
+  // Partition into Active and Archived sets
+  const { activeJobs, archivedJobs } = useMemo(() => {
+    const active: CandidateAppliedJob[] = [];
+    const archived: CandidateAppliedJob[] = [];
+
+    const archiveSet = new Set(archivedKeys);
+
+    for (const job of eligibleJobs) {
+      const key = getJobKey(job);
+      if (archiveSet.has(job.id) || archiveSet.has(key)) {
+        archived.push(job);
+      } else {
+        active.push(job);
+      }
+    }
+
+    return { activeJobs: active, archivedJobs: archived };
+  }, [eligibleJobs, archivedKeys]);
+
+  const currentViewJobs = viewTab === "active" ? activeJobs : archivedJobs;
+
+  // Group current view jobs by applicant for the "by user" navigation
   const applicantsList = useMemo(() => {
     const map = new Map<string, { key: string; name: string; email?: string; count: number }>();
-    for (const job of eligibleJobs) {
+    for (const job of currentViewJobs) {
       const key = job.applicantEmail || job.applicantId || "other";
       const existing = map.get(key);
       if (existing) {
@@ -302,11 +466,23 @@ export default function SecretJobsPage() {
       }
     }
     return Array.from(map.values()).sort((a, b) => b.count - a.count);
-  }, [eligibleJobs]);
+  }, [currentViewJobs]);
+
+  // Reset selected applicant if they have 0 jobs in the current view
+  useEffect(() => {
+    if (selectedApplicantKey !== "all") {
+      const exists = currentViewJobs.some(
+        (job) => (job.applicantEmail || job.applicantId || "other") === selectedApplicantKey
+      );
+      if (!exists) {
+        setSelectedApplicantKey("all");
+      }
+    }
+  }, [viewTab, currentViewJobs, selectedApplicantKey]);
 
   // Filter jobs by applicant and search query
   const displayedJobs = useMemo(() => {
-    return eligibleJobs.filter((job) => {
+    return currentViewJobs.filter((job) => {
       // Filter by applicant if selected
       if (selectedApplicantKey !== "all") {
         const key = job.applicantEmail || job.applicantId || "other";
@@ -326,7 +502,7 @@ export default function SecretJobsPage() {
 
       return true;
     });
-  }, [eligibleJobs, selectedApplicantKey, searchQuery]);
+  }, [currentViewJobs, selectedApplicantKey, searchQuery]);
 
   // Loading state
   if (loading || (user && isAuthorized && dataLoading)) {
@@ -404,10 +580,63 @@ export default function SecretJobsPage() {
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
-          <span className="font-mono text-[11px] text-neutral-600 bg-white border border-[#ebebeb] px-2.5 py-1 rounded-md shadow-2xs">
-            {eligibleJobs.length} {eligibleJobs.length === 1 ? "new job available" : "new jobs available"}
-          </span>
+        {/* View mode toggle */}
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-1 p-1 bg-neutral-100 rounded-lg border border-[#ebebeb]">
+            <button
+              type="button"
+              onClick={() => setViewTab("active")}
+              className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium transition-all active:scale-95 cursor-pointer ${
+                viewTab === "active"
+                  ? "bg-white text-neutral-900 shadow-2xs font-semibold"
+                  : "text-neutral-500 hover:text-neutral-900"
+              }`}
+            >
+              <span>Active Feed</span>
+              <span
+                className={`font-mono text-[10px] px-1.5 py-0.2 rounded-full ${
+                  viewTab === "active"
+                    ? "bg-neutral-900 text-white"
+                    : "bg-neutral-200 text-neutral-600"
+                }`}
+              >
+                {activeJobs.length}
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewTab("archived")}
+              className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium transition-all active:scale-95 cursor-pointer ${
+                viewTab === "archived"
+                  ? "bg-white text-neutral-900 shadow-2xs font-semibold"
+                  : "text-neutral-500 hover:text-neutral-900"
+              }`}
+            >
+              <Archive className="w-3 h-3" />
+              <span>Archived</span>
+              <span
+                className={`font-mono text-[10px] px-1.5 py-0.2 rounded-full ${
+                  viewTab === "archived"
+                    ? "bg-neutral-900 text-white"
+                    : "bg-neutral-200 text-neutral-600"
+                }`}
+              >
+                {archivedJobs.length}
+              </span>
+            </button>
+          </div>
+
+          {viewTab === "archived" && archivedJobs.length > 0 && (
+            <button
+              type="button"
+              onClick={handleRestoreAllArchived}
+              className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-neutral-600 hover:text-neutral-900 bg-white border border-[#ebebeb] rounded-lg shadow-2xs active:scale-95 transition-all cursor-pointer"
+              title="Restore all archived jobs back to active feed"
+            >
+              <RotateCcw className="w-3 h-3 text-neutral-400" />
+              <span>Restore All</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -431,7 +660,9 @@ export default function SecretJobsPage() {
           <div className="flex items-center justify-between">
             <span className="font-mono text-[10px] uppercase tracking-wider text-neutral-400 font-semibold flex items-center gap-1">
               <Users className="w-3 h-3 text-neutral-400" />
-              <span>Browse by Candidate ({applicantsList.length})</span>
+              <span>
+                Browse by Candidate ({applicantsList.length}) {viewTab === "archived" ? "— Archived" : ""}
+              </span>
             </span>
             {selectedApplicantKey !== "all" && (
               <button
@@ -456,8 +687,12 @@ export default function SecretJobsPage() {
             >
               <Users className="w-3 h-3" />
               <span>All Other Candidates</span>
-              <span className={`font-mono text-[10px] ml-0.5 ${selectedApplicantKey === "all" ? "text-neutral-300" : "text-neutral-400"}`}>
-                {eligibleJobs.length}
+              <span
+                className={`font-mono text-[10px] ml-0.5 ${
+                  selectedApplicantKey === "all" ? "text-neutral-300" : "text-neutral-400"
+                }`}
+              >
+                {currentViewJobs.length}
               </span>
             </button>
 
@@ -476,7 +711,11 @@ export default function SecretJobsPage() {
                 >
                   <User className="w-3 h-3" />
                   <span>{app.name}</span>
-                  <span className={`font-mono text-[10px] ml-0.5 ${isSelected ? "text-neutral-300" : "text-neutral-400"}`}>
+                  <span
+                    className={`font-mono text-[10px] ml-0.5 ${
+                      isSelected ? "text-neutral-300" : "text-neutral-400"
+                    }`}
+                  >
                     {app.count}
                   </span>
                 </button>
@@ -506,13 +745,31 @@ export default function SecretJobsPage() {
             <p className="text-xs font-medium text-neutral-800">
               {searchQuery
                 ? "No matching jobs found"
+                : viewTab === "archived"
+                ? "No archived jobs"
+                : archivedJobs.length > 0 && activeJobs.length === 0
+                ? "All available jobs have been archived"
                 : "You're all caught up!"}
             </p>
             <p className="text-[11px] text-neutral-500 max-w-sm mx-auto leading-relaxed">
               {searchQuery
                 ? "Try searching for a different company name or keyword."
+                : viewTab === "archived"
+                ? "Jobs you archive from your secret feed will be preserved here so you can restore them anytime."
+                : archivedJobs.length > 0 && activeJobs.length === 0
+                ? "You have archived every incoming job in the stream."
                 : "You have already applied to or queued every job discovered by other candidates on the platform."}
             </p>
+            {viewTab === "active" && archivedJobs.length > 0 && activeJobs.length === 0 && (
+              <button
+                type="button"
+                onClick={() => setViewTab("archived")}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-neutral-700 bg-white hover:bg-neutral-50 border border-[#ebebeb] rounded-full shadow-2xs transition-all active:scale-95 cursor-pointer mt-2"
+              >
+                <Archive className="w-3 h-3 text-neutral-500" />
+                <span>View {archivedJobs.length} Archived Jobs</span>
+              </button>
+            )}
           </div>
         ) : (
           displayedJobs.map((job) => (
@@ -556,7 +813,7 @@ export default function SecretJobsPage() {
               </div>
 
               {/* Actions */}
-              <div className="flex items-center gap-2 flex-shrink-0">
+              <div className="flex items-center gap-2 flex-shrink-0 flex-wrap">
                 {job.jobUrl && (
                   <a
                     href={job.jobUrl.startsWith("http") ? job.jobUrl : `https://${job.jobUrl}`}
@@ -579,6 +836,29 @@ export default function SecretJobsPage() {
                   <Sliders className="w-3 h-3" />
                   <span>Add to My Operations</span>
                 </button>
+
+                {/* Archive / Restore Button */}
+                {viewTab === "active" ? (
+                  <button
+                    type="button"
+                    onClick={() => handleArchiveJob(job)}
+                    className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-neutral-500 hover:text-neutral-900 bg-white hover:bg-neutral-50 border border-[#ebebeb] rounded-lg shadow-2xs active:scale-95 transition-all cursor-pointer"
+                    title="Archive this job from your active secret feed"
+                  >
+                    <Archive className="w-3 h-3 text-neutral-400" />
+                    <span>Archive</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => handleUnarchiveJob(job)}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-neutral-700 hover:text-neutral-900 bg-white hover:bg-neutral-50 border border-[#ebebeb] rounded-lg shadow-2xs active:scale-95 transition-all cursor-pointer"
+                    title="Restore job back to your active secret feed"
+                  >
+                    <RotateCcw className="w-3 h-3 text-neutral-500" />
+                    <span>Restore</span>
+                  </button>
+                )}
               </div>
             </div>
           ))
