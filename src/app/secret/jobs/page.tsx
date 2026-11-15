@@ -16,10 +16,13 @@ import {
   Clock,
   Archive,
   RotateCcw,
+  Plus,
+  X,
+  Database,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { rtdb, isFirebaseConfigured } from "@/lib/firebase";
-import { ref, onValue, get, set } from "firebase/database";
+import { ref, onValue } from "firebase/database";
 import {
   subscribeAgentsQueue,
   type AgentResumeEntry,
@@ -28,6 +31,16 @@ import {
   subscribePreviewQueue,
   type PreviewQueueItem,
 } from "@/lib/resume/previewQueue";
+import {
+  subscribeSecretJobsStore,
+  archiveJobInCloud,
+  unarchiveJobInCloud,
+  restoreAllArchivedInCloud,
+  mergeJobsIntoStore,
+  getJobIdentifier,
+  type CandidateAppliedJob,
+  type SecretJobsStoreData,
+} from "@/lib/resume/secretJobsStore";
 
 // Known administrator UIDs
 const ADMIN_UIDS = new Set([
@@ -45,18 +58,6 @@ const AUTHORIZED_ADMIN_EMAILS = [
 ]
   .filter(Boolean)
   .map((e) => e!.toLowerCase().trim());
-
-export interface CandidateAppliedJob {
-  id: string;
-  jobTitle: string;
-  jobUrl: string;
-  timestamp: string;
-  applicantId: string;
-  applicantName: string;
-  applicantEmail: string;
-  source: "appliedJobs" | "agentsQueue" | "previewQueue";
-  jobDescription?: string;
-}
 
 function formatDate(iso: string): string {
   try {
@@ -82,37 +83,6 @@ function getDomainFromUrl(url: string): string {
   } catch {
     return url;
   }
-}
-
-const ARCHIVE_STORAGE_PREFIX = "hireme_secret_archived_jobs_";
-
-function getJobKey(job: { jobTitle: string; jobUrl: string }): string {
-  const normTitle = (job.jobTitle || "").toLowerCase().replace(/[^a-z0-9]/g, "").trim();
-  const normUrl = (job.jobUrl || "")
-    .toLowerCase()
-    .replace(/^https?:\/\//, "")
-    .replace(/\/+$/, "")
-    .trim();
-  return `${normTitle}|${normUrl}`;
-}
-
-function loadLocalArchivedKeys(uid?: string): string[] {
-  if (typeof window === "undefined" || !uid) return [];
-  try {
-    const raw = localStorage.getItem(`${ARCHIVE_STORAGE_PREFIX}${uid}`);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) return parsed;
-    }
-  } catch {}
-  return [];
-}
-
-function saveLocalArchivedKeys(uid: string | undefined, keys: string[]) {
-  if (typeof window === "undefined" || !uid) return;
-  try {
-    localStorage.setItem(`${ARCHIVE_STORAGE_PREFIX}${uid}`, JSON.stringify(keys));
-  } catch {}
 }
 
 /**
@@ -167,16 +137,27 @@ export default function SecretJobsPage() {
   const router = useRouter();
   const { user, loading } = useAuth();
 
-  const [rawJobs, setRawJobs] = useState<CandidateAppliedJob[]>([]);
+  // Persistent store loaded directly from Firebase Realtime Database
+  const [storeData, setStoreData] = useState<SecretJobsStoreData>({
+    jobs: [],
+    archivedKeys: [],
+    updatedAt: "",
+  });
   const [dataLoading, setDataLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedApplicantKey, setSelectedApplicantKey] = useState<string>("all");
-  const [permissionError, setPermissionError] = useState(false);
+  const [permissionWarning, setPermissionWarning] = useState(false);
 
   // Tab: "active" vs "archived"
   const [viewTab, setViewTab] = useState<"active" | "archived">("active");
-  const [archivedKeys, setArchivedKeys] = useState<string[]>([]);
-  const [importingId, setImportingId] = useState<string | null>(null);
+
+  // Manual Add Job Modal state
+  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [newJobTitle, setNewJobTitle] = useState("");
+  const [newJobUrl, setNewJobUrl] = useState("");
+  const [newCandidateName, setNewCandidateName] = useState("");
+  const [newCandidateEmail, setNewCandidateEmail] = useState("");
+  const [isSubmittingNewJob, setIsSubmittingNewJob] = useState(false);
 
   // Current user's own queue items (to exclude jobs already applied to or queued)
   const [myAgentsEntries, setMyAgentsEntries] = useState<AgentResumeEntry[]>([]);
@@ -194,57 +175,84 @@ export default function SecretJobsPage() {
     return AUTHORIZED_ADMIN_EMAILS.includes(user.email.toLowerCase().trim());
   }, [user]);
 
-  // Load archived keys on mount & sync with RTDB
+  // Subscribe to persistent store in Firebase Realtime Database (previewQueues/${user.uid}/secretJobsStore)
+  // This guarantees identical jobs and archive states across any computer!
   useEffect(() => {
-    if (!user) return;
-    const local = loadLocalArchivedKeys(user.uid);
-    setArchivedKeys(local);
+    if (!user || !isAuthorized) {
+      setDataLoading(false);
+      return;
+    }
 
-    if (rtdb && isFirebaseConfigured) {
-      get(ref(rtdb, `userSecretArchivedJobs/${user.uid}`))
-        .then((snap) => {
-          if (snap.exists()) {
-            const remote = snap.val();
-            if (Array.isArray(remote)) {
-              const merged = Array.from(new Set([...local, ...remote]));
-              setArchivedKeys(merged);
-              saveLocalArchivedKeys(user.uid, merged);
+    const unsubscribe = subscribeSecretJobsStore(user.uid, (data) => {
+      setStoreData(data);
+      setDataLoading(false);
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [user, isAuthorized]);
+
+  // Also listen for incoming appliedJobs stream from RTDB and merge into the cloud store
+  useEffect(() => {
+    if (!user || !isAuthorized || !isFirebaseConfigured || !rtdb) {
+      return;
+    }
+
+    const appliedRef = ref(rtdb, "appliedJobs");
+    const unsubscribe = onValue(
+      appliedRef,
+      (snap) => {
+        if (snap.exists()) {
+          const val = snap.val();
+          if (val && typeof val === "object") {
+            const incomingJobs: CandidateAppliedJob[] = [];
+            for (const [key, raw] of Object.entries(val)) {
+              if (!raw || typeof raw !== "object") continue;
+              const item = raw as Record<string, any>;
+              const title = item.jobTitle || item.roleName || "Untitled Role";
+              const url = item.jobUrl || item.roleUrl || "";
+              const time = item.timestamp || item.addedAt || new Date().toISOString();
+              const email = (item.userEmail || "").trim();
+              const applicantId = item.userId || "unknown";
+              const name = email ? email.split("@")[0] : "Candidate";
+
+              const candidateJob: CandidateAppliedJob = {
+                id: key,
+                jobTitle: title,
+                jobUrl: url,
+                timestamp: time,
+                applicantId,
+                applicantName: name,
+                applicantEmail: email,
+                source: "appliedJobs",
+              };
+
+              // Exclude admin's own submissions
+              if (!isJobFromAdminOrSelf(candidateJob, user.uid, user.email || undefined)) {
+                incomingJobs.push(candidateJob);
+              }
+            }
+
+            if (incomingJobs.length > 0) {
+              // Automatically persist any incoming external jobs to the user's cloud store
+              mergeJobsIntoStore(user.uid, incomingJobs).catch((e) => {
+                console.warn("Could not merge incoming appliedJobs into store:", e);
+              });
             }
           }
-        })
-        .catch(() => {});
-    }
-  }, [user]);
-
-  const persistArchivedKeys = useCallback(
-    (keys: string[]) => {
-      if (!user) return;
-      saveLocalArchivedKeys(user.uid, keys);
-      if (rtdb && isFirebaseConfigured) {
-        set(ref(rtdb, `userSecretArchivedJobs/${user.uid}`), keys).catch(() => {});
+        }
+      },
+      (err) => {
+        console.warn("Live appliedJobs stream restricted:", err.message);
+        setPermissionWarning(true);
       }
-    },
-    [user]
-  );
+    );
 
-  const handleArchiveJob = (job: CandidateAppliedJob) => {
-    const key = getJobKey(job);
-    const updated = Array.from(new Set([...archivedKeys, job.id, key]));
-    setArchivedKeys(updated);
-    persistArchivedKeys(updated);
-  };
-
-  const handleUnarchiveJob = (job: CandidateAppliedJob) => {
-    const key = getJobKey(job);
-    const updated = archivedKeys.filter((k) => k !== job.id && k !== key);
-    setArchivedKeys(updated);
-    persistArchivedKeys(updated);
-  };
-
-  const handleRestoreAllArchived = () => {
-    setArchivedKeys([]);
-    persistArchivedKeys([]);
-  };
+    return () => {
+      unsubscribe();
+    };
+  }, [user, isAuthorized]);
 
   // Subscribe to current user's own queues to track what they already have
   useEffect(() => {
@@ -284,196 +292,57 @@ export default function SecretJobsPage() {
     return { urls, titles, normalizeUrl, normalizeTitle };
   }, [myAgentsEntries, myPreviewItems]);
 
-  // Fetch all applied jobs across all users from RTDB
-  useEffect(() => {
-    if (!user || !isAuthorized || !isFirebaseConfigured) {
-      setDataLoading(false);
-      return;
+  // Archive / Restore handlers that write straight to the database
+  const handleArchiveJob = async (job: CandidateAppliedJob) => {
+    if (!user) return;
+    await archiveJobInCloud(user.uid, job);
+  };
+
+  const handleUnarchiveJob = async (job: CandidateAppliedJob) => {
+    if (!user) return;
+    await unarchiveJobInCloud(user.uid, job);
+  };
+
+  const handleRestoreAllArchived = async () => {
+    if (!user) return;
+    await restoreAllArchivedInCloud(user.uid);
+  };
+
+  // Submit manual job into database store
+  const handleAddJobSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user || !newJobTitle.trim()) return;
+
+    setIsSubmittingNewJob(true);
+    try {
+      const cleanTitle = newJobTitle.trim();
+      const cleanUrl = newJobUrl.trim();
+      const name = newCandidateName.trim() || "Manual Candidate";
+      const email = newCandidateEmail.trim();
+
+      const newEntry: CandidateAppliedJob = {
+        id: `manual_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+        jobTitle: cleanTitle,
+        jobUrl: cleanUrl,
+        timestamp: new Date().toISOString(),
+        applicantId: "manual_entry",
+        applicantName: name,
+        applicantEmail: email,
+        source: "manual",
+      };
+
+      await mergeJobsIntoStore(user.uid, [newEntry]);
+      setNewJobTitle("");
+      setNewJobUrl("");
+      setNewCandidateName("");
+      setNewCandidateEmail("");
+      setIsAddModalOpen(false);
+    } catch (err) {
+      console.error("Failed to add custom job:", err);
+    } finally {
+      setIsSubmittingNewJob(false);
     }
-
-    const jobMap = new Map<string, CandidateAppliedJob>();
-
-    const updateFromSnapshot = (
-      appliedVal: Record<string, any> | null,
-      queuesVal: Record<string, any> | null,
-      previewVal: Record<string, any> | null
-    ) => {
-      // 1. Ingest from global appliedJobs table
-      if (appliedVal && typeof appliedVal === "object") {
-        for (const [key, val] of Object.entries(appliedVal)) {
-          if (!val || typeof val !== "object") continue;
-          const title = val.jobTitle || val.roleName || "Untitled Role";
-          const url = val.jobUrl || val.roleUrl || "";
-          const time = val.timestamp || val.addedAt || new Date().toISOString();
-          const email = (val.userEmail || "").trim();
-          const applicantId = val.userId || "unknown";
-          const name = email ? email.split("@")[0] : "Candidate";
-          const jd = (val.jobDescription || "").trim();
-
-          const dedupeKey = `${title.toLowerCase().trim()}|${url.toLowerCase().trim()}`;
-          const existing = jobMap.get(dedupeKey);
-          if (existing) {
-            if (jd && !existing.jobDescription) existing.jobDescription = jd;
-          } else {
-            jobMap.set(dedupeKey, {
-              id: key,
-              jobTitle: title,
-              jobUrl: url,
-              timestamp: time,
-              applicantId,
-              applicantName: name,
-              applicantEmail: email,
-              source: "appliedJobs",
-              jobDescription: jd || undefined,
-            });
-          }
-        }
-      }
-
-      // 2. Ingest from user queues in agentsQueues table
-      if (queuesVal && typeof queuesVal === "object") {
-        for (const [uidKey, userNode] of Object.entries(queuesVal)) {
-          if (!userNode || typeof userNode !== "object") continue;
-          const rawData = userNode.data;
-          let entries: AgentResumeEntry[] = [];
-          if (typeof rawData === "string") {
-            try {
-              entries = JSON.parse(rawData);
-            } catch {}
-          } else if (Array.isArray(rawData)) {
-            entries = rawData;
-          }
-
-          for (const entry of entries) {
-            const title = entry.roleName || "Untitled Role";
-            const url = entry.roleUrl || "";
-            const time = entry.sentAt || entry.createdAt || new Date().toISOString();
-            const email = (entry.tailoredResume?.contact?.email || "").trim();
-            const name =
-              entry.tailoredResume?.contact?.name?.trim() ||
-              (email ? email.split("@")[0] : `User ${uidKey.slice(0, 5)}`);
-            const jd = (entry.jobDescription || "").trim();
-            const dedupeKey = `${title.toLowerCase().trim()}|${url.toLowerCase().trim()}`;
-
-            const existing = jobMap.get(dedupeKey);
-            if (existing) {
-              if (jd && !existing.jobDescription) existing.jobDescription = jd;
-            } else {
-              jobMap.set(dedupeKey, {
-                id: entry.id || dedupeKey,
-                jobTitle: title,
-                jobUrl: url,
-                timestamp: time,
-                applicantId: uidKey,
-                applicantName: name,
-                applicantEmail: email,
-                source: "agentsQueue",
-                jobDescription: jd || undefined,
-              });
-            }
-          }
-        }
-      }
-
-      // 3. Ingest / merge from previewQueues table (which preserves full jobDescription)
-      if (previewVal && typeof previewVal === "object") {
-        for (const [uidKey, userNode] of Object.entries(previewVal)) {
-          if (!userNode || typeof userNode !== "object") continue;
-          const rawData = userNode.data;
-          let items: PreviewQueueItem[] = [];
-          if (typeof rawData === "string") {
-            try {
-              items = JSON.parse(rawData);
-            } catch {}
-          } else if (Array.isArray(rawData)) {
-            items = rawData;
-          }
-
-          for (const item of items) {
-            const title = item.roleName || item.title || "Untitled Role";
-            const url = item.roleUrl || "";
-            const time = item.createdAt || new Date().toISOString();
-            const jd = (item.jobDescription || "").trim();
-            const email = (item.baseResume?.contact?.email || "").trim();
-            const name =
-              item.baseResume?.contact?.name?.trim() ||
-              (email ? email.split("@")[0] : `User ${uidKey.slice(0, 5)}`);
-            const dedupeKey = `${title.toLowerCase().trim()}|${url.toLowerCase().trim()}`;
-
-            const existing = jobMap.get(dedupeKey);
-            if (existing) {
-              if (jd && !existing.jobDescription) existing.jobDescription = jd;
-            } else {
-              jobMap.set(dedupeKey, {
-                id: item.id || dedupeKey,
-                jobTitle: title,
-                jobUrl: url,
-                timestamp: time,
-                applicantId: uidKey,
-                applicantName: name,
-                applicantEmail: email,
-                source: "previewQueue",
-                jobDescription: jd || undefined,
-              });
-            }
-          }
-        }
-      }
-
-      const list = Array.from(jobMap.values()).sort(
-        (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
-      );
-      setRawJobs(list);
-      setDataLoading(false);
-    };
-
-    // Live subscription on appliedJobs
-    const appliedRef = ref(rtdb, "appliedJobs");
-    let currentApplied: Record<string, any> | null = null;
-    let currentQueues: Record<string, any> | null = null;
-    let currentPreviews: Record<string, any> | null = null;
-
-    const unsubApplied = onValue(
-      appliedRef,
-      (snap) => {
-        currentApplied = snap.exists() ? snap.val() : null;
-        updateFromSnapshot(currentApplied, currentQueues, currentPreviews);
-      },
-      (err) => {
-        console.warn("appliedJobs stream restricted or unavailable:", err.message);
-        setPermissionError(true);
-        setDataLoading(false);
-      }
-    );
-
-    // Also attempt bulk load of agentsQueues to gather all prior jobs across candidates
-    get(ref(rtdb, "agentsQueues"))
-      .then((snap) => {
-        if (snap.exists()) {
-          currentQueues = snap.val();
-          updateFromSnapshot(currentApplied, currentQueues, currentPreviews);
-        }
-      })
-      .catch((err) => {
-        console.warn("agentsQueues bulk load restricted or unavailable:", err.message);
-      });
-
-    // Also attempt bulk load of previewQueues for candidates' original job descriptions
-    get(ref(rtdb, "previewQueues"))
-      .then((snap) => {
-        if (snap.exists()) {
-          currentPreviews = snap.val();
-          updateFromSnapshot(currentApplied, currentQueues, currentPreviews);
-        }
-      })
-      .catch((err) => {
-        console.warn("previewQueues bulk load restricted or unavailable:", err.message);
-      });
-
-    return () => {
-      unsubApplied();
-    };
-  }, [user, isAuthorized]);
+  };
 
   // Filter out any jobs the current user or admin accounts applied to,
   // or that already exist in the user's Preview or Agents queues
@@ -483,7 +352,7 @@ export default function SecretJobsPage() {
     const myEmail = user.email || "";
     const { urls, titles, normalizeUrl, normalizeTitle } = myJobIdentifiers;
 
-    return rawJobs.filter((job) => {
+    return storeData.jobs.filter((job) => {
       // 1. Exclude if submitted by admin, current user, or matches personal admin identity
       if (isJobFromAdminOrSelf(job, myUid, myEmail)) return false;
 
@@ -496,17 +365,17 @@ export default function SecretJobsPage() {
 
       return true;
     });
-  }, [rawJobs, user, myJobIdentifiers]);
+  }, [storeData.jobs, user, myJobIdentifiers]);
 
-  // Partition into Active and Archived sets
+  // Partition into Active and Archived sets based on DB-synced archivedKeys
   const { activeJobs, archivedJobs } = useMemo(() => {
     const active: CandidateAppliedJob[] = [];
     const archived: CandidateAppliedJob[] = [];
 
-    const archiveSet = new Set(archivedKeys);
+    const archiveSet = new Set(storeData.archivedKeys);
 
     for (const job of eligibleJobs) {
-      const key = getJobKey(job);
+      const key = getJobIdentifier(job);
       if (archiveSet.has(job.id) || archiveSet.has(key)) {
         archived.push(job);
       } else {
@@ -515,7 +384,7 @@ export default function SecretJobsPage() {
     }
 
     return { activeJobs: active, archivedJobs: archived };
-  }, [eligibleJobs, archivedKeys]);
+  }, [eligibleJobs, storeData.archivedKeys]);
 
   const currentViewJobs = viewTab === "active" ? activeJobs : archivedJobs;
 
@@ -579,7 +448,7 @@ export default function SecretJobsPage() {
   if (loading || (user && isAuthorized && dataLoading)) {
     return (
       <div className="flex-1 flex items-center justify-center py-24 text-xs font-mono text-neutral-400">
-        Authenticating administrator session...
+        Syncing confidential database stream...
       </div>
     );
   }
@@ -613,30 +482,8 @@ export default function SecretJobsPage() {
     );
   }
 
-  // 1-Click: Add job directly to Operations with complete job description
-  const handleAddToMyOperations = async (job: CandidateAppliedJob) => {
-    let jd = (job.jobDescription || "").trim();
-
-    // If description is missing but URL exists, auto-fetch from URL
-    if (!jd && job.jobUrl) {
-      setImportingId(job.id);
-      try {
-        const res = await fetch("/api/jobs/scrape", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ url: job.jobUrl }),
-        });
-        const data = await res.json();
-        if (data?.success && data?.jobDescription) {
-          jd = data.jobDescription;
-        }
-      } catch (err) {
-        console.warn("Auto-scrape fallback failed:", err);
-      } finally {
-        setImportingId(null);
-      }
-    }
-
+  // 1-Click: Add job directly to Operations
+  const handleAddToMyOperations = (job: CandidateAppliedJob) => {
     if (typeof window !== "undefined") {
       try {
         sessionStorage.setItem(
@@ -644,7 +491,6 @@ export default function SecretJobsPage() {
           JSON.stringify({
             roleName: job.jobTitle,
             roleUrl: job.jobUrl,
-            jobDescription: jd,
           })
         );
       } catch {}
@@ -668,13 +514,17 @@ export default function SecretJobsPage() {
               <Sparkles className="w-2.5 h-2.5" />
               Private Stream
             </span>
+            <span className="inline-flex items-center gap-1 font-mono text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
+              <Database className="w-2.5 h-2.5 text-emerald-600" />
+              DB Synced
+            </span>
           </div>
           <p className="text-xs text-neutral-500">
-            Jobs discovered by other candidates that you have not yet applied to. 1-click import to tailor and apply.
+            Jobs discovered across the platform stored in the cloud database. Synced across all your computers and devices.
           </p>
         </div>
 
-        {/* View mode toggle */}
+        {/* View mode toggle & Add Job */}
         <div className="flex items-center gap-2 flex-wrap">
           <div className="flex items-center gap-1 p-1 bg-neutral-100 rounded-lg border border-[#ebebeb]">
             <button
@@ -720,12 +570,22 @@ export default function SecretJobsPage() {
             </button>
           </div>
 
+          <button
+            type="button"
+            onClick={() => setIsAddModalOpen(true)}
+            className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-neutral-700 hover:text-neutral-900 bg-white border border-[#ebebeb] rounded-lg shadow-2xs active:scale-95 transition-all cursor-pointer"
+            title="Add a custom or external job to the database feed"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span>Add Job</span>
+          </button>
+
           {viewTab === "archived" && archivedJobs.length > 0 && (
             <button
               type="button"
               onClick={handleRestoreAllArchived}
               className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-neutral-600 hover:text-neutral-900 bg-white border border-[#ebebeb] rounded-lg shadow-2xs active:scale-95 transition-all cursor-pointer"
-              title="Restore all archived jobs back to active feed"
+              title="Restore all archived jobs back to active feed in DB"
             >
               <RotateCcw className="w-3 h-3 text-neutral-400" />
               <span>Restore All</span>
@@ -734,15 +594,111 @@ export default function SecretJobsPage() {
         </div>
       </div>
 
-      {/* Permission Warning banner if RTDB rule blocks bulk reads */}
-      {permissionError && rawJobs.length === 0 && (
-        <div className="p-3.5 rounded-xl border border-amber-200 bg-amber-50/50 text-xs text-amber-900 flex items-start gap-2.5">
-          <Clock className="w-4 h-4 text-amber-700 flex-shrink-0 mt-0.5" />
+      {/* Add Job Modal */}
+      {isAddModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs animate-fadeIn">
+          <div className="bg-white rounded-2xl border border-[#ebebeb] shadow-modal w-full max-w-md p-5 space-y-4">
+            <div className="flex items-center justify-between border-b border-[#ebebeb] pb-3">
+              <div className="flex items-center gap-1.5">
+                <Plus className="w-4 h-4 text-neutral-900" />
+                <h3 className="text-sm font-semibold tracking-tight text-neutral-900">
+                  Add Job to Secret Feed
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsAddModalOpen(false)}
+                className="p-1 rounded-md text-neutral-400 hover:text-neutral-700 transition-colors cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleAddJobSubmit} className="space-y-3.5">
+              <div>
+                <label className="block text-xs font-medium text-neutral-700 mb-1">
+                  Role Title <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. OpenAI — Research Engineer"
+                  value={newJobTitle}
+                  onChange={(e) => setNewJobTitle(e.target.value)}
+                  className="w-full px-3 py-2 text-xs bg-white border border-[#ebebeb] rounded-lg focus:outline-none focus:border-neutral-900 transition-colors text-neutral-900 placeholder:text-neutral-400"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-neutral-700 mb-1">
+                  Posting URL
+                </label>
+                <input
+                  type="url"
+                  placeholder="https://..."
+                  value={newJobUrl}
+                  onChange={(e) => setNewJobUrl(e.target.value)}
+                  className="w-full px-3 py-2 text-xs bg-white border border-[#ebebeb] rounded-lg focus:outline-none focus:border-neutral-900 transition-colors text-neutral-900 placeholder:text-neutral-400"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-neutral-700 mb-1">
+                    Candidate Name / Source
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Platform Shared"
+                    value={newCandidateName}
+                    onChange={(e) => setNewCandidateName(e.target.value)}
+                    className="w-full px-3 py-2 text-xs bg-white border border-[#ebebeb] rounded-lg focus:outline-none focus:border-neutral-900 transition-colors text-neutral-900 placeholder:text-neutral-400"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-neutral-700 mb-1">
+                    Candidate Email (Optional)
+                  </label>
+                  <input
+                    type="email"
+                    placeholder="candidate@example.com"
+                    value={newCandidateEmail}
+                    onChange={(e) => setNewCandidateEmail(e.target.value)}
+                    className="w-full px-3 py-2 text-xs bg-white border border-[#ebebeb] rounded-lg focus:outline-none focus:border-neutral-900 transition-colors text-neutral-900 placeholder:text-neutral-400"
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#ebebeb]">
+                <button
+                  type="button"
+                  onClick={() => setIsAddModalOpen(false)}
+                  className="px-3 py-1.5 text-xs font-medium text-neutral-600 hover:text-neutral-900 rounded-lg transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmittingNewJob || !newJobTitle.trim()}
+                  className="inline-flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium text-white bg-neutral-900 hover:bg-neutral-800 disabled:opacity-50 rounded-lg shadow-subtle active:scale-95 transition-all cursor-pointer"
+                >
+                  <Database className="w-3 h-3" />
+                  <span>{isSubmittingNewJob ? "Saving to DB..." : "Save to DB"}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Permission Warning banner if RTDB global appliedJobs rule blocks public reads */}
+      {permissionWarning && (
+        <div className="p-3.5 rounded-xl border border-neutral-200 bg-neutral-50/70 text-xs text-neutral-700 flex items-start gap-2.5">
+          <Clock className="w-4 h-4 text-neutral-500 flex-shrink-0 mt-0.5" />
           <div className="space-y-1">
-            <p className="font-medium">Live database rules are currently in restrictive mode</p>
-            <p className="text-amber-800 text-[11px] leading-relaxed">
-              Ensure your Firebase Realtime Database rules permit authenticated reads on{" "}
-              <code className="font-mono bg-amber-100 px-1 py-0.5 rounded">/appliedJobs</code> or your admin account.
+            <p className="font-medium text-neutral-900">Cloud Database Synchronization Active</p>
+            <p className="text-neutral-500 text-[11px] leading-relaxed">
+              Your secret stream is synced across computers via Firebase Realtime Database. Any job you add or archive is instantly preserved.
             </p>
           </div>
         </div>
@@ -843,16 +799,16 @@ export default function SecretJobsPage() {
                 ? "No archived jobs"
                 : archivedJobs.length > 0 && activeJobs.length === 0
                 ? "All available jobs have been archived"
-                : "You're all caught up!"}
+                : "No external jobs in database stream yet"}
             </p>
             <p className="text-[11px] text-neutral-500 max-w-sm mx-auto leading-relaxed">
               {searchQuery
                 ? "Try searching for a different company name or keyword."
                 : viewTab === "archived"
-                ? "Jobs you archive from your secret feed will be preserved here so you can restore them anytime."
+                ? "Jobs you archive from your secret feed are preserved in the database so you can restore them anytime from any computer."
                 : archivedJobs.length > 0 && activeJobs.length === 0
                 ? "You have archived every incoming job in the stream."
-                : "You have already applied to or queued every job discovered by other candidates on the platform."}
+                : "Whenever candidates on the platform apply or queue positions, they will stream here and sync to your account in the cloud database."}
             </p>
             {viewTab === "active" && archivedJobs.length > 0 && activeJobs.length === 0 && (
               <button
@@ -862,6 +818,16 @@ export default function SecretJobsPage() {
               >
                 <Archive className="w-3 h-3 text-neutral-500" />
                 <span>View {archivedJobs.length} Archived Jobs</span>
+              </button>
+            )}
+            {viewTab === "active" && eligibleJobs.length === 0 && (
+              <button
+                type="button"
+                onClick={() => setIsAddModalOpen(true)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-neutral-800 bg-neutral-100 hover:bg-neutral-200 border border-neutral-200 rounded-full shadow-2xs transition-all active:scale-95 cursor-pointer mt-2"
+              >
+                <Plus className="w-3 h-3" />
+                <span>Add First Job to Database</span>
               </button>
             )}
           </div>
@@ -903,14 +869,6 @@ export default function SecretJobsPage() {
                       <ExternalLink className="w-3 h-3 flex-shrink-0" />
                     </a>
                   )}
-
-                  {/* Description status indicator */}
-                  {job.jobDescription && (
-                    <span className="inline-flex items-center gap-1 font-mono text-[10px] text-emerald-700 bg-emerald-50/80 border border-emerald-200/60 px-1.5 py-0.5 rounded">
-                      <Sparkles className="w-2.5 h-2.5 text-emerald-600" />
-                      <span>JD included</span>
-                    </span>
-                  )}
                 </div>
               </div>
 
@@ -931,22 +889,12 @@ export default function SecretJobsPage() {
 
                 <button
                   type="button"
-                  disabled={importingId === job.id}
                   onClick={() => handleAddToMyOperations(job)}
-                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-medium text-white bg-neutral-900 hover:bg-neutral-800 rounded-lg shadow-subtle active:scale-95 transition-all cursor-pointer disabled:opacity-75"
-                  title="Import into your Operations workspace with job description"
+                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-medium text-white bg-neutral-900 hover:bg-neutral-800 rounded-lg shadow-subtle active:scale-95 transition-all cursor-pointer"
+                  title="Import into your Operations workspace to tailor resume and apply"
                 >
-                  {importingId === job.id ? (
-                    <>
-                      <Sparkles className="w-3 h-3 animate-spin text-neutral-300" />
-                      <span>Fetching Description...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Sliders className="w-3 h-3" />
-                      <span>Add to My Operations</span>
-                    </>
-                  )}
+                  <Sliders className="w-3 h-3" />
+                  <span>Add to My Operations</span>
                 </button>
 
                 {/* Archive / Restore Button */}
@@ -955,7 +903,7 @@ export default function SecretJobsPage() {
                     type="button"
                     onClick={() => handleArchiveJob(job)}
                     className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-neutral-500 hover:text-neutral-900 bg-white hover:bg-neutral-50 border border-[#ebebeb] rounded-lg shadow-2xs active:scale-95 transition-all cursor-pointer"
-                    title="Archive this job from your active secret feed"
+                    title="Archive this job in cloud database"
                   >
                     <Archive className="w-3 h-3 text-neutral-400" />
                     <span>Archive</span>
@@ -965,7 +913,7 @@ export default function SecretJobsPage() {
                     type="button"
                     onClick={() => handleUnarchiveJob(job)}
                     className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-neutral-700 hover:text-neutral-900 bg-white hover:bg-neutral-50 border border-[#ebebeb] rounded-lg shadow-2xs active:scale-95 transition-all cursor-pointer"
-                    title="Restore job back to your active secret feed"
+                    title="Restore job to active feed in cloud database"
                   >
                     <RotateCcw className="w-3 h-3 text-neutral-500" />
                     <span>Restore</span>
