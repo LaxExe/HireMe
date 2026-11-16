@@ -1,0 +1,205 @@
+{
+  "version": 1,
+  "updatedAt": "2026-11-16T00:00:00.000Z",
+  "calibration": {
+    "oneLineMax": 108,
+    "twoLineMax": 216,
+    "malleableLines": 1
+  },
+  "sections": [
+    "contact",
+    "education",
+    "skills",
+    "experience",
+    "projects",
+    "awards"
+  ],
+  "contact": {
+    "name": "Lakshmanan Ramanathan",
+    "location": "Waterloo, ON",
+    "phone": "555-0199",
+    "email": "lakshman@uwaterloo.ca",
+    "links": [
+      {
+        "id": "lnk_1",
+        "kind": "github",
+        "label": "github.com/lakshman",
+        "url": "https://github.com/lakshman"
+      },
+      {
+        "id": "lnk_2",
+        "kind": "linkedin",
+        "label": "linkedin.com/in/lakshman",
+        "url": "https://linkedin.com/in/lakshman"
+      }
+    ]
+  },
+  "education": [
+    {
+      "id": "edu_1",
+      "institution": "University of Waterloo",
+      "location": "Waterloo, ON",
+      "degree": "Bachelor of Applied Science in Mechatronics Engineering",
+      "dates": "Sep 2024 – Apr 2029"
+    }
+  ],
+  "skills": [
+    {
+      "id": "cat_lang",
+      "name": "Languages",
+      "skills": [
+        { "id": "s_py", "name": "Python" },
+        { "id": "s_cpp", "name": "C++" },
+        { "id": "s_ts", "name": "TypeScript" },
+        { "id": "s_js", "name": "JavaScript" },
+        { "id": "s_sql", "name": "SQL" }
+      ]
+    },
+    {
+      "id": "cat_fw",
+      "name": "Frameworks & Libraries",
+      "skills": [
+        { "id": "s_react", "name": "React" },
+        { "id": "s_next", "name": "Next.js" },
+        { "id": "s_fastapi", "name": "FastAPI" },
+        { "id": "s_flask", "name": "Flask" },
+        { "id": "s_pytorch", "name": "PyTorch" },
+        { "id": "s_ros2", "name": "ROS 2" }
+      ]
+    },
+    {
+      "id": "cat_db",
+      "name": "Databases & Cloud",
+      "skills": [
+        { "id": "s_pg", "name": "PostgreSQL" },
+        { "id": "s_supa", "name": "Supabase" },
+        { "id": "s_fb", "name": "Firebase" },
+        { "id": "s_sqlite", "name": "SQLite3" }
+      ]
+    },
+    {
+      "id": "cat_tools",
+      "name": "Developer Tools & DevOps",
+      "skills": [
+        { "id": "s_git", "name": "Git" },
+        { "id": "s_linux", "name": "Linux" },
+        { "id": "s_rest", "name": "REST APIs" },
+        { "id": "s_gazebo", "name": "Gazebo" }
+      ]
+    }
+  ],
+  "experience": [
+    {
+      "id": "job_roboflow",
+      "title": "Machine Learning Engineering Intern",
+      "company": "Roboflow",
+      "companyUrl": "https://roboflow.com",
+      "location": "Remote",
+      "dates": "May 2026 – Aug 2026",
+      "bullets": [
+        {
+          "id": "b_rf_1",
+          "text": "Built zero-shot **Auto Label** pipeline combining **SAM 2** and **VLM** detectors in **Python** to accelerate dataset annotation by **4x** across **50,000+** images.",
+          "tools": ["Python", "SAM 2", "VLM"],
+          "metrics": ["4x", "50,000+"]
+        },
+        {
+          "id": "b_rf_2",
+          "text": "Developed **REST APIs** and relational **PostgreSQL** schemas to standardize eligibility records across **5** internal services.",
+          "tools": ["REST APIs", "PostgreSQL"],
+          "metrics": ["5"]
+        }
+      ]
+    },
+    {
+      "id": "job_ally",
+      "title": "Software Engineering Intern",
+      "company": "Ally Voice AI",
+      "companyUrl": "https://ally.ai",
+      "location": "Toronto, ON",
+      "dates": "Sep 2025 – Dec 2025",
+      "bullets": [
+        {
+          "id": "b_ally_1",
+          "text": "Built real-time **ElevenLabs** and **FastAPI** voice agents that automate data gathering from insurance providers, deployed on **Firebase Cloud Functions**.",
+          "tools": ["ElevenLabs", "FastAPI", "Firebase"],
+          "metrics": []
+        },
+        {
+          "id": "b_ally_2",
+          "text": "Gave clients control over call workflows and dispatch timing by building customizable dashboards in **TypeScript, Next.js, React** and **REST APIs**.",
+          "tools": ["TypeScript", "Next.js", "React", "REST APIs"],
+          "metrics": []
+        },
+        {
+          "id": "b_ally_3",
+          "text": "Processed inbound event streams using **LLM** prompt engineering, persisting structured call transcripts to **Supabase**.",
+          "tools": ["LLM", "Supabase"],
+          "metrics": []
+        }
+      ]
+    },
+    {
+      "id": "job_research",
+      "title": "Undergraduate Machine Learning Researcher",
+      "company": "van der Heijden Lab",
+      "companyUrl": "",
+      "location": "Waterloo, ON",
+      "dates": "Jan 2025 – Apr 2025",
+      "bullets": [
+        {
+          "id": "b_res_1",
+          "text": "Trained **PyTorch** surrogate models with **Optuna** across **Slurm** compute clusters to predict redox flow battery pore-network permeability with **96%** accuracy.",
+          "tools": ["PyTorch", "Optuna", "Slurm"],
+          "metrics": ["96%"]
+        },
+        {
+          "id": "b_res_2",
+          "text": "Handled WhatsApp/SMS via **Twilio** and routed automated status alerts via **Flask** backend **APIs** across **100** trial interactions.",
+          "tools": ["Twilio", "Flask", "REST APIs"],
+          "metrics": ["100"]
+        }
+      ]
+    }
+  ],
+  "projects": [
+    {
+      "id": "proj_wato",
+      "name": "WATonomous Rover Autonomy",
+      "url": "https://github.com/watonomous",
+      "techStack": ["C++", "ROS 2", "Gazebo", "LiDAR"],
+      "meta": "2025",
+      "bullets": [
+        {
+          "id": "b_wato_1",
+          "text": "Implemented **C++** **ROS 2** occupancy-grid mapping and **Theta*** path planning in **Gazebo** simulation for autonomous **LiDAR** obstacle avoidance at **20Hz**.",
+          "tools": ["C++", "ROS 2", "Gazebo", "LiDAR"],
+          "metrics": ["20Hz"]
+        }
+      ]
+    },
+    {
+      "id": "proj_portal",
+      "name": "CareSync Eligibility Platform",
+      "url": "https://github.com/lakshman/caresync",
+      "techStack": ["TypeScript", "Next.js", "React", "Flask", "PostgreSQL", "Supabase"],
+      "meta": "2025",
+      "bullets": [
+        {
+          "id": "b_portal_1",
+          "text": "Built full-stack healthcare eligibility verification portal integrating external **REST APIs** and **PostgreSQL** to reduce check latency by **65%**.",
+          "tools": ["REST APIs", "PostgreSQL"],
+          "metrics": ["65%"]
+        }
+      ]
+    }
+  ],
+  "awards": [
+    {
+      "id": "aw_1",
+      "title": "President's Scholarship of Distinction",
+      "date": "2024",
+      "description": "Awarded for 95%+ admission average"
+    }
+  ]
+}

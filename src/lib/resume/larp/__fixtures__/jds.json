@@ -1,0 +1,22 @@
+{
+  "pylon_fullstack": {
+    "id": "pylon_fullstack",
+    "title": "Pylon — Software Engineer (Full-Stack / B2B Support Platform)",
+    "text": "Pylon — Software Engineer (Full-Stack / B2B Support Platform)\nWe are building the modern B2B customer support and account intelligence platform.\n\nMinimum Qualifications:\n- Strong experience with React, TypeScript, Python, PostgreSQL, and REST APIs.\n- Experience with Golang (Go) and Rust for high-throughput backend services.\n- Experience querying GraphQL APIs, caching with Redis, and deploying on AWS (EC2, S3, Lambda).\n\nPreferred Qualifications:\n- Comfortable with Agile workflows and tracking issues in Jira.\n- Familiarity with Docker, Tailwind CSS, and Webhooks."
+  },
+  "backend_infra": {
+    "id": "backend_infra",
+    "title": "Stripe — Backend Infrastructure Engineer",
+    "text": "Stripe — Backend Infrastructure Engineer\nJoin our core API and payments reliability engineering organization.\n\nRequired Qualifications:\n- Proficiency in Python, TypeScript, or Java for distributed backend systems.\n- Hands-on experience with PostgreSQL, Redis, MongoDB, and Docker.\n- Experience deploying services on AWS and building CI/CD pipelines with GitHub Actions.\n\nNice to Have:\n- Experience with Kubernetes, Ruby on Rails, and Linear for sprint tracking.\n- Strong end-to-end ownership of REST APIs and Webhooks."
+  },
+  "ml_platform": {
+    "id": "ml_platform",
+    "title": "Scale AI — Machine Learning Platform Engineer",
+    "text": "Scale AI — Machine Learning Platform Engineer\nWe build infrastructure for computer vision, LLMs, and multimodal evaluation.\n\nQualifications:\n- Strong programming skills in Python, PyTorch, and FastAPI.\n- Experience containerizing workloads with Docker and deploying on AWS.\n- Familiarity with Redis caching, GraphQL, and PostgreSQL.\n\nBonus Points:\n- Experience with CUDA, Scala, and Agile sprints in Jira."
+  },
+  "frontend_product": {
+    "id": "frontend_product",
+    "title": "Vercel — Product Engineer (Frontend & Design Systems)",
+    "text": "Vercel — Product Engineer (Frontend & Design Systems)\nBuild high-Craft developer experiences on the web.\n\nWhat You'll Need:\n- Deep expertise in TypeScript, JavaScript, React, Next.js, and Tailwind CSS.\n- Experience consuming REST APIs and GraphQL endpoints.\n- Familiarity with Node.js, Vercel, and Git workflows.\n\nPreferred Qualifications:\n- Experience with Swift or Kotlin mobile clients.\n- Comfortable working in Linear and shipping end-to-end features."
+  }
+}

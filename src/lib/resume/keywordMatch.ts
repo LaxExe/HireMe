@@ -27,7 +27,7 @@ export interface KeywordMatchResult {
   minimumQualifications?: MinimumQualificationsResult | null;
 }
 
-interface TechEntry {
+export interface TechEntry {
   name: string;
   category: KeywordMatchItem["category"];
   aliases: string[];
@@ -36,7 +36,7 @@ interface TechEntry {
 /**
  * Curated engineering dictionary of languages, frameworks, cloud/databases, devops tools, and core concepts.
  */
-const TECH_DICTIONARY: TechEntry[] = [
+export const TECH_DICTIONARY: TechEntry[] = [
   // Languages
   { name: "Python", category: "Languages", aliases: ["python", "python3"] },
   { name: "C++", category: "Languages", aliases: ["c++", "c++17", "c++20", "c++23", "cpp"] },

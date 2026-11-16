@@ -5,7 +5,9 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build --webpack",
-    "start": "next start"
+    "start": "next start",
+    "test": "node --experimental-transform-types --import ./src/lib/resume/larp/__tests__/registerLoader.mjs --test src/lib/resume/larp/__tests__/*.test.ts",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@tailwindcss/postcss": "^4.3.4",

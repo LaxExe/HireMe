@@ -1,0 +1,874 @@
+{
+  "pylon_fullstack": {
+    "tiers": {
+      "matched": [
+        "Python",
+        "TypeScript",
+        "React",
+        "PostgreSQL",
+        "REST APIs"
+      ],
+      "tier_0_workflow": [
+        "Jira",
+        "Agile"
+      ],
+      "tier_1_framing": [
+        "Tailwind CSS",
+        "AWS",
+        "Redis",
+        "GraphQL",
+        "Webhooks",
+        "Docker"
+      ],
+      "tier_1_5_skills_only": [
+        "Tailwind CSS",
+        "AWS",
+        "Redis",
+        "GraphQL",
+        "Docker",
+        "Jira"
+      ],
+      "tier_2_banned": [
+        "Golang",
+        "Rust"
+      ]
+    },
+    "skillSwaps": [
+      {
+        "categoryId": "cat_fw",
+        "categoryName": "Frameworks & Libraries",
+        "added": [
+          "Tailwind CSS",
+          "GraphQL"
+        ],
+        "swappedOut": [],
+        "origNcu": 66.45,
+        "newNcu": 87.97
+      },
+      {
+        "categoryId": "cat_db",
+        "categoryName": "Databases & Cloud",
+        "added": [
+          "AWS",
+          "Redis"
+        ],
+        "swappedOut": [],
+        "origNcu": 56.79,
+        "newNcu": 67.47
+      },
+      {
+        "categoryId": "cat_tools",
+        "categoryName": "Developer Tools & DevOps",
+        "added": [
+          "Docker",
+          "Jira"
+        ],
+        "swappedOut": [],
+        "origNcu": 53.53,
+        "newNcu": 65.77
+      }
+    ],
+    "updatedSkills": [
+      {
+        "id": "cat_lang",
+        "name": "Languages",
+        "skills": [
+          "Python",
+          "C++",
+          "TypeScript",
+          "JavaScript",
+          "SQL"
+        ]
+      },
+      {
+        "id": "cat_fw",
+        "name": "Frameworks & Libraries",
+        "skills": [
+          "React",
+          "Next.js",
+          "FastAPI",
+          "Flask",
+          "PyTorch",
+          "ROS 2",
+          "Tailwind CSS",
+          "GraphQL"
+        ]
+      },
+      {
+        "id": "cat_db",
+        "name": "Databases & Cloud",
+        "skills": [
+          "PostgreSQL",
+          "Supabase",
+          "Firebase",
+          "SQLite3",
+          "AWS",
+          "Redis"
+        ]
+      },
+      {
+        "id": "cat_tools",
+        "name": "Developer Tools & DevOps",
+        "skills": [
+          "Git",
+          "Linux",
+          "REST APIs",
+          "Gazebo",
+          "Docker",
+          "Jira"
+        ]
+      }
+    ],
+    "bulletProposals": [
+      {
+        "bulletId": "b_ally_3",
+        "containerId": "job_ally",
+        "contextCategory": "backend-api-db",
+        "originalMarkup": "Processed inbound event streams using **LLM** prompt engineering, persisting structured call transcripts to **Supabase**.",
+        "mutatedMarkup": "Processed inbound event streams with **LLM** prompts, persisting call transcripts to **Supabase** on **AWS**.",
+        "injectedKeywords": [
+          "AWS"
+        ],
+        "reframedWords": 5,
+        "candChars": 97,
+        "candLines": 1,
+        "candFitStatus": "ideal-1"
+      },
+      {
+        "bulletId": "b_rf_2",
+        "containerId": "job_roboflow",
+        "contextCategory": "backend-api-db",
+        "originalMarkup": "Developed **REST APIs** and relational **PostgreSQL** schemas to standardize eligibility records across **5** internal services.",
+        "mutatedMarkup": "Built **REST APIs**, **Redis** cache, and **PostgreSQL** schemas standardizing records across **5** services.",
+        "injectedKeywords": [
+          "Redis"
+        ],
+        "reframedWords": 4,
+        "candChars": 93,
+        "candLines": 1,
+        "candFitStatus": "ideal-1"
+      },
+      {
+        "bulletId": "b_res_2",
+        "containerId": "job_research",
+        "contextCategory": "backend-api-db",
+        "originalMarkup": "Handled WhatsApp/SMS via **Twilio** and routed automated status alerts via **Flask** backend **APIs** across **100** trial interactions.",
+        "mutatedMarkup": "handled WhatsApp/SMS **Webhooks** via **Twilio** and routed automated status alerts via **Flask** backend **APIs** across **100** trial interactions.",
+        "injectedKeywords": [
+          "Webhooks"
+        ],
+        "reframedWords": 1,
+        "candChars": 129,
+        "candLines": 2,
+        "candFitStatus": "orphan-2"
+      }
+    ],
+    "malleableBullets": [
+      {
+        "id": "malleable-1",
+        "targetContainerId": "job_roboflow",
+        "targetContainerTitle": "Machine Learning Engineering Intern · Roboflow",
+        "markup": "Integrated automated **Python** validation scripts to verify bounding-box coordinates across auto-label batches.",
+        "chars": 108,
+        "injectedKeywords": [
+          "Docker",
+          "Python"
+        ],
+        "believabilityScore": 98,
+        "optionCount": 3
+      },
+      {
+        "id": "malleable-2",
+        "targetContainerId": "job_ally",
+        "targetContainerTitle": "Software Engineering Intern · Ally Voice AI",
+        "markup": "Maintained **FastAPI** streaming endpoints and structured error handlers for real-time voice agent turns.",
+        "chars": 101,
+        "injectedKeywords": [
+          "Redis",
+          "FastAPI"
+        ],
+        "believabilityScore": 98,
+        "optionCount": 4
+      },
+      {
+        "id": "malleable-3",
+        "targetContainerId": "job_research",
+        "targetContainerTitle": "Undergraduate Machine Learning Researcher · van der Heijden Lab",
+        "markup": "Automated surrogate dataset extraction and feature normalization pipelines across Slurm compute arrays.",
+        "chars": 103,
+        "injectedKeywords": [
+          "Docker",
+          "Python"
+        ],
+        "believabilityScore": 98,
+        "optionCount": 3
+      },
+      {
+        "id": "malleable-4",
+        "targetContainerId": "proj_wato",
+        "targetContainerTitle": "WATonomous Rover Autonomy (Project)",
+        "markup": "Implemented automated collision regression tests in **Gazebo** to validate Theta* path planning stability.",
+        "chars": 102,
+        "injectedKeywords": [
+          "Docker",
+          "C++"
+        ],
+        "believabilityScore": 98,
+        "optionCount": 3
+      },
+      {
+        "id": "malleable-5",
+        "targetContainerId": "proj_portal",
+        "targetContainerTitle": "CareSync Eligibility Platform (Project)",
+        "markup": "Built modular backend API endpoints and request validators in **TypeScript** to format core application data.",
+        "chars": 105,
+        "injectedKeywords": [
+          "Redis",
+          "REST APIs"
+        ],
+        "believabilityScore": 98,
+        "optionCount": 4
+      }
+    ],
+    "guardrailVerifiedZeroBanned": true
+  },
+  "backend_infra": {
+    "tiers": {
+      "matched": [
+        "Python",
+        "TypeScript",
+        "PostgreSQL",
+        "Git",
+        "REST APIs"
+      ],
+      "tier_0_workflow": [
+        "CI/CD",
+        "Linear",
+        "end-to-end"
+      ],
+      "tier_1_framing": [
+        "AWS",
+        "Redis",
+        "Webhooks",
+        "Docker"
+      ],
+      "tier_1_5_skills_only": [
+        "AWS",
+        "Redis",
+        "Docker",
+        "CI/CD",
+        "MongoDB",
+        "GitHub Actions",
+        "Linear"
+      ],
+      "tier_2_banned": [
+        "Ruby on Rails",
+        "Kubernetes",
+        "Java"
+      ]
+    },
+    "skillSwaps": [
+      {
+        "categoryId": "cat_db",
+        "categoryName": "Databases & Cloud",
+        "added": [
+          "AWS",
+          "Redis",
+          "MongoDB"
+        ],
+        "swappedOut": [],
+        "origNcu": 56.79,
+        "newNcu": 76.57
+      },
+      {
+        "categoryId": "cat_tools",
+        "categoryName": "Developer Tools & DevOps",
+        "added": [
+          "Docker",
+          "CI/CD",
+          "GitHub Actions",
+          "Linear"
+        ],
+        "swappedOut": [],
+        "origNcu": 53.53,
+        "newNcu": 88.85
+      }
+    ],
+    "updatedSkills": [
+      {
+        "id": "cat_lang",
+        "name": "Languages",
+        "skills": [
+          "Python",
+          "C++",
+          "TypeScript",
+          "JavaScript",
+          "SQL"
+        ]
+      },
+      {
+        "id": "cat_fw",
+        "name": "Frameworks & Libraries",
+        "skills": [
+          "React",
+          "Next.js",
+          "FastAPI",
+          "Flask",
+          "PyTorch",
+          "ROS 2"
+        ]
+      },
+      {
+        "id": "cat_db",
+        "name": "Databases & Cloud",
+        "skills": [
+          "PostgreSQL",
+          "Supabase",
+          "Firebase",
+          "SQLite3",
+          "AWS",
+          "Redis",
+          "MongoDB"
+        ]
+      },
+      {
+        "id": "cat_tools",
+        "name": "Developer Tools & DevOps",
+        "skills": [
+          "Git",
+          "Linux",
+          "REST APIs",
+          "Gazebo",
+          "Docker",
+          "CI/CD",
+          "GitHub Actions",
+          "Linear"
+        ]
+      }
+    ],
+    "bulletProposals": [
+      {
+        "bulletId": "b_ally_3",
+        "containerId": "job_ally",
+        "contextCategory": "backend-api-db",
+        "originalMarkup": "Processed inbound event streams using **LLM** prompt engineering, persisting structured call transcripts to **Supabase**.",
+        "mutatedMarkup": "Processed inbound event streams with **LLM** prompts, persisting call transcripts to **Supabase** on **AWS**.",
+        "injectedKeywords": [
+          "AWS"
+        ],
+        "reframedWords": 5,
+        "candChars": 97,
+        "candLines": 1,
+        "candFitStatus": "ideal-1"
+      },
+      {
+        "bulletId": "b_rf_2",
+        "containerId": "job_roboflow",
+        "contextCategory": "backend-api-db",
+        "originalMarkup": "Developed **REST APIs** and relational **PostgreSQL** schemas to standardize eligibility records across **5** internal services.",
+        "mutatedMarkup": "Built **REST APIs**, **Redis** cache, and **PostgreSQL** schemas standardizing records across **5** services.",
+        "injectedKeywords": [
+          "Redis"
+        ],
+        "reframedWords": 4,
+        "candChars": 93,
+        "candLines": 1,
+        "candFitStatus": "ideal-1"
+      },
+      {
+        "bulletId": "b_res_2",
+        "containerId": "job_research",
+        "contextCategory": "backend-api-db",
+        "originalMarkup": "Handled WhatsApp/SMS via **Twilio** and routed automated status alerts via **Flask** backend **APIs** across **100** trial interactions.",
+        "mutatedMarkup": "handled WhatsApp/SMS **Webhooks** via **Twilio** and routed automated status alerts via **Flask** backend **APIs** across **100** trial interactions.",
+        "injectedKeywords": [
+          "Webhooks"
+        ],
+        "reframedWords": 1,
+        "candChars": 129,
+        "candLines": 2,
+        "candFitStatus": "orphan-2"
+      }
+    ],
+    "malleableBullets": [
+      {
+        "id": "malleable-1",
+        "targetContainerId": "job_roboflow",
+        "targetContainerTitle": "Machine Learning Engineering Intern · Roboflow",
+        "markup": "Integrated automated **Python** validation scripts to verify bounding-box coordinates across auto-label batches.",
+        "chars": 108,
+        "injectedKeywords": [
+          "Docker",
+          "Python"
+        ],
+        "believabilityScore": 98,
+        "optionCount": 3
+      },
+      {
+        "id": "malleable-2",
+        "targetContainerId": "job_ally",
+        "targetContainerTitle": "Software Engineering Intern · Ally Voice AI",
+        "markup": "Maintained **FastAPI** streaming endpoints and structured error handlers for real-time voice agent turns.",
+        "chars": 101,
+        "injectedKeywords": [
+          "Redis",
+          "FastAPI"
+        ],
+        "believabilityScore": 98,
+        "optionCount": 4
+      },
+      {
+        "id": "malleable-3",
+        "targetContainerId": "job_research",
+        "targetContainerTitle": "Undergraduate Machine Learning Researcher · van der Heijden Lab",
+        "markup": "Automated surrogate dataset extraction and feature normalization pipelines across Slurm compute arrays.",
+        "chars": 103,
+        "injectedKeywords": [
+          "Docker",
+          "Python"
+        ],
+        "believabilityScore": 98,
+        "optionCount": 3
+      },
+      {
+        "id": "malleable-4",
+        "targetContainerId": "proj_wato",
+        "targetContainerTitle": "WATonomous Rover Autonomy (Project)",
+        "markup": "Implemented automated collision regression tests in **Gazebo** to validate Theta* path planning stability.",
+        "chars": 102,
+        "injectedKeywords": [
+          "Docker",
+          "C++"
+        ],
+        "believabilityScore": 98,
+        "optionCount": 3
+      },
+      {
+        "id": "malleable-5",
+        "targetContainerId": "proj_portal",
+        "targetContainerTitle": "CareSync Eligibility Platform (Project)",
+        "markup": "Built modular backend API endpoints and request validators in **TypeScript** to format core application data.",
+        "chars": 105,
+        "injectedKeywords": [
+          "Redis",
+          "REST APIs"
+        ],
+        "believabilityScore": 98,
+        "optionCount": 4
+      }
+    ],
+    "guardrailVerifiedZeroBanned": true
+  },
+  "ml_platform": {
+    "tiers": {
+      "matched": [
+        "Python",
+        "FastAPI",
+        "PyTorch",
+        "PostgreSQL"
+      ],
+      "tier_0_workflow": [
+        "Jira",
+        "Agile"
+      ],
+      "tier_1_framing": [
+        "AWS",
+        "Redis",
+        "GraphQL",
+        "Docker"
+      ],
+      "tier_1_5_skills_only": [
+        "AWS",
+        "Redis",
+        "GraphQL",
+        "Docker",
+        "Jira"
+      ],
+      "tier_2_banned": [
+        "Scala",
+        "CUDA"
+      ]
+    },
+    "skillSwaps": [
+      {
+        "categoryId": "cat_fw",
+        "categoryName": "Frameworks & Libraries",
+        "added": [
+          "GraphQL"
+        ],
+        "swappedOut": [],
+        "origNcu": 66.45,
+        "newNcu": 75.55
+      },
+      {
+        "categoryId": "cat_db",
+        "categoryName": "Databases & Cloud",
+        "added": [
+          "AWS",
+          "Redis"
+        ],
+        "swappedOut": [],
+        "origNcu": 56.79,
+        "newNcu": 67.47
+      },
+      {
+        "categoryId": "cat_tools",
+        "categoryName": "Developer Tools & DevOps",
+        "added": [
+          "Docker",
+          "Jira"
+        ],
+        "swappedOut": [],
+        "origNcu": 53.53,
+        "newNcu": 65.77
+      }
+    ],
+    "updatedSkills": [
+      {
+        "id": "cat_lang",
+        "name": "Languages",
+        "skills": [
+          "Python",
+          "C++",
+          "TypeScript",
+          "JavaScript",
+          "SQL"
+        ]
+      },
+      {
+        "id": "cat_fw",
+        "name": "Frameworks & Libraries",
+        "skills": [
+          "React",
+          "Next.js",
+          "FastAPI",
+          "Flask",
+          "PyTorch",
+          "ROS 2",
+          "GraphQL"
+        ]
+      },
+      {
+        "id": "cat_db",
+        "name": "Databases & Cloud",
+        "skills": [
+          "PostgreSQL",
+          "Supabase",
+          "Firebase",
+          "SQLite3",
+          "AWS",
+          "Redis"
+        ]
+      },
+      {
+        "id": "cat_tools",
+        "name": "Developer Tools & DevOps",
+        "skills": [
+          "Git",
+          "Linux",
+          "REST APIs",
+          "Gazebo",
+          "Docker",
+          "Jira"
+        ]
+      }
+    ],
+    "bulletProposals": [
+      {
+        "bulletId": "b_ally_3",
+        "containerId": "job_ally",
+        "contextCategory": "backend-api-db",
+        "originalMarkup": "Processed inbound event streams using **LLM** prompt engineering, persisting structured call transcripts to **Supabase**.",
+        "mutatedMarkup": "Processed inbound event streams with **LLM** prompts, persisting call transcripts to **Supabase** on **AWS**.",
+        "injectedKeywords": [
+          "AWS"
+        ],
+        "reframedWords": 5,
+        "candChars": 97,
+        "candLines": 1,
+        "candFitStatus": "ideal-1"
+      },
+      {
+        "bulletId": "b_rf_2",
+        "containerId": "job_roboflow",
+        "contextCategory": "backend-api-db",
+        "originalMarkup": "Developed **REST APIs** and relational **PostgreSQL** schemas to standardize eligibility records across **5** internal services.",
+        "mutatedMarkup": "Built **REST APIs**, **Redis** cache, and **PostgreSQL** schemas standardizing records across **5** services.",
+        "injectedKeywords": [
+          "Redis"
+        ],
+        "reframedWords": 4,
+        "candChars": 93,
+        "candLines": 1,
+        "candFitStatus": "ideal-1"
+      }
+    ],
+    "malleableBullets": [
+      {
+        "id": "malleable-1",
+        "targetContainerId": "job_roboflow",
+        "targetContainerTitle": "Machine Learning Engineering Intern · Roboflow",
+        "markup": "Integrated automated **Python** validation scripts to verify bounding-box coordinates across auto-label batches.",
+        "chars": 108,
+        "injectedKeywords": [
+          "Docker",
+          "Python"
+        ],
+        "believabilityScore": 98,
+        "optionCount": 3
+      },
+      {
+        "id": "malleable-2",
+        "targetContainerId": "job_ally",
+        "targetContainerTitle": "Software Engineering Intern · Ally Voice AI",
+        "markup": "Maintained **FastAPI** streaming endpoints and structured error handlers for real-time voice agent turns.",
+        "chars": 101,
+        "injectedKeywords": [
+          "Redis",
+          "FastAPI"
+        ],
+        "believabilityScore": 98,
+        "optionCount": 4
+      },
+      {
+        "id": "malleable-3",
+        "targetContainerId": "job_research",
+        "targetContainerTitle": "Undergraduate Machine Learning Researcher · van der Heijden Lab",
+        "markup": "Automated surrogate dataset extraction and feature normalization pipelines across Slurm compute arrays.",
+        "chars": 103,
+        "injectedKeywords": [
+          "Docker",
+          "Python"
+        ],
+        "believabilityScore": 98,
+        "optionCount": 3
+      },
+      {
+        "id": "malleable-4",
+        "targetContainerId": "proj_wato",
+        "targetContainerTitle": "WATonomous Rover Autonomy (Project)",
+        "markup": "Implemented automated collision regression tests in **Gazebo** to validate Theta* path planning stability.",
+        "chars": 102,
+        "injectedKeywords": [
+          "Docker",
+          "C++"
+        ],
+        "believabilityScore": 98,
+        "optionCount": 3
+      },
+      {
+        "id": "malleable-5",
+        "targetContainerId": "proj_portal",
+        "targetContainerTitle": "CareSync Eligibility Platform (Project)",
+        "markup": "Built modular backend API endpoints and request validators in **TypeScript** to format core application data.",
+        "chars": 105,
+        "injectedKeywords": [
+          "Redis",
+          "REST APIs"
+        ],
+        "believabilityScore": 98,
+        "optionCount": 4
+      }
+    ],
+    "guardrailVerifiedZeroBanned": true
+  },
+  "frontend_product": {
+    "tiers": {
+      "matched": [
+        "TypeScript",
+        "JavaScript",
+        "React",
+        "Next.js",
+        "Git",
+        "REST APIs"
+      ],
+      "tier_0_workflow": [
+        "Linear",
+        "end-to-end"
+      ],
+      "tier_1_framing": [
+        "Tailwind CSS",
+        "GraphQL"
+      ],
+      "tier_1_5_skills_only": [
+        "Node.js",
+        "Tailwind CSS",
+        "GraphQL",
+        "Vercel",
+        "Linear"
+      ],
+      "tier_2_banned": [
+        "Kotlin",
+        "Swift"
+      ]
+    },
+    "skillSwaps": [
+      {
+        "categoryId": "cat_fw",
+        "categoryName": "Frameworks & Libraries",
+        "added": [
+          "Node.js",
+          "Tailwind CSS",
+          "GraphQL"
+        ],
+        "swappedOut": [],
+        "origNcu": 66.45,
+        "newNcu": 95.27
+      },
+      {
+        "categoryId": "cat_db",
+        "categoryName": "Databases & Cloud",
+        "added": [
+          "Vercel"
+        ],
+        "swappedOut": [],
+        "origNcu": 56.79,
+        "newNcu": 63.57
+      },
+      {
+        "categoryId": "cat_tools",
+        "categoryName": "Developer Tools & DevOps",
+        "added": [
+          "Linear"
+        ],
+        "swappedOut": [],
+        "origNcu": 53.53,
+        "newNcu": 60.31
+      }
+    ],
+    "updatedSkills": [
+      {
+        "id": "cat_lang",
+        "name": "Languages",
+        "skills": [
+          "Python",
+          "C++",
+          "TypeScript",
+          "JavaScript",
+          "SQL"
+        ]
+      },
+      {
+        "id": "cat_fw",
+        "name": "Frameworks & Libraries",
+        "skills": [
+          "React",
+          "Next.js",
+          "FastAPI",
+          "Flask",
+          "PyTorch",
+          "ROS 2",
+          "Node.js",
+          "Tailwind CSS",
+          "GraphQL"
+        ]
+      },
+      {
+        "id": "cat_db",
+        "name": "Databases & Cloud",
+        "skills": [
+          "PostgreSQL",
+          "Supabase",
+          "Firebase",
+          "SQLite3",
+          "Vercel"
+        ]
+      },
+      {
+        "id": "cat_tools",
+        "name": "Developer Tools & DevOps",
+        "skills": [
+          "Git",
+          "Linux",
+          "REST APIs",
+          "Gazebo",
+          "Linear"
+        ]
+      }
+    ],
+    "bulletProposals": [
+      {
+        "bulletId": "b_rf_2",
+        "containerId": "job_roboflow",
+        "contextCategory": "backend-api-db",
+        "originalMarkup": "Developed **REST APIs** and relational **PostgreSQL** schemas to standardize eligibility records across **5** internal services.",
+        "mutatedMarkup": "Built **REST/GraphQL APIs** and **PostgreSQL** schemas standardizing eligibility data across **5** internal services.",
+        "injectedKeywords": [
+          "GraphQL"
+        ],
+        "reframedWords": 4,
+        "candChars": 105,
+        "candLines": 1,
+        "candFitStatus": "ideal-1"
+      }
+    ],
+    "malleableBullets": [
+      {
+        "id": "malleable-1",
+        "targetContainerId": "job_roboflow",
+        "targetContainerTitle": "Machine Learning Engineering Intern · Roboflow",
+        "markup": "Integrated automated **Python** validation scripts to verify bounding-box coordinates across auto-label batches.",
+        "chars": 108,
+        "injectedKeywords": [
+          "Python",
+          "PyTorch"
+        ],
+        "believabilityScore": 98,
+        "optionCount": 3
+      },
+      {
+        "id": "malleable-2",
+        "targetContainerId": "job_ally",
+        "targetContainerTitle": "Software Engineering Intern · Ally Voice AI",
+        "markup": "Maintained **FastAPI** streaming endpoints and structured error handlers for real-time voice agent turns.",
+        "chars": 101,
+        "injectedKeywords": [
+          "FastAPI",
+          "WebSockets"
+        ],
+        "believabilityScore": 98,
+        "optionCount": 4
+      },
+      {
+        "id": "malleable-3",
+        "targetContainerId": "job_research",
+        "targetContainerTitle": "Undergraduate Machine Learning Researcher · van der Heijden Lab",
+        "markup": "Automated surrogate dataset extraction and feature normalization pipelines across Slurm compute arrays.",
+        "chars": 103,
+        "injectedKeywords": [
+          "FastAPI",
+          "Python"
+        ],
+        "believabilityScore": 98,
+        "optionCount": 3
+      },
+      {
+        "id": "malleable-4",
+        "targetContainerId": "proj_wato",
+        "targetContainerTitle": "WATonomous Rover Autonomy (Project)",
+        "markup": "Implemented automated collision regression tests in **Gazebo** to validate Theta* path planning stability.",
+        "chars": 102,
+        "injectedKeywords": [
+          "Gazebo",
+          "C++"
+        ],
+        "believabilityScore": 98,
+        "optionCount": 3
+      },
+      {
+        "id": "malleable-5",
+        "targetContainerId": "proj_portal",
+        "targetContainerTitle": "CareSync Eligibility Platform (Project)",
+        "markup": "Built modular backend API endpoints and request validators in **TypeScript** to format core application data.",
+        "chars": 105,
+        "injectedKeywords": [
+          "TypeScript",
+          "REST APIs"
+        ],
+        "believabilityScore": 98,
+        "optionCount": 4
+      }
+    ],
+    "guardrailVerifiedZeroBanned": true
+  }
+}
