@@ -1,6 +1,6 @@
 import { markupToLatex } from "../latex";
 import { bulletFit, plainText } from "../utils";
-import { checkSlotPlausibility } from "./candidates";
+import { checkSlotPlausibility, tryMinimalKeywordInjection } from "./candidates";
 import { findCatalogEntry } from "./catalog";
 import { DEFAULT_CALIBRATION, SINGLE_LINE_NCU } from "./config";
 import {
@@ -313,6 +313,8 @@ export async function proposeAndValidateLlmBulletCandidates(params: {
   resume?: MasterResume;
   model?: string;
   maxSlotsPerKeyword?: number;
+  maxTotalCalls?: number;
+  skipWhenSpecificRuleFits?: boolean;
   enableJudge?: boolean;
   guardCtx?: GuardContext;
   rejectionCountsByKeyword?: Map<string, Partial<Record<ViolationCode, number>>>;
@@ -325,7 +327,9 @@ export async function proposeAndValidateLlmBulletCandidates(params: {
     completer,
     resume,
     model = DEFAULT_LLM_MODEL,
-    maxSlotsPerKeyword = 4,
+    maxSlotsPerKeyword = 2,
+    maxTotalCalls = 6,
+    skipWhenSpecificRuleFits = true,
     enableJudge = false,
     guardCtx,
     rejectionCountsByKeyword,
@@ -333,6 +337,7 @@ export async function proposeAndValidateLlmBulletCandidates(params: {
 
   const ctx = guardCtx ?? createGuardContext(tiers, cal, undefined, 7, SINGLE_LINE_NCU);
   const forbidden = buildForbiddenLabelsList(ctx);
+  const bannedLower = tiers.tier_2_banned.map((b) => b.toLowerCase());
 
   const telemetry: LlmTelemetry = {
     callsAttempted: 0,
@@ -356,8 +361,35 @@ export async function proposeAndValidateLlmBulletCandidates(params: {
 
   const tasks: Task[] = [];
   for (const keyword of keywords) {
+    if (tasks.length >= maxTotalCalls) break;
+
+    // Token-saving optimization: if a specific hand-written rule already produces a valid green 1L/2L fit for this keyword,
+    // skip calling the LLM unless there are fewer than 2 total tasks so far.
+    if (skipWhenSpecificRuleFits && slots.length > 1) {
+      const hasStrongRule = slots.some((slot) => {
+        const p = checkSlotPlausibility(slot, keyword);
+        if (!p.ok) return false;
+        const attempt = tryMinimalKeywordInjection(slot.bullet.text, slot.context, keyword, false);
+        if (!attempt || attempt.fitScore < 90) return false;
+        const fitted = fitBulletToCalibratedLineArea(attempt.mutatedMarkup, cal);
+        const guard = evaluateCandidateGuardrails(
+          slot.bullet.text,
+          fitted,
+          bannedLower,
+          cal,
+          SINGLE_LINE_NCU,
+          ctx.maxWordsCap,
+          keyword,
+          ctx
+        );
+        return Boolean(guard.valid && guard.budget?.candFit.tone === "green");
+      });
+      if (hasStrongRule) continue;
+    }
+
     const shortlisted = shortlistPlausibleSlotsForKeyword(slots, keyword, maxSlotsPerKeyword);
     for (const slot of shortlisted) {
+      if (tasks.length >= maxTotalCalls) break;
       const p = checkSlotPlausibility(slot, keyword);
       tasks.push({ slot, keyword, pairsWithHit: p.pairsWithHit });
     }

@@ -366,33 +366,29 @@ export async function runLarpAlignmentPipelineAsync(
   );
 
   if (options.includeLlmMalleable && malleableBullets.length > 0) {
-    const containers = selectEligibleContainersForMalleableLines(resume).slice(
-      0,
-      malleableBullets.length
-    );
-    await Promise.all(
-      malleableBullets.map(async (mb, idx) => {
-        const container = containers[idx];
-        if (!container) return;
-        const llmOpts = await draftAndValidateLlmMalleableOptions({
-          container,
-          containerIdx: idx,
-          targetKeywords: mb.injectedKeywords,
-          tiers,
-          cal,
-          completer: options.llm!,
-          guardCtx,
-        });
-        if (llmOpts.length > 0) {
-          mb.options.unshift(...llmOpts);
-          mb.markup = llmOpts[0].markup;
-          mb.latex = llmOpts[0].latex;
-          mb.chars = llmOpts[0].chars;
-          mb.widthNcu = llmOpts[0].widthNcu;
-          mb.fit = llmOpts[0].fit;
-        }
-      })
-    );
+    // Token-saving optimization: only draft LLM malleable options for the #1 top-ranked container
+    const containers = selectEligibleContainersForMalleableLines(resume).slice(0, 1);
+    const mb = malleableBullets[0];
+    const container = containers[0];
+    if (mb && container) {
+      const llmOpts = await draftAndValidateLlmMalleableOptions({
+        container,
+        containerIdx: 0,
+        targetKeywords: mb.injectedKeywords,
+        tiers,
+        cal,
+        completer: options.llm!,
+        guardCtx,
+      });
+      if (llmOpts.length > 0) {
+        mb.options.unshift(...llmOpts);
+        mb.markup = llmOpts[0].markup;
+        mb.latex = llmOpts[0].latex;
+        mb.chars = llmOpts[0].chars;
+        mb.widthNcu = llmOpts[0].widthNcu;
+        mb.fit = llmOpts[0].fit;
+      }
+    }
   }
 
   const aiRecommendation = evaluateBelievabilityAndRecommend(
