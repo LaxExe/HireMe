@@ -48,7 +48,14 @@ export {
   stripLatexCommandsKeepText,
 } from "./larp/text";
 
-export { classifyJobDescriptionTiers } from "./larp/jd";
+export {
+  classifyJobDescriptionTiers,
+  computeCoverageBeforeAfter,
+  extractUnknownTechnicalTerms,
+  extractWeightedJdKeywords,
+  type CoverageReport,
+  type WeightedJdKeyword,
+} from "./larp/jd";
 
 export {
   applySelectedSkillsToResumeCategories,

@@ -338,4 +338,87 @@ describe("LARP Engine — Golden Snapshots & Non-Negotiable Invariants", () => {
       assert.ok(violations.some((v) => v.code === "line_growth"));
     });
   });
+
+  describe("Phase 5: Keyword Matcher Fixes (Ambiguous, Weak, Weighted & Unknown Terms)", () => {
+    it("does NOT match Go or REST on a JD containing 'go to market' and 'the rest of the team'", async () => {
+      const { matchJobDescriptionWithResume } = await import("../../keywordMatch");
+      const { classifyJobDescriptionTiers } = await import("../../larpEngine");
+
+      const proseJd = `Product Manager / Engineer
+We are looking for someone to help us go to market quickly and collaborate with the rest of the team.
+You will work closely with stakeholders in spring 2026 to deliver swift action on customer feedback.`;
+
+      const matchRes = matchJobDescriptionWithResume(proseJd, masterResume);
+      const allDetectedNames = [
+        ...matchRes.matched.map((m) => m.name),
+        ...matchRes.missing.map((m) => m.name),
+      ];
+      assert.ok(!allDetectedNames.includes("Go"), "Should not match Go in 'go to market'");
+      assert.ok(!allDetectedNames.includes("REST APIs"), "Should not match REST in 'rest of the team'");
+      assert.ok(!allDetectedNames.includes("Spring Boot"), "Should not match Spring in 'spring 2026'");
+      assert.ok(!allDetectedNames.includes("Swift"), "Should not match Swift in 'swift action'");
+
+      const tiers = classifyJobDescriptionTiers(proseJd, masterResume);
+      assert.ok(!tiers.tier_2_banned.includes("Golang"));
+      assert.ok(!tiers.matched.includes("REST APIs"));
+    });
+
+    it("matches ambiguous aliases when properly capitalized in a technical list", async () => {
+      const { matchJobDescriptionWithResume } = await import("../../keywordMatch");
+      const techJd = `Backend Engineer
+Required Qualifications:
+- Experience programming in Go, R, C, TS, and JS.
+- Building services with Node, Spring, Rails, and REST.`;
+
+      const matchRes = matchJobDescriptionWithResume(techJd, masterResume);
+      const allDetectedNames = [
+        ...matchRes.matched.map((m) => m.name),
+        ...matchRes.missing.map((m) => m.name),
+      ];
+      assert.ok(allDetectedNames.includes("Go"));
+      assert.ok(allDetectedNames.includes("R"));
+      assert.ok(allDetectedNames.includes("C"));
+      assert.ok(allDetectedNames.includes("TypeScript"));
+      assert.ok(allDetectedNames.includes("JavaScript"));
+      assert.ok(allDetectedNames.includes("Node.js"));
+      assert.ok(allDetectedNames.includes("Spring Boot"));
+      assert.ok(allDetectedNames.includes("Ruby on Rails"));
+      assert.ok(allDetectedNames.includes("REST APIs"));
+    });
+
+    it("halves weight for weak aliases and assigns higher weight to required vs preferred sections", async () => {
+      const { matchJobDescriptionWithResume } = await import("../../keywordMatch");
+      const weightedJd = `Backend Python Engineer
+Required Qualifications:
+- Strong proficiency in Python and PostgreSQL.
+Preferred Qualifications:
+- Familiarity with Redis and S3.`;
+
+      const matchRes = matchJobDescriptionWithResume(weightedJd, masterResume);
+      const pyItem = matchRes.matched.find((m) => m.name === "Python");
+      const redisItem = matchRes.missing.find((m) => m.name === "Redis");
+      const awsItem = matchRes.missing.find((m) => m.name === "AWS");
+
+      assert.ok(pyItem && pyItem.weight && pyItem.weight >= 1.2, "Python in title + required gets >= 1.2");
+      assert.ok(redisItem && redisItem.weight === 0.4, "Redis in preferred gets 0.4");
+      assert.ok(awsItem && awsItem.weight === 0.2, "AWS matched only via weak alias 'S3' in preferred gets 0.4 * 0.5 = 0.2");
+    });
+
+    it("surfaces unknown capitalized/camelCase JD terms and preserves dynamic skill category", async () => {
+      const { matchJobDescriptionWithResume } = await import("../../keywordMatch");
+      const customResume = structuredClone(masterResume);
+      customResume.skills[0].skills.push({ id: "s_zig", name: "Zig" });
+
+      const jdWithUnknown = `Systems Engineer
+Requirements:
+- Experience with Zig, ClickHouse, and Temporal.io for workflow orchestration.`;
+
+      const matchRes = matchJobDescriptionWithResume(jdWithUnknown, customResume);
+      const zigMatch = matchRes.matched.find((m) => m.name === "Zig");
+      assert.ok(zigMatch, "Dynamic skill Zig should be matched");
+      assert.strictEqual(zigMatch.category, "Languages", "Dynamic skill takes category from its skills section");
+      assert.ok(matchRes.unknownTerms?.includes("ClickHouse"));
+      assert.ok(matchRes.unknownTerms?.includes("Temporal.io"));
+    });
+  });
 });

@@ -5,11 +5,20 @@ export interface KeywordMatchItem {
   /** Canonical display name of the technology/skill/tool */
   name: string;
   /** Category of the keyword */
-  category: "Languages" | "Frameworks & Libraries" | "Databases & Cloud" | "Tools & Infrastructure" | "Core Engineering";
+  category:
+    | "Languages"
+    | "Frameworks & Libraries"
+    | "Databases & Cloud"
+    | "Tools & Infrastructure"
+    | "Core Engineering";
   /** True if found on the user's MasterResume */
   matched: boolean;
   /** Sections of the resume where this keyword was found */
   foundIn: ("skills" | "experience" | "projects")[];
+  /** Computed importance weight (required 1.0, general 0.7, preferred 0.4 + repetition + title bonuses, halved if only weak alias matched) */
+  weight?: number;
+  /** Section where the keyword first or most strongly appeared */
+  section?: "required" | "preferred" | "general";
 }
 
 export interface MinimumQualificationsResult {
@@ -22,8 +31,10 @@ export interface KeywordMatchResult {
   matchedCount: number;
   missingCount: number;
   scorePercent: number;
+  weightedScorePercent?: number;
   matched: KeywordMatchItem[];
   missing: KeywordMatchItem[];
+  unknownTerms?: string[];
   minimumQualifications?: MinimumQualificationsResult | null;
 }
 
@@ -31,7 +42,47 @@ export interface TechEntry {
   name: string;
   category: KeywordMatchItem["category"];
   aliases: string[];
+  weakAliases?: string[];
 }
+
+/**
+ * Ambiguous short or common English words that require case-sensitivity AND a tech delimiter or context word nearby.
+ */
+export const AMBIGUOUS_ALIASES = new Set([
+  "go",
+  "r",
+  "c",
+  "ts",
+  "js",
+  "sh",
+  "ml",
+  "cv",
+  "rag",
+  "sso",
+  "rest",
+  "apis",
+  "node",
+  "spring",
+  "swift",
+  "rails",
+  "torch",
+]);
+
+/**
+ * Over-broad aliases that only count at half weight (0.5x) when matched without a strong primary alias.
+ */
+export const WEAK_ALIASES = new Set([
+  "containers",
+  "containerization",
+  "authentication",
+  "perception",
+  "consensus",
+  "github",
+  "s3",
+  "lambda",
+  "ec2",
+  "transformers",
+]);
 
 /**
  * Curated engineering dictionary of languages, frameworks, cloud/databases, devops tools, and core concepts.
@@ -92,7 +143,7 @@ export const TECH_DICTIONARY: TechEntry[] = [
   { name: "NumPy", category: "Frameworks & Libraries", aliases: ["numpy"] },
   { name: "OpenCV", category: "Frameworks & Libraries", aliases: ["opencv"] },
   { name: "LangChain", category: "Frameworks & Libraries", aliases: ["langchain", "llamaindex"] },
-  { name: "Hugging Face", category: "Frameworks & Libraries", aliases: ["hugging face", "huggingface", "transformers"] },
+  { name: "Hugging Face", category: "Frameworks & Libraries", aliases: ["hugging face", "huggingface"], weakAliases: ["transformers"] },
   { name: "llama.cpp", category: "Frameworks & Libraries", aliases: ["llama.cpp", "vllm", "onnx", "tensorrt"] },
   { name: "Qt", category: "Frameworks & Libraries", aliases: ["qt", "qt5", "qt6"] },
   { name: "ROS 2", category: "Frameworks & Libraries", aliases: ["ros", "ros 2", "ros2"] },
@@ -111,15 +162,15 @@ export const TECH_DICTIONARY: TechEntry[] = [
   { name: "Supabase", category: "Databases & Cloud", aliases: ["supabase"] },
   { name: "Snowflake", category: "Databases & Cloud", aliases: ["snowflake"] },
   { name: "BigQuery", category: "Databases & Cloud", aliases: ["bigquery"] },
-  { name: "AWS", category: "Databases & Cloud", aliases: ["aws", "amazon web services", "ec2", "s3", "lambda", "eks", "ecs", "rds", "sqs", "sns"] },
+  { name: "AWS", category: "Databases & Cloud", aliases: ["aws", "amazon web services", "eks", "ecs", "rds", "sqs", "sns"], weakAliases: ["ec2", "s3", "lambda"] },
   { name: "GCP", category: "Databases & Cloud", aliases: ["gcp", "google cloud", "google cloud platform"] },
   { name: "Azure", category: "Databases & Cloud", aliases: ["azure", "microsoft azure"] },
   { name: "Vercel", category: "Databases & Cloud", aliases: ["vercel"] },
 
   // Tools & Infrastructure
-  { name: "Docker", category: "Tools & Infrastructure", aliases: ["docker", "docker compose", "dockerfile", "containerization", "containers"] },
+  { name: "Docker", category: "Tools & Infrastructure", aliases: ["docker", "docker compose", "dockerfile"], weakAliases: ["containerization", "containers"] },
   { name: "Kubernetes", category: "Tools & Infrastructure", aliases: ["kubernetes", "k8s", "helm"] },
-  { name: "Git", category: "Tools & Infrastructure", aliases: ["git", "github", "gitlab", "bitbucket"] },
+  { name: "Git", category: "Tools & Infrastructure", aliases: ["git", "gitlab", "bitbucket"], weakAliases: ["github"] },
   { name: "GitHub Actions", category: "Tools & Infrastructure", aliases: ["github actions"] },
   { name: "CI/CD", category: "Tools & Infrastructure", aliases: ["ci/cd", "ci cd", "continuous integration", "continuous deployment", "jenkins", "gitlab ci", "circleci"] },
   { name: "Terraform", category: "Tools & Infrastructure", aliases: ["terraform", "iac", "infrastructure as code", "ansible", "pulumi"] },
@@ -138,21 +189,83 @@ export const TECH_DICTIONARY: TechEntry[] = [
   { name: "REST APIs", category: "Core Engineering", aliases: ["rest", "rest api", "rest apis", "restful", "restful api", "restful apis", "apis"] },
   { name: "WebSockets", category: "Core Engineering", aliases: ["websocket", "websockets", "socket.io"] },
   { name: "Microservices", category: "Core Engineering", aliases: ["microservice", "microservices"] },
-  { name: "Distributed Systems", category: "Core Engineering", aliases: ["distributed systems", "distributed system", "raft", "consensus"] },
+  { name: "Distributed Systems", category: "Core Engineering", aliases: ["distributed systems", "distributed system", "raft"], weakAliases: ["consensus"] },
   { name: "LLM", category: "Core Engineering", aliases: ["llm", "llms", "large language model", "large language models", "genai", "generative ai", "rag", "prompt engineering"] },
   { name: "Machine Learning", category: "Core Engineering", aliases: ["machine learning", "ml", "deep learning", "neural networks"] },
-  { name: "Computer Vision", category: "Core Engineering", aliases: ["computer vision", "cv", "lidar", "sensor fusion", "slam", "perception"] },
-  { name: "OAuth", category: "Core Engineering", aliases: ["oauth", "oauth 2.0", "oauth2", "jwt", "sso", "authentication"] },
+  { name: "Computer Vision", category: "Core Engineering", aliases: ["computer vision", "cv", "lidar", "sensor fusion", "slam"], weakAliases: ["perception"] },
+  { name: "OAuth", category: "Core Engineering", aliases: ["oauth", "oauth 2.0", "oauth2", "jwt", "sso"], weakAliases: ["authentication"] },
   { name: "Agile", category: "Core Engineering", aliases: ["agile", "scrum", "kanban"] },
   { name: "Unit Testing", category: "Core Engineering", aliases: ["unit test", "unit tests", "unit testing", "integration testing", "tdd"] },
 ];
 
+const CANONICAL_CASE_FOR_AMBIGUOUS: Record<string, string[]> = {
+  go: ["Go"],
+  r: ["R"],
+  c: ["C"],
+  ts: ["TS"],
+  js: ["JS"],
+  sh: ["sh", "SH"],
+  ml: ["ML"],
+  cv: ["CV"],
+  rag: ["RAG"],
+  sso: ["SSO"],
+  rest: ["REST"],
+  apis: ["APIs", "API"],
+  node: ["Node"],
+  spring: ["Spring"],
+  swift: ["Swift"],
+  rails: ["Rails"],
+  torch: ["Torch", "PyTorch"],
+};
+
+const TECH_CONTEXT_NEARBY =
+  /(?:[,/|()[\]•·:]|\b(?:using|with|in|experience|proficiency|skills?|stack|languages?|frameworks?|tools?|backend|frontend|mobile|services?|endpoints?|programming|written|such\s+as|like|and|or)\b)/i;
+
+const FALSE_POSITIVE_PHRASES: Record<string, RegExp[]> = {
+  go: [/\bgo\s+to\b/i, /\bgo\s+above\b/i, /\bgo\s+beyond\b/i, /\bgo\s+live\b/i, /\bon\s+the\s+go\b/i],
+  rest: [/\brest\s+of\b/i, /\bthe\s+rest\b/i, /\bat\s+rest\b/i],
+  swift: [/\bswift\s+(?:action|response|delivery|pace|resolution)\b/i],
+  spring: [/\bspring\s+20\d\d\b/i, /\bspring\s+(?:semester|term|intern|internship|co-op)\b/i],
+};
+
 /**
- * Checks whether a given alias token appears as a distinct word/phrase in `haystack`.
+ * Checks whether a given alias token appears as a valid technical term in `haystack`.
+ * Enforces case-sensitivity and nearby technical context for `AMBIGUOUS_ALIASES`.
  */
-function containsToken(haystack: string, token: string): boolean {
+export function containsToken(haystack: string, token: string, isResumeCorpus = false): boolean {
   const clean = token.trim();
   if (!clean) return false;
+  const lower = clean.toLowerCase();
+
+  if (!isResumeCorpus && AMBIGUOUS_ALIASES.has(lower)) {
+    const falsePositives = FALSE_POSITIVE_PHRASES[lower];
+    let scrubbed = haystack;
+    if (falsePositives) {
+      for (const fp of falsePositives) {
+        scrubbed = scrubbed.replace(new RegExp(fp.source, "gi"), " ");
+      }
+    }
+
+    const allowedCases = CANONICAL_CASE_FOR_AMBIGUOUS[lower] ?? [clean];
+    for (const cased of allowedCases) {
+      const re = new RegExp(
+        `(?<![A-Za-z0-9+#.])${escapeRegExp(cased)}(?![A-Za-z0-9+#])`,
+        "g"
+      );
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(scrubbed)) !== null) {
+        const start = Math.max(0, m.index - 28);
+        const end = Math.min(scrubbed.length, m.index + cased.length + 28);
+        const windowStr =
+          scrubbed.slice(start, m.index) + " " + scrubbed.slice(m.index + cased.length, end);
+        if (TECH_CONTEXT_NEARBY.test(windowStr)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
   const re = new RegExp(
     `(?<![A-Za-z0-9+#.])${escapeRegExp(clean)}(?![A-Za-z0-9+#])`,
     "i"
@@ -160,9 +273,131 @@ function containsToken(haystack: string, token: string): boolean {
   return re.test(haystack);
 }
 
+export function countTokenMentions(haystack: string, aliases: string[]): number {
+  let count = 0;
+  for (const alias of aliases) {
+    const clean = alias.trim();
+    if (!clean) continue;
+    if (!containsToken(haystack, clean)) continue;
+    const re = new RegExp(
+      `(?<![A-Za-z0-9+#.])${escapeRegExp(clean)}(?![A-Za-z0-9+#])`,
+      AMBIGUOUS_ALIASES.has(clean.toLowerCase()) ? "g" : "gi"
+    );
+    const matches = haystack.match(re);
+    if (matches) count += matches.length;
+  }
+  return count;
+}
+
+export interface JdSegments {
+  titleLine: string;
+  requiredSection: string;
+  preferredSection: string;
+  generalSection: string;
+}
+
+export function segmentJobDescription(jd: string): JdSegments {
+  const lines = jd.trim().split(/\r?\n/);
+  const titleLine = lines[0] ?? "";
+
+  const reqHeadingRe =
+    /(?:^|\n)[ \t]*(?:#+\s*)?(minimum\s+qualifications?|basic\s+qualifications?|required\s+qualifications?|minimum\s+requirements?|minimum\s+experience|what\s+you(?:'ll|\s+will)?\s+need|must\s+haves?|key\s+qualifications?|qualifications?|requirements?(?:\s*&\s*tech\s+stack)?)[ \t]*:?[ \t]*(?:\r?\n|$)/i;
+  const prefHeadingRe =
+    /(?:^|\n)[ \t]*(?:#+\s*)?(preferred\s+qualifications?|preferred\s+requirements?|nice\s+to\s+haves?|bonus\s+points?|bonus\s+qualifications?)[ \t]*:?[ \t]*(?:\r?\n|$)/i;
+
+  const reqMatch = reqHeadingRe.exec(jd);
+  const prefMatch = prefHeadingRe.exec(jd);
+
+  if (!reqMatch && !prefMatch) {
+    return {
+      titleLine,
+      requiredSection: "",
+      preferredSection: "",
+      generalSection: jd,
+    };
+  }
+
+  let requiredSection = "";
+  let preferredSection = "";
+  let generalSection = "";
+
+  if (reqMatch && prefMatch) {
+    if (reqMatch.index < prefMatch.index) {
+      generalSection = jd.slice(0, reqMatch.index);
+      requiredSection = jd.slice(reqMatch.index, prefMatch.index);
+      preferredSection = jd.slice(prefMatch.index);
+    } else {
+      generalSection = jd.slice(0, prefMatch.index);
+      preferredSection = jd.slice(prefMatch.index, reqMatch.index);
+      requiredSection = jd.slice(reqMatch.index);
+    }
+  } else if (reqMatch) {
+    generalSection = jd.slice(0, reqMatch.index);
+    requiredSection = jd.slice(reqMatch.index);
+  } else if (prefMatch) {
+    generalSection = jd.slice(0, prefMatch.index);
+    preferredSection = jd.slice(prefMatch.index);
+  }
+
+  return {
+    titleLine,
+    requiredSection,
+    preferredSection,
+    generalSection,
+  };
+}
+
+function mapResumeCategoryNameToDictCategory(
+  catName: string
+): KeywordMatchItem["category"] {
+  const upper = catName.toUpperCase();
+  if (/LANGUAGE/.test(upper)) return "Languages";
+  if (/FRAMEWORK|LIBRAR/.test(upper)) return "Frameworks & Libraries";
+  if (/DATABASE|CLOUD|DATA|STORAGE/.test(upper)) return "Databases & Cloud";
+  if (/CORE|CONCEPT|API/.test(upper)) return "Core Engineering";
+  return "Tools & Infrastructure";
+}
+
+const COMMON_ENGLISH_CAPITALIZED = new Set([
+  "the", "and", "for", "with", "you", "our", "are", "will", "what", "who",
+  "about", "role", "team", "company", "experience", "requirements", "qualifications",
+  "minimum", "preferred", "basic", "bonus", "points", "nice", "have", "strong",
+  "proficiency", "hands", "comfortable", "familiarity", "deep", "expertise",
+  "building", "software", "engineer", "engineering", "product", "platform",
+  "backend", "frontend", "full", "stack", "infrastructure", "machine", "learning",
+  "join", "work", "working", "design", "systems", "services", "high", "modern",
+  "customer", "support", "account", "intelligence", "core", "organization",
+  "distributed", "deploying", "querying", "caching", "tracking", "issues",
+  "sprints", "workflows", "ownership", "features", "shipping", "clients",
+  "mobile", "web", "developer", "experiences", "scale", "multimodal", "evaluation",
+  "programming", "skills", "containerizing", "workloads", "pipelines", "reliability",
+]);
+
+/**
+ * Surfaces capitalized or camelCase technical terms in the JD that aren't in the catalog.
+ */
+export function extractUnknownTechnicalTerms(
+  jdText: string,
+  knownAliasesLower: Set<string>
+): string[] {
+  const unknown = new Set<string>();
+  const tokens = jdText.match(/\b(?:[A-Z][a-z0-9]+(?:[A-Z][a-zA-Z0-9]*)+|[A-Z]{2,}[0-9]*|[A-Z][a-z0-9]+\.(?:js|ts|py|io|ai|cpp))\b/g) ?? [];
+
+  for (const tok of tokens) {
+    const clean = tok.trim();
+    const lower = clean.toLowerCase();
+    if (clean.length < 2) continue;
+    if (knownAliasesLower.has(lower)) continue;
+    if (COMMON_ENGLISH_CAPITALIZED.has(lower)) continue;
+    unknown.add(clean);
+  }
+
+  return Array.from(unknown);
+}
+
 /**
  * Analyzes a Job Description against a candidate's `MasterResume` and returns
- * matched and missing technologies, skills, and tools.
+ * matched and missing technologies, skills, and tools with weighted coverage.
  */
 export function matchJobDescriptionWithResume(
   jobDescription: string,
@@ -175,12 +410,15 @@ export function matchJobDescriptionWithResume(
       matchedCount: 0,
       missingCount: 0,
       scorePercent: 0,
+      weightedScorePercent: 0,
       matched: [],
       missing: [],
+      unknownTerms: [],
     };
   }
 
-  // Build section corpora from the user's MasterResume
+  const segments = segmentJobDescription(jdText);
+
   const skillsCorpus = [
     ...resume.skills.map((c) => `${c.name} ${c.skills.map((s) => s.name).join(" ")}`),
     ...resume.skills.flatMap((c) => c.skills.flatMap((s) => splitItems(s.name))),
@@ -204,47 +442,100 @@ export function matchJobDescriptionWithResume(
     )
     .join(" \n ");
 
-  // Also include any custom skills from the user's resume that aren't in TECH_DICTIONARY
   const dictionaryNamesLower = new Set(
-    TECH_DICTIONARY.flatMap((e) => [e.name.toLowerCase(), ...e.aliases.map((a) => a.toLowerCase())])
+    TECH_DICTIONARY.flatMap((e) => [
+      e.name.toLowerCase(),
+      ...e.aliases.map((a) => a.toLowerCase()),
+      ...(e.weakAliases ?? []).map((a) => a.toLowerCase()),
+    ])
   );
 
+  // Dynamic resume entries take their category from the skills section they came from
   const dynamicEntries: TechEntry[] = [];
-  const rawResumeSkills = [
-    ...resume.skills.flatMap((c) => c.skills.flatMap((s) => splitItems(s.name))),
-    ...resume.projects.flatMap((p) => p.techStack.flatMap((t) => splitItems(t))),
-  ];
+  for (const cat of resume.skills) {
+    const mappedCategory = mapResumeCategoryNameToDictCategory(cat.name);
+    for (const s of cat.skills) {
+      for (const item of splitItems(s.name)) {
+        const clean = item.trim();
+        if (clean.length < 2) continue;
+        if (dictionaryNamesLower.has(clean.toLowerCase())) continue;
+        dictionaryNamesLower.add(clean.toLowerCase());
+        dynamicEntries.push({
+          name: clean,
+          category: mappedCategory,
+          aliases: [clean.toLowerCase()],
+        });
+      }
+    }
+  }
 
-  for (const s of rawResumeSkills) {
-    const clean = s.trim();
-    if (clean.length < 2) continue;
-    if (dictionaryNamesLower.has(clean.toLowerCase())) continue;
-    dictionaryNamesLower.add(clean.toLowerCase());
-    dynamicEntries.push({
-      name: clean,
-      category: "Tools & Infrastructure",
-      aliases: [clean.toLowerCase()],
-    });
+  for (const p of resume.projects) {
+    for (const t of p.techStack) {
+      for (const item of splitItems(t)) {
+        const clean = item.trim();
+        if (clean.length < 2) continue;
+        if (dictionaryNamesLower.has(clean.toLowerCase())) continue;
+        dictionaryNamesLower.add(clean.toLowerCase());
+        dynamicEntries.push({
+          name: clean,
+          category: "Tools & Infrastructure",
+          aliases: [clean.toLowerCase()],
+        });
+      }
+    }
   }
 
   const allEntries = [...TECH_DICTIONARY, ...dynamicEntries];
   const matched: KeywordMatchItem[] = [];
   const missing: KeywordMatchItem[] = [];
 
-  for (const entry of allEntries) {
-    // Check if the Job Description mentions this technology or any of its aliases
-    const inJd = entry.aliases.some((alias) => containsToken(jdText, alias));
-    if (!inJd) continue;
+  let totalWeight = 0;
+  let matchedWeight = 0;
 
-    // Check where in the resume this technology or any of its aliases appears
+  for (const entry of allEntries) {
+    const strongHit = entry.aliases.some((alias) => containsToken(jdText, alias, false));
+    const weakHit =
+      !strongHit &&
+      (entry.weakAliases ?? []).some((alias) => containsToken(jdText, alias, false));
+
+    if (!strongHit && !weakHit) continue;
+
+    const allAliases = [...entry.aliases, ...(entry.weakAliases ?? [])];
+    const inReq = allAliases.some((a) => containsToken(segments.requiredSection, a, false));
+    const inGen = allAliases.some((a) => containsToken(segments.generalSection, a, false));
+    const inPref = allAliases.some((a) => containsToken(segments.preferredSection, a, false));
+
+    let section: "required" | "preferred" | "general" = "general";
+    let baseWeight = 0.7;
+    if (inReq) {
+      section = "required";
+      baseWeight = 1.0;
+    } else if (inGen) {
+      section = "general";
+      baseWeight = 0.7;
+    } else if (inPref) {
+      section = "preferred";
+      baseWeight = 0.4;
+    }
+
+    const mentions = countTokenMentions(jdText, allAliases);
+    const repeatBonus = Math.min(0.3, Math.max(0, (mentions - 1) * 0.1));
+    const inTitle = allAliases.some((a) => containsToken(segments.titleLine, a, false));
+    const titleBonus = inTitle ? 0.2 : 0;
+
+    let weight = Number((baseWeight + repeatBonus + titleBonus).toFixed(2));
+    if (weakHit) {
+      weight = Number((weight * 0.5).toFixed(2));
+    }
+
     const foundIn: ("skills" | "experience" | "projects")[] = [];
-    if (entry.aliases.some((alias) => containsToken(skillsCorpus, alias))) {
+    if (allAliases.some((alias) => containsToken(skillsCorpus, alias, true))) {
       foundIn.push("skills");
     }
-    if (entry.aliases.some((alias) => containsToken(experienceCorpus, alias))) {
+    if (allAliases.some((alias) => containsToken(experienceCorpus, alias, true))) {
       foundIn.push("experience");
     }
-    if (entry.aliases.some((alias) => containsToken(projectsCorpus, alias))) {
+    if (allAliases.some((alias) => containsToken(projectsCorpus, alias, true))) {
       foundIn.push("projects");
     }
 
@@ -254,9 +545,13 @@ export function matchJobDescriptionWithResume(
       category: entry.category,
       matched: isMatched,
       foundIn,
+      weight,
+      section,
     };
 
+    totalWeight += weight;
     if (isMatched) {
+      matchedWeight += weight;
       matched.push(item);
     } else {
       missing.push(item);
@@ -268,14 +563,18 @@ export function matchJobDescriptionWithResume(
   const missingCount = missing.length;
   const scorePercent =
     totalDetected > 0 ? Math.round((matchedCount / totalDetected) * 100) : 0;
+  const weightedScorePercent =
+    totalWeight > 0 ? Math.round((matchedWeight / totalWeight) * 100) : 0;
 
   return {
     totalDetected,
     matchedCount,
     missingCount,
     scorePercent,
+    weightedScorePercent,
     matched,
     missing,
+    unknownTerms: extractUnknownTechnicalTerms(jdText, dictionaryNamesLower),
     minimumQualifications: extractMinimumQualifications(jdText),
   };
 }
@@ -288,7 +587,6 @@ export function extractMinimumQualifications(
 ): MinimumQualificationsResult | null {
   if (!jd || typeof jd !== "string") return null;
 
-  // 1. Explicit Minimum / Basic / Required qualifications patterns
   const primaryPatterns = [
     /(?:^|\n)[ \t]*(?:#+\s*)?(minimum\s+qualifications?|basic\s+qualifications?|required\s+qualifications?|minimum\s+requirements?|minimum\s+experience)[ \t]*:?[ \t]*(?:\r?\n|$)/i,
     /(?:^|\n)[ \t]*(?:#+\s*)?(what\s+you(?:'ll|\s+will)?\s+need|must\s+haves?|who\s+you\s+are|key\s+qualifications?)[ \t]*:?[ \t]*(?:\r?\n|$)/i,
@@ -310,7 +608,6 @@ export function extractMinimumQualifications(
   const startIndex = match.index + match[0].length;
   const afterHeading = jd.slice(startIndex);
 
-  // Stop boundary: Preferred qualifications, Responsibilities, About, Benefits, etc.
   const nextHeadingPattern =
     /(?:^|\n)[ \t]*(?:#+\s*)?(preferred\s+qualifications?|preferred\s+requirements?|nice\s+to\s+haves?|bonus\s+points?|bonus\s+qualifications?|responsibilities|what\s+you(?:'ll|\s+will)?\s+do|about\s+(?:the\s+role|the\s+team|the\s+job|us|our\s+team|company)|benefits|compensation|salary|how\s+to\s+apply|equal\s+opportunity)[ \t]*:?[ \t]*(?:\r?\n|$)/i;
 
