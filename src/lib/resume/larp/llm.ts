@@ -150,9 +150,21 @@ export const proposeWithLlm = (
  * Browser client completer that calls `/api/larp/propose`.
  */
 export const apiCompleter: Completer = async (p) => {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (typeof window !== "undefined") {
+    try {
+      const { auth } = await import("@/lib/firebase");
+      const token = await auth.currentUser?.getIdToken();
+      if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+      }
+    } catch {
+      // ignore if firebase auth is in local mode
+    }
+  }
   const res = await fetch("/api/larp/propose", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify(p),
   });
   if (!res.ok) throw new Error(`propose ${res.status}`);
