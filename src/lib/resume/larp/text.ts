@@ -1,4 +1,6 @@
+import { HELVETICA_WIDTHS, measureRenderedBulletLineCount } from "../exportPdf";
 import { markupToLatex } from "../latex";
+import { DEFAULT_RESUME_FORMAT, type MasterResume, type ResumeFormat } from "../types";
 import { bulletFit, escapeRegExp, plainText } from "../utils";
 import {
   COMPRESSION_RULES,
@@ -17,6 +19,156 @@ import type {
 } from "./types";
 
 export { bulletFit };
+
+export interface Measurer {
+  width(text: string, bold?: boolean): number;
+}
+
+/**
+ * Heuristic NCU measurer retained as fallback.
+ */
+export const heuristicMeasurer: Measurer = {
+  width(text: string, bold = false): number {
+    const boldMultiplier = bold ? 1.12 : 1.0;
+    let totalWidth = 0.0;
+    for (const ch of text) {
+      let w = 1.0;
+      if (NARROW_CHARS.has(ch)) {
+        w = 0.52;
+      } else if (WIDE_CHARS.has(ch)) {
+        w = 1.42;
+      } else if (UPPER_CHARS.has(ch)) {
+        w = 1.22;
+      }
+      totalWidth += w * boldMultiplier;
+    }
+    return Number(totalWidth.toFixed(2));
+  },
+};
+
+/**
+ * Real AFM font-metric measurer using the resume template's actual Helvetica regular/bold glyph widths,
+ * backed by a per-glyph width cache and scaled so one printable line equals `targetLineUnits` (default 108.0).
+ */
+export function createFontMetricMeasurer(
+  format: ResumeFormat = DEFAULT_RESUME_FORMAT,
+  targetLineUnits = 108.0
+): Measurer {
+  const pageWidth = format.paperSize === "a4" ? 595.28 : 612;
+  const marginLeft = Math.max(24, format.margins.leftIn * 72);
+  const marginRight = Math.max(24, format.margins.rightIn * 72);
+  const contentWidth = pageWidth - marginLeft - marginRight;
+  const scale = format.fontScale || 1.0;
+  const basePt = format.baseFontSizePt * scale;
+  const smallPt = (format.baseFontSizePt - 1) * scale;
+  const bulletPt = format.bulletStyle.smallText ? smallPt : basePt;
+  const indentPt = Math.max(10, format.bulletStyle.leftMarginIn * 72);
+  const availWidthPt = Math.max(100, contentWidth - indentPt);
+
+  const regularGlyphCache = new Map<string, number>();
+  const boldGlyphCache = new Map<string, number>();
+
+  const getCharUnits = (ch: string, bold: boolean): number => {
+    const cache = bold ? boldGlyphCache : regularGlyphCache;
+    const hit = cache.get(ch);
+    if (hit !== undefined) return hit;
+
+    const pair = HELVETICA_WIDTHS[ch];
+    const w1000 = pair ? (bold ? pair[1] : pair[0]) : bold ? 580 : 530;
+    const widthPt = (w1000 / 1000) * bulletPt;
+    const units = (widthPt / availWidthPt) * targetLineUnits;
+    cache.set(ch, units);
+    return units;
+  };
+
+  return {
+    width(text: string, bold = false): number {
+      let total = 0;
+      for (let i = 0; i < text.length; i++) {
+        total += getCharUnits(text[i], bold);
+      }
+      return Number(total.toFixed(2));
+    },
+  };
+}
+
+export const defaultFontMeasurer: Measurer = createFontMetricMeasurer(
+  DEFAULT_RESUME_FORMAT,
+  108.0
+);
+
+export function measureMarkupWithMeasurer(
+  latexOrMarkupStr: string,
+  measurer: Measurer = defaultFontMeasurer
+): number {
+  const segments = stripLatexCommandsKeepText(latexOrMarkupStr);
+  let total = 0;
+  for (const seg of segments) {
+    total += measurer.width(seg.text, seg.isBold);
+  }
+  return Number(total.toFixed(2));
+}
+
+export interface PdfRenderCalibrationAudit {
+  totalBullets: number;
+  agreedCount: number;
+  discrepancies: {
+    bulletId: string;
+    predictedLines: number;
+    renderedLines: number;
+    chars: number;
+    fontMetricUnits: number;
+  }[];
+  calibrationValid: boolean;
+}
+
+/**
+ * Compares the PDF renderer's actual wrapped line count per bullet against the engine's prediction
+ * to validate `DEFAULT_CALIBRATION`.
+ */
+export function verifyPdfRenderLineCounts(
+  resume: MasterResume
+): PdfRenderCalibrationAudit {
+  const cal = resume.calibration ?? DEFAULT_CALIBRATION;
+  const fmt = resume.format ?? DEFAULT_RESUME_FORMAT;
+  const oneMax = cal.oneLineMax || 108;
+  const measurer = createFontMetricMeasurer(fmt, oneMax);
+
+  const allBullets = [
+    ...resume.experience.flatMap((j) => j.bullets),
+    ...resume.projects.flatMap((p) => p.bullets),
+  ];
+
+  const discrepancies: PdfRenderCalibrationAudit["discrepancies"] = [];
+  let agreedCount = 0;
+
+  for (const b of allBullets) {
+    if (!b.text.trim()) continue;
+    const fit = bulletFit(b.text, cal);
+    const fontMetricUnits = measureMarkupWithMeasurer(b.text, measurer);
+    const predictedLines = fontMetricUnits <= oneMax ? 1 : fontMetricUnits <= oneMax * 2 ? 2 : 3;
+    const rendered = measureRenderedBulletLineCount(b.text, fmt);
+
+    if (predictedLines === rendered.lineCount) {
+      agreedCount++;
+    } else {
+      discrepancies.push({
+        bulletId: b.id,
+        predictedLines,
+        renderedLines: rendered.lineCount,
+        chars: fit.length,
+        fontMetricUnits,
+      });
+    }
+  }
+
+  return {
+    totalBullets: allBullets.length,
+    agreedCount,
+    discrepancies,
+    calibrationValid: discrepancies.length === 0,
+  };
+}
 
 export function containsPhrase(haystack: string, phrase: string): boolean {
   const clean = phrase.trim();
@@ -66,23 +218,15 @@ export function stripLatexCommandsKeepText(inputStr: string): TextSegment[] {
  * Computes the visual width in Normalized Character Units (NCU).
  * 1 standard line at 0.4in-0.5in margins is approximately 98.0 NCU.
  */
-export function computeVisualWidth(latexOrMarkupStr: string): number {
+export function computeVisualWidth(
+  latexOrMarkupStr: string,
+  measurer: Measurer = heuristicMeasurer
+): number {
   const segments = stripLatexCommandsKeepText(latexOrMarkupStr);
   let totalWidth = 0.0;
 
   for (const { text, isBold } of segments) {
-    const boldMultiplier = isBold ? 1.12 : 1.0;
-    for (const ch of text) {
-      let w = 1.0;
-      if (NARROW_CHARS.has(ch)) {
-        w = 0.52;
-      } else if (WIDE_CHARS.has(ch)) {
-        w = 1.42;
-      } else if (UPPER_CHARS.has(ch)) {
-        w = 1.22;
-      }
-      totalWidth += w * boldMultiplier;
-    }
+    totalWidth += measurer.width(text, isBold);
   }
 
   return Number(totalWidth.toFixed(2));
@@ -96,13 +240,14 @@ export function checkLineBudget(
   originalMarkup: string,
   candidateMarkup: string,
   calibration: CalibrationConfig = DEFAULT_CALIBRATION,
-  singleLineNcu = SINGLE_LINE_NCU
+  singleLineNcu = SINGLE_LINE_NCU,
+  measurer: Measurer = heuristicMeasurer
 ): LineBudgetCheck {
   const origLatex = `\\item ${markupToLatex(originalMarkup)}`;
   const candLatex = `\\item ${markupToLatex(candidateMarkup)}`;
 
-  const origWidth = computeVisualWidth(origLatex);
-  const candWidth = computeVisualWidth(candLatex);
+  const origWidth = computeVisualWidth(origLatex, measurer);
+  const candWidth = computeVisualWidth(candLatex, measurer);
 
   const origFit = bulletFit(originalMarkup, calibration);
   const candFit = bulletFit(candidateMarkup, calibration);
@@ -118,7 +263,6 @@ export function checkLineBudget(
   );
   const slackNcu = Number((maxAllowedWidth - origWidth).toFixed(2));
 
-  // Valid if it lands in the calibrated 1-line or 2-line area (never >2L overflow, and ideally green 1L or 2L)
   const valid =
     candFit.status !== "overflow" &&
     candFit.length <= maxAllowedChars &&
@@ -144,7 +288,7 @@ export function checkLineBudget(
 /**
  * Rewrites/tightens a modified bullet so its character length fits cleanly inside
  * the user's calibrated 1-line area (`<= oneLineMax`) or 2-line area (`<= twoLineMax`)
- * without overflowing or leaving an awkward orphan wrap.
+ * without overflowing or injecting generic ungrounded filler clauses.
  */
 export function fitBulletToCalibratedLineArea(
   candidateMarkup: string,
@@ -154,10 +298,10 @@ export function fitBulletToCalibratedLineArea(
   const oneMax = Math.max(1, calibration.oneLineMax || DEFAULT_CALIBRATION.oneLineMax);
   const twoMax = Math.max(oneMax + 1, calibration.twoLineMax || DEFAULT_CALIBRATION.twoLineMax);
 
-  let fit = bulletFit(current, calibration);
+  const fit = bulletFit(current, calibration);
 
   // Case 1: The bullet is slightly over 1-line max (e.g., 109..136 chars — an accidental 2-line orphan!)
-  // Try compressing filler phrases so it fits cleanly inside the 1-line area (`<= oneMax`, Green `1L`)!
+  // Compress filler phrases so it fits cleanly inside the 1-line area (`<= oneMax`, Green `1L`).
   if (fit.length > oneMax && fit.length <= oneMax + 28) {
     let test1L = current;
     for (const [pattern, replacement] of COMPRESSION_RULES) {
@@ -181,34 +325,21 @@ export function fitBulletToCalibratedLineArea(
         current = current.replace(pattern, replacement).replace(/\s{2,}/g, " ").trim();
       }
     }
-    fit = bulletFit(current, calibration);
   }
 
   // Case 3: The bullet is in the 2-line range (`> oneMax` and `<= twoMax`), but is an `orphan-2`
-  // (line 2 is < 65% filled). If it cannot compress to 1 line, add a concise, context-matching
-  // technical clause so it fills the 2-line area (`ideal-2` Green) cleanly!
-  if (fit.status === "orphan-2") {
-    const minIdeal2 = oneMax + Math.ceil(0.65 * (twoMax - oneMax));
-    const needed = minIdeal2 - fit.length;
-    if (needed > 0 && needed <= 48) {
-      if (/\bPostgreSQL\b/i.test(current) && !/low-latency/i.test(current)) {
-        const expanded = current.replace(
-          /\.$/,
-          " for low-latency data access and schema consistency."
-        );
-        if (bulletFit(expanded, calibration).tone === "green") {
-          return expanded;
-        }
+  // (line 2 is < 65% filled). Try compressing filler phrases so it fits cleanly on 1 line,
+  // WITHOUT appending generic filler clauses.
+  const updatedFit = bulletFit(current, calibration);
+  if (updatedFit.status === "orphan-2") {
+    let testTighten = current;
+    for (const [pattern, replacement] of COMPRESSION_RULES) {
+      if (pattern.test(testTighten)) {
+        testTighten = testTighten.replace(pattern, replacement).replace(/\s{2,}/g, " ").trim();
       }
-      if (/\bSupabase\b|\bFlask\b|\bAPIs\b/i.test(current) && !/automated retries/i.test(current)) {
-        const expanded = current.replace(
-          /\.$/,
-          " with automated schema validation and retry handling."
-        );
-        if (bulletFit(expanded, calibration).tone === "green") {
-          return expanded;
-        }
-      }
+    }
+    if (bulletFit(testTighten, calibration).tone === "green") {
+      return testTighten;
     }
   }
 

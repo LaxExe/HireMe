@@ -47,8 +47,14 @@ export {
   checkLineBudget,
   computeVisualWidth,
   computeWordReframeStats,
+  createFontMetricMeasurer,
+  defaultFontMeasurer,
   fitBulletToCalibratedLineArea,
+  heuristicMeasurer,
+  measureMarkupWithMeasurer,
   stripLatexCommandsKeepText,
+  verifyPdfRenderLineCounts,
+  type PdfRenderCalibrationAudit,
 } from "./larp/text";
 
 export {

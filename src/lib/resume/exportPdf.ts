@@ -38,7 +38,7 @@ interface PageStream {
 /**
  * Standard Adobe AFM character widths (1/1000 em) for Helvetica (Regular & Bold).
  */
-const HELVETICA_WIDTHS: Record<string, [number, number]> = {
+export const HELVETICA_WIDTHS: Record<string, [number, number]> = {
   " ": [278, 278],
   "!": [278, 333],
   '"': [355, 474],
@@ -391,6 +391,37 @@ function markupToSpans(markup: string, baseGray = 0.08): StyledSpan[] {
   }
 
   return spans;
+}
+
+/**
+ * Computes the exact wrapped line count for a single bullet markup string using the PDF generator's
+ * AFM Helvetica glyph metrics and page/margin geometry.
+ */
+export function measureRenderedBulletLineCount(
+  bulletMarkup: string,
+  format: ResumeFormat = DEFAULT_RESUME_FORMAT
+): { lineCount: number; widthPt: number; availWidthPt: number } {
+  const pageWidth = format.paperSize === "a4" ? 595.28 : 612;
+  const marginLeft = Math.max(24, format.margins.leftIn * 72);
+  const marginRight = Math.max(24, format.margins.rightIn * 72);
+  const contentWidth = pageWidth - marginLeft - marginRight;
+  const scale = format.fontScale || 1.0;
+  const basePt = format.baseFontSizePt * scale;
+  const smallPt = (format.baseFontSizePt - 1) * scale;
+  const bulletPt = format.bulletStyle.smallText ? smallPt : basePt;
+  const indentPt = Math.max(10, format.bulletStyle.leftMarginIn * 72);
+  const availWidthPt = contentWidth - indentPt;
+
+  const spans = markupToSpans(bulletMarkup, 0.08);
+  const tokens = tokenizeSpans(spans, bulletPt);
+  const lines = wrapTokens(tokens, availWidthPt);
+  const widthPt = tokens.reduce((acc, t) => acc + t.widthPt, 0);
+
+  return {
+    lineCount: Math.max(1, lines.length),
+    widthPt: Number(widthPt.toFixed(2)),
+    availWidthPt: Number(availWidthPt.toFixed(2)),
+  };
 }
 
 /**

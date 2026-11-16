@@ -149,18 +149,18 @@
         "candFitStatus": "ideal-1"
       },
       {
-        "bulletId": "b_rf_2",
-        "containerId": "job_roboflow",
-        "contextCategory": "backend-api-db",
-        "originalMarkup": "Developed **REST APIs** and relational **PostgreSQL** schemas to standardize eligibility records across **5** internal services.",
-        "mutatedMarkup": "Built **REST/GraphQL APIs** and **PostgreSQL** schemas standardizing eligibility data across **5** internal services.",
+        "bulletId": "b_portal_1",
+        "containerId": "proj_portal",
+        "contextCategory": "frontend-ui",
+        "originalMarkup": "Built full-stack healthcare eligibility verification portal integrating external **REST APIs** and **PostgreSQL** to reduce check latency by **65%**.",
+        "mutatedMarkup": "Built full-stack healthcare eligibility verification portal integrating **REST** and **GraphQL APIs** and **PostgreSQL** to reduce check latency by **65%**.",
         "injectedKeywords": [
           "GraphQL"
         ],
-        "reframedWords": 4,
-        "candChars": 105,
-        "candLines": 1,
-        "candFitStatus": "ideal-1"
+        "reframedWords": 2,
+        "candChars": 140,
+        "candLines": 2,
+        "candFitStatus": "orphan-2"
       },
       {
         "bulletId": "b_res_2",
@@ -173,6 +173,34 @@
         ],
         "reframedWords": 1,
         "candChars": 129,
+        "candLines": 2,
+        "candFitStatus": "orphan-2"
+      },
+      {
+        "bulletId": "b_rf_2",
+        "containerId": "job_roboflow",
+        "contextCategory": "backend-api-db",
+        "originalMarkup": "Developed **REST APIs** and relational **PostgreSQL** schemas to standardize eligibility records across **5** internal services.",
+        "mutatedMarkup": "Developed **REST APIs** and **PostgreSQL** schemas to standardize eligibility records across **5** **Docker** services.",
+        "injectedKeywords": [
+          "Docker"
+        ],
+        "reframedWords": 1,
+        "candChars": 103,
+        "candLines": 1,
+        "candFitStatus": "ideal-1"
+      },
+      {
+        "bulletId": "b_ally_2",
+        "containerId": "job_ally",
+        "contextCategory": "frontend-ui",
+        "originalMarkup": "Gave clients control over call workflows and dispatch timing by building customizable dashboards in **TypeScript, Next.js, React** and **REST APIs**.",
+        "mutatedMarkup": "Gave clients control over **Jira**-tracked call workflows and dispatch timing by building customizable dashboards in **TypeScript, Next.js, React** and **REST APIs**.",
+        "injectedKeywords": [
+          "Jira"
+        ],
+        "reframedWords": 1,
+        "candChars": 154,
         "candLines": 2,
         "candFitStatus": "orphan-2"
       }
@@ -631,6 +659,20 @@
         "candFitStatus": "ideal-1"
       },
       {
+        "bulletId": "b_portal_1",
+        "containerId": "proj_portal",
+        "contextCategory": "frontend-ui",
+        "originalMarkup": "Built full-stack healthcare eligibility verification portal integrating external **REST APIs** and **PostgreSQL** to reduce check latency by **65%**.",
+        "mutatedMarkup": "Built full-stack healthcare eligibility verification portal integrating **REST** and **GraphQL APIs** and **PostgreSQL** to reduce check latency by **65%**.",
+        "injectedKeywords": [
+          "GraphQL"
+        ],
+        "reframedWords": 2,
+        "candChars": 140,
+        "candLines": 2,
+        "candFitStatus": "orphan-2"
+      },
+      {
         "bulletId": "b_rf_2",
         "containerId": "job_roboflow",
         "contextCategory": "backend-api-db",
@@ -643,6 +685,20 @@
         "candChars": 103,
         "candLines": 1,
         "candFitStatus": "ideal-1"
+      },
+      {
+        "bulletId": "b_ally_2",
+        "containerId": "job_ally",
+        "contextCategory": "frontend-ui",
+        "originalMarkup": "Gave clients control over call workflows and dispatch timing by building customizable dashboards in **TypeScript, Next.js, React** and **REST APIs**.",
+        "mutatedMarkup": "Gave clients control over **Jira**-tracked call workflows and dispatch timing by building customizable dashboards in **TypeScript, Next.js, React** and **REST APIs**.",
+        "injectedKeywords": [
+          "Jira"
+        ],
+        "reframedWords": 1,
+        "candChars": 154,
+        "candLines": 2,
+        "candFitStatus": "orphan-2"
       }
     ],
     "malleableBullets": [
@@ -842,6 +898,20 @@
         "candChars": 105,
         "candLines": 1,
         "candFitStatus": "ideal-1"
+      },
+      {
+        "bulletId": "b_ally_2",
+        "containerId": "job_ally",
+        "contextCategory": "frontend-ui",
+        "originalMarkup": "Gave clients control over call workflows and dispatch timing by building customizable dashboards in **TypeScript, Next.js, React** and **REST APIs**.",
+        "mutatedMarkup": "Gave clients control over **Linear**-tracked call workflows and dispatch timing by building customizable dashboards in **TypeScript, Next.js, React** and **REST APIs**.",
+        "injectedKeywords": [
+          "Linear"
+        ],
+        "reframedWords": 1,
+        "candChars": 156,
+        "candLines": 2,
+        "candFitStatus": "orphan-2"
       }
     ],
     "malleableBullets": [

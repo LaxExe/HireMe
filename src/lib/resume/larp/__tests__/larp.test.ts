@@ -618,8 +618,8 @@ Requirements:
       const run1 = runLarpAlignmentPipeline(jds.ml_platform.text, masterResume, 0);
       assert.strictEqual(
         run1.bulletProposals.length,
-        3,
-        "Global assignment assigns all 3 keywords (AWS, Redis, GraphQL) instead of greedy's 2"
+        5,
+        "Global assignment assigns all 5 keywords (AWS, Redis, GraphQL, Docker, Jira) instead of greedy's 2"
       );
 
       // Build exclude set from run1's assignments and verify regenerate returns a different plan
@@ -751,7 +751,7 @@ Requirements:
       assert.strictEqual(byKw.get("Rust")?.status, "blocked");
       assert.strictEqual(byKw.get("AWS")?.status, "applied");
       assert.strictEqual(byKw.get("Redis")?.status, "applied");
-      assert.strictEqual(byKw.get("Docker")?.status, "outcompeted");
+      assert.strictEqual(byKw.get("Docker")?.status, "applied");
       assert.strictEqual(byKw.get("Tailwind CSS")?.status, "no_candidate");
 
       // Verify no_candidate, all_rejected, outcompeted, and needs_confirmation statuses
@@ -907,6 +907,56 @@ Requirements:
       assert.strictEqual(
         formatSyntheticResumeFilename("Lakshman_Resume.pdf"),
         "Lakshman_Resume_SYNTHETIC_LARP"
+      );
+    });
+  });
+
+  describe("Phase 12: Real Font-Metric Line Measurement & PDF Render Calibration Audit", () => {
+    it("measures text with AFM Helvetica glyph widths (scaled to 108 units/line), removes filler-clause orphan padding, and validates line counts against the PDF renderer", async () => {
+      const {
+        createFontMetricMeasurer,
+        fitBulletToCalibratedLineArea,
+        heuristicMeasurer,
+        measureMarkupWithMeasurer,
+        verifyPdfRenderLineCounts,
+      } = await import("../../larpEngine");
+
+      const fontMeasurer = createFontMetricMeasurer(undefined, 108.0);
+      const narrowWidth = fontMeasurer.width("iiiiiiiiii", false);
+      const wideWidth = fontMeasurer.width("WWWWWWWWWW", false);
+      const boldWidth = fontMeasurer.width("PostgreSQL", true);
+      const regWidth = fontMeasurer.width("PostgreSQL", false);
+
+      assert.ok(narrowWidth < wideWidth, "Real font metrics distinguish narrow 'i' from wide 'W'");
+      assert.ok(boldWidth > regWidth, "Real font metrics account for bold glyph widths");
+      assert.ok(heuristicMeasurer.width("test", false) > 0, "Heuristic measurer remains available as fallback");
+
+      const sampleBullet =
+        "Built **REST APIs**, **Redis** cache, and **PostgreSQL** schemas standardizing records across **5** services.";
+      const measuredUnits = measureMarkupWithMeasurer(sampleBullet, fontMeasurer);
+      assert.ok(
+        measuredUnits > 60 && measuredUnits <= 108,
+        `1-line bullet should measure <= 108 units (got ${measuredUnits})`
+      );
+
+      // Verify filler-clause orphan fix ("for low-latency data access...") is removed
+      const orphanBullet =
+        "Developed **REST APIs** and relational **PostgreSQL** schemas to standardize eligibility records across **5** internal services.";
+      const fitted = fitBulletToCalibratedLineArea(orphanBullet);
+      assert.ok(
+        !fitted.includes("for low-latency data access"),
+        "Generic filler-clause orphan padding must not be appended"
+      );
+
+      // Run the PDF render check across the master resume and verify line count agreement
+      const audit = verifyPdfRenderLineCounts(masterResume);
+      assert.strictEqual(audit.totalBullets, 9);
+      assert.strictEqual(
+        audit.calibrationValid,
+        true,
+        `PDF render line counts should match predicted line counts (discrepancies: ${JSON.stringify(
+          audit.discrepancies
+        )})`
       );
     });
   });

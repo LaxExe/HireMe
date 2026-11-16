@@ -1,7 +1,15 @@
 import { plainText } from "../utils";
 import { EXTENDED_LARP_CATALOG, findCatalogEntry, LARP_CATALOG } from "./catalog";
 import { DEFAULT_CALIBRATION, SINGLE_LINE_NCU } from "./config";
-import { checkLineBudget, computeVisualWidth, computeWordReframeStats, containsPhrase } from "./text";
+import {
+  checkLineBudget,
+  computeVisualWidth,
+  computeWordReframeStats,
+  containsPhrase,
+  defaultFontMeasurer,
+  heuristicMeasurer,
+  type Measurer,
+} from "./text";
 import type {
   BulletMutationProposal,
   CalibrationConfig,
@@ -15,15 +23,13 @@ import type {
   WordReframeStats,
 } from "./types";
 
-export interface Measurer {
-  width(text: string, bold?: boolean): number;
-}
-
+export type { Measurer };
 export const defaultHeuristicMeasurer: Measurer = {
   width(text: string, bold = false): number {
-    return computeVisualWidth(bold ? `**${text}**` : text);
+    return heuristicMeasurer.width(text, bold);
   },
 };
+export { defaultFontMeasurer };
 
 export interface GuardContext {
   matchers: CatalogEntry[];
