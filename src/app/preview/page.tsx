@@ -31,6 +31,7 @@ import {
   type PreviewQueueItem,
 } from "@/lib/resume/previewQueue";
 import {
+  apiCompleter,
   applyLarpMutationsToResume,
   applySelectedSkillsToResumeCategories,
   evaluateBelievabilityAndRecommend,
@@ -41,6 +42,7 @@ import {
   logLarpUserActionEvent,
   registerCustomCatalogTerm,
   runLarpAlignmentPipeline,
+  runLarpAlignmentPipelineAsync,
   updateBulletProposalWithCustomMarkup,
   updateMalleableOptionWithCustomMarkup,
 } from "@/lib/resume/larpEngine";
@@ -289,6 +291,7 @@ export default function PreviewPage() {
         jdId: activeItem.roleName || activeItem.title || activeItem.id,
         variantOffset: nextOffset,
         excludePairs: prevExcluded,
+        mode: "framing",
       }
     );
 
@@ -319,6 +322,49 @@ export default function PreviewPage() {
       selectedMalleableOptionBySlotId: nextSelectedMalleableOpt,
     });
 
+    runLarpAlignmentPipelineAsync(
+      activeItem.jobDescription,
+      activeItem.baseResume,
+      {
+        jdId: activeItem.roleName || activeItem.title || activeItem.id,
+        variantOffset: nextOffset,
+        excludePairs: prevExcluded,
+        mode: "framing",
+        llm: apiCompleter,
+        includeLlmMalleable: true,
+      }
+    )
+      .then((asyncRun) => {
+        const asyncTopPick = asyncRun.aiRecommendation?.topPickId;
+        const asyncAcceptedBullets =
+          asyncTopPick && asyncRun.bulletProposals.some((b) => b.bulletId === asyncTopPick)
+            ? [asyncTopPick]
+            : asyncRun.bulletProposals.length > 0
+            ? [asyncRun.bulletProposals[0].bulletId]
+            : [];
+        const asyncAcceptedMalleable =
+          asyncTopPick && asyncRun.malleableBullets.some((m) => m.id === asyncTopPick)
+            ? [asyncTopPick]
+            : asyncRun.malleableBullets.length > 0
+            ? [asyncRun.malleableBullets[0].id]
+            : [];
+        const asyncSelectedOpt = asyncRun.malleableBullets.reduce((acc, m) => {
+          acc[m.id] = m.options[0]?.id;
+          return acc;
+        }, {} as Record<string, string>);
+
+        updateActiveItem({
+          larpRun: asyncRun,
+          acceptedBulletIds: asyncAcceptedBullets,
+          acceptedMalleableIds: asyncAcceptedMalleable,
+          selectedMalleableOptionBySlotId: asyncSelectedOpt,
+        });
+      })
+      .catch(() => {})
+      .finally(() => {
+        setRegeneratingId(null);
+      });
+
     setVisualizedUrlBySlot((prev) => {
       if (prev[activeItem.id]) {
         URL.revokeObjectURL(prev[activeItem.id]);
@@ -328,8 +374,6 @@ export default function PreviewPage() {
       }
       return prev;
     });
-
-    setTimeout(() => setRegeneratingId(null), 350);
   };
 
   const handleDeleteSlot = (slotId: string) => {

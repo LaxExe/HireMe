@@ -23,7 +23,9 @@ import {
   type KeywordMatchResult,
 } from "@/lib/resume/keywordMatch";
 import {
+  apiCompleter,
   runLarpAlignmentPipeline,
+  runLarpAlignmentPipelineAsync,
   evaluateBelievabilityAndRecommend,
   updateBulletProposalWithCustomMarkup,
   updateMalleableOptionWithCustomMarkup,
@@ -34,6 +36,7 @@ import {
   registerCustomCatalogTerm,
   PYLON_TEST_JD,
   type LarpAlignmentRun,
+  type LlmTelemetry,
   type Tier,
 } from "@/lib/resume/larpEngine";
 import {
@@ -76,6 +79,9 @@ export default function OperationsPage() {
   const [scrapeError, setScrapeError] = useState<string | null>(null);
   const [excludedPairs, setExcludedPairs] = useState<Set<string>>(new Set());
   const [variantOffset, setVariantOffset] = useState(0);
+  const [useAiProposer, setUseAiProposer] = useState(true);
+  const [aiProposing, setAiProposing] = useState(false);
+  const [llmTelemetry, setLlmTelemetry] = useState<LlmTelemetry | null>(null);
 
   const fetchJobDescriptionFromUrl = async (urlToFetch: string) => {
     if (!urlToFetch || !urlToFetch.trim()) return;
@@ -182,9 +188,11 @@ export default function OperationsPage() {
       jdId: roleName || undefined,
       variantOffset: customVariantOffset,
       excludePairs: customExcludedPairs,
+      mode: "framing",
     });
     setMatchResult(kwResult);
     setLarpRun(alignment);
+    setLlmTelemetry(null);
     setAcceptedBullets(new Set(alignment.bulletProposals.map((p) => p.bulletId)));
     setAcceptedMalleable(
       new Set(alignment.malleableBullets.filter((m) => m.recommended).map((m) => m.id))
@@ -200,6 +208,38 @@ export default function OperationsPage() {
     setEditingMalleableOptId(null);
     setApplySkillsSwap(true);
     setQueuedSlotBanner(null);
+
+    if (useAiProposer) {
+      setAiProposing(true);
+      runLarpAlignmentPipelineAsync(targetJd, currentResume, {
+        jdId: roleName || undefined,
+        variantOffset: customVariantOffset,
+        excludePairs: customExcludedPairs,
+        mode: "framing",
+        llm: apiCompleter,
+        includeLlmMalleable: true,
+      })
+        .then((asyncRun) => {
+          setLarpRun(asyncRun);
+          if (asyncRun.llmTelemetry) {
+            setLlmTelemetry(asyncRun.llmTelemetry);
+          }
+          setAcceptedBullets(new Set(asyncRun.bulletProposals.map((p) => p.bulletId)));
+          const nextOptMap: Record<string, string> = {};
+          for (const mb of asyncRun.malleableBullets) {
+            if (mb.options && mb.options.length > 0) {
+              nextOptMap[mb.id] = mb.options[0].id;
+            }
+          }
+          setSelectedMalleableOption(nextOptMap);
+        })
+        .catch(() => {
+          // Fail-soft: deterministic run is already rendered
+        })
+        .finally(() => {
+          setAiProposing(false);
+        });
+    }
   };
 
   const handleRegenerateInOperations = () => {
@@ -607,12 +647,30 @@ export default function OperationsPage() {
                   </div>
 
                   <div className="flex items-center gap-2 flex-wrap">
+                    <label className="inline-flex items-center gap-1.5 font-mono text-[11px] text-neutral-700 bg-[#fafafa] border border-[#ebebeb] px-2.5 py-1 rounded-full cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={useAiProposer}
+                        onChange={(e) => setUseAiProposer(e.target.checked)}
+                        className="rounded border-neutral-300 text-neutral-900 focus:ring-0"
+                      />
+                      <span>AI Proposer ({aiProposing ? "Running..." : "Active"})</span>
+                    </label>
+                    {llmTelemetry && llmTelemetry.proposedCount > 0 && (
+                      <span
+                        className="font-mono text-[10px] text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-full"
+                        title={`Model: ${llmTelemetry.model} · Prompt: ${llmTelemetry.promptVersion} · Latency: ${llmTelemetry.totalLatencyMs}ms`}
+                      >
+                        AI Survival: {llmTelemetry.survivedCount}/{llmTelemetry.proposedCount} (
+                        {Math.round(llmTelemetry.survivalRate * 100)}%)
+                      </span>
+                    )}
                     <button
                       type="button"
                       onClick={handleRegenerateInOperations}
                       className="inline-flex items-center gap-1.5 font-mono text-[11px] text-neutral-700 hover:text-neutral-900 bg-[#fafafa] hover:bg-neutral-100 border border-[#ebebeb] px-2.5 py-1 rounded-full active:scale-95 transition-all cursor-pointer"
                     >
-                      <RotateCw className="w-3 h-3" />
+                      <RotateCw className={`w-3 h-3 ${aiProposing ? "animate-spin" : ""}`} />
                       <span>Regenerate Plan</span>
                     </button>
                     <button

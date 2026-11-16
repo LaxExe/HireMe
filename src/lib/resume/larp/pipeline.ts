@@ -38,6 +38,7 @@ export interface LarpPipelineOptions {
   llm?: Completer;
   llmModel?: string;
   includeLlmMalleable?: boolean;
+  enableJudge?: boolean;
   excludePairs?: Set<string>;
 }
 
@@ -322,7 +323,9 @@ export async function runLarpAlignmentPipelineAsync(
       tiers,
       cal,
       completer: options.llm,
+      resume,
       model: options.llmModel,
+      enableJudge: options.enableJudge,
       guardCtx,
       rejectionCountsByKeyword,
     });
@@ -381,7 +384,12 @@ export async function runLarpAlignmentPipelineAsync(
           guardCtx,
         });
         if (llmOpts.length > 0) {
-          mb.options.push(...llmOpts);
+          mb.options.unshift(...llmOpts);
+          mb.markup = llmOpts[0].markup;
+          mb.latex = llmOpts[0].latex;
+          mb.chars = llmOpts[0].chars;
+          mb.widthNcu = llmOpts[0].widthNcu;
+          mb.fit = llmOpts[0].fit;
         }
       })
     );

@@ -1,99 +1,83 @@
 import { NextResponse } from "next/server";
-import { DEFAULT_LLM_MODEL, parseLlmRewritesJson } from "@/lib/resume/larp/llm";
+import { createHash } from "crypto";
+import { PROMPT_VERSION } from "@/lib/resume/larp/llm";
+
+const MODEL =
+  process.env.LARP_MODEL ?? process.env.LARP_LLM_MODEL ?? "gemini-2.5-flash";
+const cache = new Map<string, string>(); // per-instance; use Redis/KV if you deploy serverless
 
 export async function POST(req: Request) {
-  try {
-    const body = (await req.json()) as { prompt?: string; model?: string };
-    const prompt = body?.prompt?.trim();
-    if (!prompt) {
-      return NextResponse.json({ rewrites: [], error: "Missing prompt" }, { status: 400 });
-    }
-
-    const model = body?.model || process.env.LARP_LLM_MODEL || DEFAULT_LLM_MODEL;
-    const geminiKey =
-      process.env.GEMINI_API_KEY ||
-      process.env.GOOGLE_API_KEY ||
-      process.env.GOOGLE_GENERATIVE_AI_API_KEY;
-    const openaiKey = process.env.OPENAI_API_KEY;
-
-    if (!geminiKey && !openaiKey) {
-      return NextResponse.json({
-        rewrites: [],
-        raw: '{"rewrites":[]}',
-        model,
-        notice: "No server-side LLM API key configured; falling back to deterministic rules.",
-      });
-    }
-
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 8000);
-
-    try {
-      if (geminiKey) {
-        const res = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
-            model
-          )}:generateContent?key=${encodeURIComponent(geminiKey)}`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              contents: [{ parts: [{ text: prompt }] }],
-              generationConfig: {
-                temperature: 0.25,
-                responseMimeType: "application/json",
-              },
-            }),
-            signal: controller.signal,
-          }
-        );
-
-        if (!res.ok) {
-          return NextResponse.json({ rewrites: [], raw: '{"rewrites":[]}', model });
-        }
-
-        const data = (await res.json()) as {
-          candidates?: { content?: { parts?: { text?: string }[] } }[];
-        };
-        const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? '{"rewrites":[]}';
-        const rewrites = parseLlmRewritesJson(raw);
-        return NextResponse.json({ rewrites, raw, model });
-      }
-
-      if (openaiKey) {
-        const oaModel = process.env.LARP_LLM_MODEL || "gpt-4o-mini";
-        const res = await fetch("https://api.openai.com/v1/chat/completions", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${openaiKey}`,
-          },
-          body: JSON.stringify({
-            model: oaModel,
-            messages: [{ role: "user", content: prompt }],
-            temperature: 0.25,
-            response_format: { type: "json_object" },
-          }),
-          signal: controller.signal,
-        });
-
-        if (!res.ok) {
-          return NextResponse.json({ rewrites: [], raw: '{"rewrites":[]}', model: oaModel });
-        }
-
-        const data = (await res.json()) as {
-          choices?: { message?: { content?: string } }[];
-        };
-        const raw = data?.choices?.[0]?.message?.content ?? '{"rewrites":[]}';
-        const rewrites = parseLlmRewritesJson(raw);
-        return NextResponse.json({ rewrites, raw, model: oaModel });
-      }
-
-      return NextResponse.json({ rewrites: [], raw: '{"rewrites":[]}', model });
-    } finally {
-      clearTimeout(timeout);
-    }
-  } catch {
-    return NextResponse.json({ rewrites: [], raw: '{"rewrites":[]}' });
+  const apiKey =
+    process.env.GEMINI_API_KEY ||
+    process.env.GOOGLE_API_KEY ||
+    process.env.GOOGLE_GENERATIVE_AI_API_KEY;
+  if (!apiKey) {
+    return NextResponse.json({ error: "LLM not configured" }, { status: 503 });
   }
+
+  const { system, user, temperature = 0.7 } = await req.json().catch(() => ({}));
+  if (
+    typeof system !== "string" ||
+    typeof user !== "string" ||
+    user.length > 4000 ||
+    system.length > 4000
+  ) {
+    return NextResponse.json({ error: "bad request" }, { status: 400 });
+  }
+
+  const key = createHash("sha256")
+    .update([MODEL, PROMPT_VERSION, system, user, temperature].join("|"))
+    .digest("hex");
+  const hit = cache.get(key);
+  if (hit) {
+    return NextResponse.json({ text: hit, cached: true });
+  }
+
+  const t0 = Date.now();
+  const call = () =>
+    fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-goog-api-key": apiKey,
+        },
+        body: JSON.stringify({
+          systemInstruction: { parts: [{ text: system }] },
+          contents: [{ role: "user", parts: [{ text: user }] }],
+          generationConfig: {
+            temperature,
+            responseMimeType: "application/json",
+            maxOutputTokens: 600,
+          },
+        }),
+      }
+    );
+
+  let res = await call();
+  if (res.status === 429 || res.status >= 500) {
+    await new Promise((r) => setTimeout(r, 600));
+    res = await call();
+  }
+  if (!res.ok) {
+    return NextResponse.json({ error: "upstream" }, { status: 502 });
+  }
+
+  const data = await res.json();
+  const text: string = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+  const usage = data?.usageMetadata;
+  const latencyMs = Date.now() - t0;
+  console.info(
+    "[larp] tokens",
+    usage?.totalTokenCount,
+    "model",
+    MODEL,
+    "promptVersion",
+    PROMPT_VERSION,
+    "latencyMs",
+    latencyMs
+  );
+  if (text) cache.set(key, text);
+  return NextResponse.json({ text });
 }

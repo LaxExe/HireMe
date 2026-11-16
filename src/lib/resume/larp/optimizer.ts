@@ -251,6 +251,7 @@ export function selectBulletMutations(
               pairsWithHit: plausibility.pairsWithHit,
               containerKind: slot.containerKind,
               isOlderRole: slot.defensibilityBonus > 0 && slot.containerKind === "experience",
+              llmRating: llmCand.llmRating,
             });
             pairOptions.push({
               slot: llmCand.slot,

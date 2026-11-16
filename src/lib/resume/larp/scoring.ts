@@ -22,6 +22,7 @@ export function scoreCandidate(params: {
   pairsWithHit: boolean;
   containerKind: "experience" | "project";
   isOlderRole?: boolean;
+  llmRating?: number;
 }): ScoreFeatures {
   const {
     ruleScore,
@@ -33,6 +34,7 @@ export function scoreCandidate(params: {
     pairsWithHit,
     containerKind,
     isOlderRole = false,
+    llmRating,
   } = params;
 
   const rewriteNaturalness = Number((ruleScore * 0.5).toFixed(1));
@@ -57,6 +59,14 @@ export function scoreCandidate(params: {
   const harderToVerifyBonus =
     containerKind === "project" ? 4 : isOlderRole ? 3 : 0;
 
+  let llmNaturalnessBonus: number | undefined;
+  let llmNaturalnessNote: string | undefined;
+  if (llmRating !== undefined) {
+    const clampedRating = Math.max(1, Math.min(5, Number(llmRating) || 3));
+    llmNaturalnessBonus = (clampedRating - 3) * 4;
+    llmNaturalnessNote = `rated ${clampedRating}/5`;
+  }
+
   const rawTotal =
     rewriteNaturalness +
     jdImportance +
@@ -64,7 +74,8 @@ export function scoreCandidate(params: {
     lineFit +
     domainFit +
     pairsWithBonus +
-    harderToVerifyBonus;
+    harderToVerifyBonus +
+    (llmNaturalnessBonus ?? 0);
 
   const total = Math.max(0, Math.round(rawTotal));
 
@@ -76,6 +87,9 @@ export function scoreCandidate(params: {
     domainFit,
     pairsWithBonus,
     harderToVerifyBonus,
+    ...(llmNaturalnessBonus !== undefined
+      ? { llmNaturalnessBonus, llmNaturalnessNote }
+      : {}),
     total,
   };
 }
@@ -93,6 +107,15 @@ export function formatScoreBreakdownSummary(features: ScoreFeatures): string {
   if (features.pairsWithBonus > 0) parts.push(`pairsWith +${features.pairsWithBonus}`);
   if (features.harderToVerifyBonus > 0)
     parts.push(`context +${features.harderToVerifyBonus}`);
+  if (features.llmNaturalnessBonus !== undefined && features.llmNaturalnessBonus !== 0) {
+    parts.push(
+      `llm naturalness ${
+        features.llmNaturalnessBonus > 0
+          ? `+${features.llmNaturalnessBonus}`
+          : features.llmNaturalnessBonus
+      } (${features.llmNaturalnessNote})`
+    );
+  }
   return `Score ${features.total} (${parts.join(", ")})`;
 }
 

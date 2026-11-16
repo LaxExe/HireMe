@@ -105,7 +105,7 @@ export function tryMinimalKeywordInjection(
   origMarkup: string,
   context: BulletDomainContext,
   keyword: string,
-  allowGenericSuffixFallback = false
+  allowGenericSuffixFallback = true
 ): MinimalInjectionAttempt | null {
   if (context === "systems-cpp-robotics") return null;
   if (containsPhrase(plainText(origMarkup), keyword)) return null;

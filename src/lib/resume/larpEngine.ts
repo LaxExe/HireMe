@@ -99,18 +99,30 @@ export {
 } from "./larp/verify";
 
 export {
-  buildBulletRewritePrompt,
+  apiCompleter,
+  buildForbiddenLabelsList,
+  buildPrompt,
   clearLlmRewriteCache,
   DEFAULT_LLM_MODEL,
+  DRAFT_SYSTEM,
   draftAndValidateLlmMalleableOptions,
+  EXAMPLES,
+  JUDGE_SYSTEM,
+  judge,
   parseLlmRewritesJson,
+  parseRewrites,
+  pLimit,
   PROMPT_VERSION,
   proposeAndValidateLlmBulletCandidates,
+  proposeWithLlm,
   shortlistPlausibleSlotsForKeyword,
+  SYSTEM,
   wordJaccardSimilarity,
   type Completer,
+  type LlmRequest,
   type LlmTelemetry,
   type LlmValidatedCandidate,
+  type Prompt,
 } from "./larp/llm";
 
 export {

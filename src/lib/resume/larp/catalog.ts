@@ -51,13 +51,13 @@ interface CatalogOverride {
 const GENERIC_TECH_SUFFIXES: SuffixRuleSpec[] = [
   {
     suffix: " using {kw}",
-    score: 78,
+    score: 68,
     reason: "Appended {label} to existing implementation clause",
     contexts: ["backend", "frontend", "infra"],
   },
   {
     suffix: " with {kw}",
-    score: 76,
+    score: 68,
     reason: "Paired {label} alongside existing workflow",
     contexts: ["backend", "frontend", "infra"],
   },
@@ -66,7 +66,7 @@ const GENERIC_TECH_SUFFIXES: SuffixRuleSpec[] = [
 const WORKFLOW_TRACKING_SUFFIXES: SuffixRuleSpec[] = [
   {
     suffix: ", tracked in {kw}",
-    score: 86,
+    score: 68,
     reason: "Centralized {label} mention on product/feature bullet",
     contexts: ["frontend", "backend", "infra"],
   },

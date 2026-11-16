@@ -217,7 +217,7 @@ export function validateRewrite(
     });
   }
 
-  // 4. metric_changed: any number or percentage from the original is missing
+  // 4. metric_changed: no number/metric from the original may be missing AND no new number/metric may be fabricated
   const origMetrics = extractMetricsAndNumbers(original);
   const candMetrics = extractMetricsAndNumbers(candidate);
   for (const m of origMetrics) {
@@ -227,6 +227,17 @@ export function validateRewrite(
         message: `Original number or metric "${m}" is missing or altered in the candidate rewrite.`,
       });
       break;
+    }
+  }
+  if (!violations.some((v) => v.code === "metric_changed")) {
+    for (const m of candMetrics) {
+      if (!origMetrics.includes(m)) {
+        violations.push({
+          code: "metric_changed",
+          message: `New number or metric "${m}" was fabricated in the candidate rewrite.`,
+        });
+        break;
+      }
     }
   }
 

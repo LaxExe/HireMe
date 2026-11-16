@@ -486,113 +486,208 @@ Requirements:
   });
 
   describe("Phase 7: LLM Candidate Proposer & Guardrail Filtering", () => {
-    it("filters out hostile/non-compliant LLM responses (malformed JSON, banned terms, extra tech, metric changes, >7 words) and keeps only compliant rewrites", async () => {
-      const {
-        clearLlmRewriteCache,
-        proposeAndValidateLlmBulletCandidates,
-        runLarpAlignmentPipelineAsync,
-      } = await import("../../larpEngine");
-
-      clearLlmRewriteCache();
-
-      let callCount = 0;
-      const hostileCompleter = async (prompt: string): Promise<string> => {
-        callCount++;
-        if (callCount === 1) {
-          return "```json\n{ malformed json without closing bracket";
-        }
-        if (prompt.includes("include the keyword **Docker**") || prompt.includes("keyword **Docker**")) {
-          return JSON.stringify({
-            rewrites: [
-              // 1. Banned term (Rust)
-              "Built zero-shot **Auto Label** pipeline combining **SAM 2**, **Rust**, and **Docker** in **Python** to accelerate dataset annotation by **4x** across **50,000+** images.",
-              // 2. Extra non-target tech (GraphQL)
-              "Built zero-shot **Auto Label** pipeline combining **SAM 2**, **GraphQL**, and **Docker** in **Python** to accelerate dataset annotation by **4x** across **50,000+** images.",
-              // 3. Too many changes (12+ words changed)
-              "Completely re-architected our entire cloud backend using **Docker** containers to handle all customer calls automatically in real time across **4x** and **50,000+** images.",
-              // 4. Compliant rewrite! (<= 7 words changed, preserves tools & metrics)
-              "Built zero-shot **Auto Label** pipeline combining **SAM 2** and **VLM** detectors in **Python** and **Docker** to accelerate dataset annotation by **4x** across **50,000+** images.",
-            ],
-          });
-        }
-        if (prompt.includes("keyword **AWS**")) {
-          return JSON.stringify({
-            rewrites: [
-              // Metric changed (50,000+ -> 90,000+)
-              "Built zero-shot **Auto Label** pipeline combining **SAM 2** and **VLM** detectors in **Python** with **AWS** to accelerate dataset annotation by **4x** across **90,000+** images.",
-            ],
-          });
-        }
-        return '{"rewrites":[]}';
-      };
-
-      const slots = [
+    const base = "Deployed the app to **Supabase**.";
+    const singleBulletResume: MasterResume = {
+      ...masterResume,
+      experience: [
         {
-          bullet: masterResume.experience[1].bullets[0], // b_ally_1
-          containerId: "job_ally",
-          containerTitle: "Software Engineering Intern · Ally Voice AI",
+          id: "job_supa",
+          title: "Backend Software Engineer",
+          company: "CloudApp",
+          companyUrl: "",
+          location: "Remote",
+          dates: "2026",
+          tags: ["backend", "infra"],
+          bullets: [
+            {
+              id: "b_supa",
+              text: base,
+              tools: ["Supabase"],
+              metrics: [],
+            },
+          ],
+        },
+      ],
+      projects: [],
+    };
+
+    const fakeCompleter =
+      (rewrites: unknown) =>
+      async (): Promise<string> =>
+        JSON.stringify({ rewrites });
+
+    const cases: [string, unknown, boolean][] = [
+      ["compliant rewrite", ["Deployed the app to **Supabase** on **AWS**."], true],
+      [
+        "adds banned tech",
+        ["Deployed the app to **Supabase** on **AWS** with **Kubernetes**."],
+        false,
+      ],
+      ["drops the keyword", ["Deployed the app to **Supabase** quickly."], false],
+      [
+        "changes a number",
+        ["Deployed the app to **Supabase** on **AWS** for 50 users."],
+        false,
+      ],
+      [
+        "too many words changed",
+        [
+          "Architected and shipped a scalable production system on **AWS** powered by **Supabase** infrastructure.",
+        ],
+        false,
+      ],
+      ["no change at all", [base], false],
+      [
+        "overflows the line budget",
+        ["Deployed the app to **Supabase** on **AWS** ".repeat(8)],
+        false,
+      ],
+    ];
+
+    for (const [name, out, ok] of cases) {
+      it(`LLM validation case: ${name}`, async () => {
+        const {
+          clearLlmRewriteCache,
+          proposeAndValidateLlmBulletCandidates,
+          runLarpAlignmentPipelineAsync,
+        } = await import("../../larpEngine");
+        clearLlmRewriteCache();
+
+        const tiers = {
+          matched: ["Supabase"],
+          tier_0_workflow: [],
+          tier_1_framing: ["AWS"],
+          tier_1_5_skills_only: ["AWS"],
+          tier_2_banned: ["Kubernetes"],
+        };
+        const slot = {
+          bullet: singleBulletResume.experience[0].bullets[0],
+          containerId: "job_supa",
+          containerTitle: "Backend Software Engineer · CloudApp",
           containerKind: "experience" as const,
-          containerStack: ["ElevenLabs", "FastAPI", "Firebase"],
+          containerStack: ["Supabase"],
           context: "cloud-deploy-infra" as const,
           tags: ["backend" as const, "infra" as const],
-          defensibilityBonus: 5,
-          origPlainLen: 135,
-          maxAllowedChars: 216,
-          charSlack: 81,
-        },
-        {
-          bullet: masterResume.experience[0].bullets[0], // b_rf_1 (has 4x and 50,000+)
-          containerId: "job_roboflow",
-          containerTitle: "Machine Learning Engineering Intern · Roboflow",
-          containerKind: "experience" as const,
-          containerStack: ["Python", "SAM 2", "VLM"],
-          context: "backend-api-db" as const,
-          tags: ["ml" as const, "backend" as const],
           defensibilityBonus: 0,
-          origPlainLen: 138,
-          maxAllowedChars: 216,
-          charSlack: 78,
-        },
-      ];
+          origPlainLen: base.length,
+          maxAllowedChars: 108,
+          charSlack: 108 - base.length,
+        };
 
-      const tiers = {
-        matched: ["Python", "FastAPI", "Firebase"],
-        tier_0_workflow: ["Agile"],
-        tier_1_framing: ["Docker", "AWS"],
-        tier_1_5_skills_only: ["Docker", "AWS"],
-        tier_2_banned: ["Rust", "Kubernetes"],
-      };
+        const { candidates, telemetry } = await proposeAndValidateLlmBulletCandidates({
+          slots: [slot],
+          keywords: ["AWS"],
+          tiers,
+          cal: { oneLineMax: 108, twoLineMax: 216, malleableLines: 1 },
+          completer: fakeCompleter(out),
+          resume: singleBulletResume,
+        });
 
-      const rejectionMap = new Map();
-      const { candidates, telemetry } = await proposeAndValidateLlmBulletCandidates({
-        slots,
-        keywords: ["Docker", "AWS"],
-        tiers,
-        cal: { oneLineMax: 108, twoLineMax: 216, malleableLines: 1 },
-        completer: hostileCompleter,
-        rejectionCountsByKeyword: rejectionMap,
+        assert.strictEqual(candidates.length > 0, ok);
+        if (ok) {
+          assert.strictEqual(telemetry.survivedCount, 1);
+          assert.strictEqual(telemetry.survivalRate, 1);
+        } else {
+          assert.strictEqual(telemetry.survivedCount, 0);
+        }
+
+        const run = await runLarpAlignmentPipelineAsync(
+          "Requirements:\nAWS, Kubernetes",
+          singleBulletResume,
+          { llm: fakeCompleter(out) }
+        );
+        assert.ok(
+          run.aiRecommendation?.verificationPasses.every((c) => c.status === "passed")
+        );
+      });
+    }
+
+    it("survives malformed output and falls back to rules cleanly", async () => {
+      const { clearLlmRewriteCache, runLarpAlignmentPipelineAsync } = await import(
+        "../../larpEngine"
+      );
+      clearLlmRewriteCache();
+      const run = await runLarpAlignmentPipelineAsync(
+        "Requirements:\nAWS",
+        singleBulletResume,
+        { llm: async () => "not json {{" }
+      );
+      assert.ok(
+        run.aiRecommendation?.verificationPasses.every((c) => c.status === "passed")
+      );
+    });
+
+    it("survives a thrown error and still populates diagnostics", async () => {
+      const { clearLlmRewriteCache, runLarpAlignmentPipelineAsync } = await import(
+        "../../larpEngine"
+      );
+      clearLlmRewriteCache();
+      const run = await runLarpAlignmentPipelineAsync(
+        "Requirements:\nAWS",
+        singleBulletResume,
+        {
+          llm: async () => {
+            throw new Error("boom");
+          },
+        }
+      );
+      assert.ok(run.diagnostics.length > 0);
+    });
+
+    it("keeps JD text out of buildPrompt, supports judge (1-5 -> ±8 pts), and supports DRAFT_SYSTEM malleable drafting", async () => {
+      const {
+        buildPrompt,
+        draftAndValidateLlmMalleableOptions,
+        judge,
+        selectEligibleContainersForMalleableLines,
+      } = await import("../../larpEngine");
+
+      const prompt = buildPrompt({
+        bullet: base,
+        keyword: "AWS",
+        containerTitle: "Backend Engineer · CloudApp",
+        stack: ["Supabase", "TypeScript"],
+        tags: ["backend", "infra"],
+        styleRefs: ["Built **REST APIs** for billing."],
+        forbidden: ["Kubernetes", "Rust"],
+        maxWordChanges: 7,
+        maxChars: 108,
       });
 
-      assert.ok(telemetry.callsAttempted >= 2);
-      assert.strictEqual(candidates.length, 1, "Only the single compliant Docker rewrite should survive");
-      assert.strictEqual(candidates[0].keyword, "Docker");
-      assert.strictEqual(candidates[0].source, "llm");
-      assert.strictEqual(candidates[0].baseScore, 80);
-      assert.ok(candidates[0].mutatedMarkup.includes("**Docker**"));
-      assert.ok(!candidates[0].mutatedMarkup.includes("Rust"));
-      assert.ok(!candidates[0].mutatedMarkup.includes("Kubernetes"));
+      assert.ok(prompt.system.includes("Output JSON only"));
+      assert.ok(prompt.user.includes("Technology: AWS | N=7 | max 108 characters"));
+      assert.ok(!prompt.user.includes("Requirements:"));
 
-      const dockerRejections = rejectionMap.get("docker");
-      assert.ok(dockerRejections?.banned_term >= 1);
-      assert.ok(dockerRejections?.too_many_changes >= 1);
+      const ratings = await judge(
+        async () => '{"scores":[5, 1]}',
+        base,
+        ["Cand 1", "Cand 2"]
+      );
+      assert.deepStrictEqual(ratings, [5, 1]);
 
-      const awsRejections = rejectionMap.get("aws");
-      assert.ok(awsRejections?.metric_changed >= 1);
-
-      // Also verify that with LLM disabled (no completer), runLarpAlignmentPipelineAsync still produces rule-based suggestions
-      const fallbackRun = await runLarpAlignmentPipelineAsync(jds.pylon_fullstack.text, masterResume);
-      assert.ok(fallbackRun.bulletProposals.length >= 3);
-      assert.strictEqual(fallbackRun.guardrailVerifiedZeroBanned, true);
+      const containers = selectEligibleContainersForMalleableLines(masterResume);
+      const drafted = await draftAndValidateLlmMalleableOptions({
+        container: containers[0],
+        containerIdx: 0,
+        targetKeywords: ["Docker"],
+        tiers: {
+          matched: ["Python", "PyTorch"],
+          tier_0_workflow: [],
+          tier_1_framing: ["Docker"],
+          tier_1_5_skills_only: ["Docker"],
+          tier_2_banned: ["Rust"],
+        },
+        completer: async () =>
+          JSON.stringify({
+            rewrites: [
+              "Configured **Docker** containers in **Python** to standardize model evaluation and inference workflows.",
+              "Built **Docker** pipelines with **Rust** across 500 nodes.", // rejected: banned tech + number
+            ],
+          }),
+      });
+      assert.strictEqual(drafted.length, 1);
+      assert.strictEqual(drafted[0].source, "llm");
+      assert.strictEqual(drafted[0].isNewClaim, true);
     });
   });
 
@@ -752,7 +847,7 @@ Requirements:
       assert.strictEqual(byKw.get("AWS")?.status, "applied");
       assert.strictEqual(byKw.get("Redis")?.status, "applied");
       assert.strictEqual(byKw.get("Docker")?.status, "applied");
-      assert.strictEqual(byKw.get("Tailwind CSS")?.status, "no_candidate");
+      assert.strictEqual(byKw.get("Tailwind CSS")?.status, "all_rejected");
 
       // Verify no_candidate, all_rejected, outcompeted, and needs_confirmation statuses
       const customStats = new Map([

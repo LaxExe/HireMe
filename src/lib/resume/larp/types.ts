@@ -156,6 +156,8 @@ export interface ScoreFeatures {
   domainFit: number;
   pairsWithBonus: number;
   harderToVerifyBonus: number;
+  llmNaturalnessBonus?: number;
+  llmNaturalnessNote?: string;
   total: number;
 }
 

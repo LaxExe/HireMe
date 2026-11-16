@@ -121,30 +121,30 @@
     ],
     "bulletProposals": [
       {
-        "bulletId": "b_ally_1",
-        "containerId": "job_ally",
-        "contextCategory": "cloud-deploy-infra",
-        "originalMarkup": "Built real-time **ElevenLabs** and **FastAPI** voice agents that automate data gathering from insurance providers, deployed on **Firebase Cloud Functions**.",
-        "mutatedMarkup": "Built real-time **ElevenLabs** and **FastAPI** voice agents that automate data gathering from insurance providers, deployed on **AWS** and **Firebase**.",
-        "injectedKeywords": [
-          "AWS"
-        ],
-        "reframedWords": 3,
-        "candChars": 136,
-        "candLines": 2,
-        "candFitStatus": "orphan-2"
-      },
-      {
         "bulletId": "b_ally_3",
         "containerId": "job_ally",
         "contextCategory": "backend-api-db",
         "originalMarkup": "Processed inbound event streams using **LLM** prompt engineering, persisting structured call transcripts to **Supabase**.",
-        "mutatedMarkup": "Processed inbound event streams with **LLM** prompts, persisting call transcripts to **Supabase** and **Redis**.",
+        "mutatedMarkup": "Processed inbound event streams with **LLM** prompts, persisting call transcripts to **Supabase** on **AWS**.",
+        "injectedKeywords": [
+          "AWS"
+        ],
+        "reframedWords": 5,
+        "candChars": 97,
+        "candLines": 1,
+        "candFitStatus": "ideal-1"
+      },
+      {
+        "bulletId": "b_rf_2",
+        "containerId": "job_roboflow",
+        "contextCategory": "backend-api-db",
+        "originalMarkup": "Developed **REST APIs** and relational **PostgreSQL** schemas to standardize eligibility records across **5** internal services.",
+        "mutatedMarkup": "Built **REST APIs**, **Redis** cache, and **PostgreSQL** schemas standardizing records across **5** services.",
         "injectedKeywords": [
           "Redis"
         ],
-        "reframedWords": 5,
-        "candChars": 100,
+        "reframedWords": 4,
+        "candChars": 93,
         "candLines": 1,
         "candFitStatus": "ideal-1"
       },
@@ -177,18 +177,18 @@
         "candFitStatus": "orphan-2"
       },
       {
-        "bulletId": "b_rf_2",
-        "containerId": "job_roboflow",
-        "contextCategory": "backend-api-db",
-        "originalMarkup": "Developed **REST APIs** and relational **PostgreSQL** schemas to standardize eligibility records across **5** internal services.",
-        "mutatedMarkup": "Developed **REST APIs** and **PostgreSQL** schemas to standardize eligibility records across **5** **Docker** services.",
+        "bulletId": "b_ally_1",
+        "containerId": "job_ally",
+        "contextCategory": "cloud-deploy-infra",
+        "originalMarkup": "Built real-time **ElevenLabs** and **FastAPI** voice agents that automate data gathering from insurance providers, deployed on **Firebase Cloud Functions**.",
+        "mutatedMarkup": "Built real-time **ElevenLabs** and **FastAPI** voice agents that automate data gathering from insurance providers, deployed on **Firebase Cloud Functions** using **Docker**.",
         "injectedKeywords": [
           "Docker"
         ],
-        "reframedWords": 1,
-        "candChars": 103,
-        "candLines": 1,
-        "candFitStatus": "ideal-1"
+        "reframedWords": 3,
+        "candChars": 157,
+        "candLines": 2,
+        "candFitStatus": "orphan-2"
       },
       {
         "bulletId": "b_ally_2",
