@@ -1,6 +1,7 @@
 import { markupToLatex } from "../latex";
 import { checkSlotPlausibility, tryMinimalKeywordInjection } from "./candidates";
 import { createGuardContext, evaluateCandidateGuardrails, type GuardContext } from "./guardrails";
+import type { LlmValidatedCandidate } from "./llm";
 import { fitBulletToCalibratedLineArea } from "./text";
 import type {
   BulletMutationProposal,
@@ -28,7 +29,8 @@ export function selectBulletMutations(
   singleLineNcu = 98.0,
   tiers?: LarpTierClassification,
   guardCtx?: GuardContext,
-  statsOut?: Map<string, KeywordCandidateStats>
+  statsOut?: Map<string, KeywordCandidateStats>,
+  llmCandidates?: LlmValidatedCandidate[]
 ): BulletMutationProposal[] {
   const usedBulletIds = new Set<string>();
   const bulletProposals: BulletMutationProposal[] = [];
@@ -50,6 +52,7 @@ export function selectBulletMutations(
       score: number;
       budget: LineBudgetCheck;
       wordStats: WordReframeStats;
+      source: "rule" | "generic" | "llm";
     }> = [];
 
     for (const slot of slots) {
@@ -62,44 +65,60 @@ export function selectBulletMutations(
       }
 
       const attempt = tryMinimalKeywordInjection(slot.bullet.text, slot.context, keyword);
-      if (!attempt) continue;
+      if (attempt) {
+        const fittedMarkup = fitBulletToCalibratedLineArea(attempt.mutatedMarkup, cal);
+        const guard = evaluateCandidateGuardrails(
+          slot.bullet.text,
+          fittedMarkup,
+          bannedLower,
+          cal,
+          singleLineNcu,
+          7,
+          keyword,
+          ctx
+        );
+        if (!guard.valid || !guard.budget || !guard.wordStats) {
+          for (const v of guard.violations ?? []) {
+            kwStats.rejectionCountsByCode[v.code] =
+              (kwStats.rejectionCountsByCode[v.code] ?? 0) + 1;
+          }
+        } else {
+          const greenBonus = guard.budget.candFit.tone === "green" ? 12 : 0;
+          const pairsWithBonus = plausibility.pairsWithHit ? 10 : 0;
+          const totalScore =
+            attempt.fitScore +
+            slot.defensibilityBonus +
+            greenBonus +
+            pairsWithBonus +
+            Math.min(8, slot.charSlack / 6);
 
-      const fittedMarkup = fitBulletToCalibratedLineArea(attempt.mutatedMarkup, cal);
-      const guard = evaluateCandidateGuardrails(
-        slot.bullet.text,
-        fittedMarkup,
-        bannedLower,
-        cal,
-        singleLineNcu,
-        7,
-        keyword,
-        ctx
-      );
-      if (!guard.valid || !guard.budget || !guard.wordStats) {
-        for (const v of guard.violations ?? []) {
-          kwStats.rejectionCountsByCode[v.code] =
-            (kwStats.rejectionCountsByCode[v.code] ?? 0) + 1;
+          validProposals.push({
+            slot,
+            mutatedMarkup: fittedMarkup,
+            reason: attempt.reason,
+            score: totalScore,
+            budget: guard.budget,
+            wordStats: guard.wordStats,
+            source: attempt.source ?? "rule",
+          });
         }
-        continue;
       }
+    }
 
-      const greenBonus = guard.budget.candFit.tone === "green" ? 12 : 0;
-      const pairsWithBonus = plausibility.pairsWithHit ? 10 : 0;
-      const totalScore =
-        attempt.fitScore +
-        slot.defensibilityBonus +
-        greenBonus +
-        pairsWithBonus +
-        Math.min(8, slot.charSlack / 6);
-
-      validProposals.push({
-        slot,
-        mutatedMarkup: fittedMarkup,
-        reason: attempt.reason,
-        score: totalScore,
-        budget: guard.budget,
-        wordStats: guard.wordStats,
-      });
+    if (llmCandidates && llmCandidates.length > 0) {
+      for (const llmCand of llmCandidates) {
+        if (llmCand.keyword.toLowerCase() !== keyword.toLowerCase()) continue;
+        if (usedBulletIds.has(llmCand.slot.bullet.id)) continue;
+        validProposals.push({
+          slot: llmCand.slot,
+          mutatedMarkup: llmCand.mutatedMarkup,
+          reason: llmCand.reason,
+          score: llmCand.score,
+          budget: llmCand.budget,
+          wordStats: llmCand.wordStats,
+          source: "llm",
+        });
+      }
     }
 
     kwStats.validCandidateCount = validProposals.length;
@@ -131,6 +150,7 @@ export function selectBulletMutations(
         injectedKeywords: [keyword],
         reason: bestProposal.reason,
         accepted: true,
+        source: bestProposal.source,
       });
     }
   }

@@ -1,31 +1,44 @@
 import { plainText } from "../utils";
 import { classifyBulletContext } from "./candidates";
 import { DEFAULT_CALIBRATION, inferDomainTags, SINGLE_LINE_NCU } from "./config";
-import { verifyRunGuardrailZeroBanned } from "./guardrails";
+import { createGuardContext, verifyRunGuardrailZeroBanned } from "./guardrails";
 import { classifyJobDescriptionTiers } from "./jd";
-import { synthesizeMalleableOneLineBullets } from "./malleable";
-import { selectBulletMutations } from "./optimizer";
+import {
+  draftAndValidateLlmMalleableOptions,
+  proposeAndValidateLlmBulletCandidates,
+  type Completer,
+  type LlmTelemetry,
+} from "./llm";
+import {
+  selectEligibleContainersForMalleableLines,
+  synthesizeMalleableOneLineBullets,
+} from "./malleable";
+import { selectBulletMutations, type KeywordCandidateStats } from "./optimizer";
 import { getCentralizedTargetKeywords } from "./policy";
 import { smartSwapSkillsSection } from "./skills";
-import type { CandidateBulletSlot, LarpAlignmentRun, MasterResume } from "./types";
+import type {
+  CandidateBulletSlot,
+  LarpAlignmentRun,
+  MasterResume,
+  PolicyMode,
+  ViolationCode,
+} from "./types";
 import { evaluateBelievabilityAndRecommend } from "./verify";
 
-export function runLarpAlignmentPipeline(
-  jobDescription: string,
+export interface LarpPipelineOptions {
+  variantOffset?: number;
+  mode?: PolicyMode;
+  llm?: Completer;
+  llmModel?: string;
+  includeLlmMalleable?: boolean;
+  excludePairs?: Set<string>;
+}
+
+function buildSlotsFromResume(
   resume: MasterResume,
-  variantOffset = 0
-): LarpAlignmentRun {
-  const tiers = classifyJobDescriptionTiers(jobDescription, resume);
-  const { updatedCategories, changes: skillSwaps } = smartSwapSkillsSection(
-    resume.skills,
-    tiers,
-    SINGLE_LINE_NCU
-  );
-
-  const cal = resume.calibration ?? DEFAULT_CALIBRATION;
-  const oneLineMaxChars = cal.oneLineMax || DEFAULT_CALIBRATION.oneLineMax;
-  const twoLineMaxChars = cal.twoLineMax || DEFAULT_CALIBRATION.twoLineMax;
-
+  oneLineMaxChars: number,
+  twoLineMaxChars: number
+): CandidateBulletSlot[] {
   const slots: CandidateBulletSlot[] = [];
 
   resume.experience.forEach((job, jobIdx) => {
@@ -113,6 +126,26 @@ export function runLarpAlignmentPipeline(
     }
   }
 
+  return slots;
+}
+
+export function runLarpAlignmentPipeline(
+  jobDescription: string,
+  resume: MasterResume,
+  variantOffset = 0
+): LarpAlignmentRun {
+  const tiers = classifyJobDescriptionTiers(jobDescription, resume);
+  const { updatedCategories, changes: skillSwaps } = smartSwapSkillsSection(
+    resume.skills,
+    tiers,
+    SINGLE_LINE_NCU
+  );
+
+  const cal = resume.calibration ?? DEFAULT_CALIBRATION;
+  const oneLineMaxChars = cal.oneLineMax || DEFAULT_CALIBRATION.oneLineMax;
+  const twoLineMaxChars = cal.twoLineMax || DEFAULT_CALIBRATION.twoLineMax;
+
+  const slots = buildSlotsFromResume(resume, oneLineMaxChars, twoLineMaxChars);
   const bannedLower = tiers.tier_2_banned.map((b) => b.toLowerCase());
   const centralizedTargetKeywords = getCentralizedTargetKeywords(
     tiers.tier_1_framing,
@@ -157,5 +190,124 @@ export function runLarpAlignmentPipeline(
     malleableBullets,
     aiRecommendation,
     guardrailVerifiedZeroBanned,
+  };
+}
+
+/**
+ * Async pipeline entry point that supports an optional `Options.llm` (`Completer`)
+ * while enforcing the exact same deterministic guardrails and fallback rules.
+ */
+export async function runLarpAlignmentPipelineAsync(
+  jobDescription: string,
+  resume: MasterResume,
+  options: LarpPipelineOptions = {}
+): Promise<LarpAlignmentRun & { llmTelemetry?: LlmTelemetry }> {
+  const variantOffset = options.variantOffset ?? 0;
+  if (!options.llm) {
+    return runLarpAlignmentPipeline(jobDescription, resume, variantOffset);
+  }
+
+  const tiers = classifyJobDescriptionTiers(jobDescription, resume);
+  const { updatedCategories, changes: skillSwaps } = smartSwapSkillsSection(
+    resume.skills,
+    tiers,
+    SINGLE_LINE_NCU
+  );
+
+  const cal = resume.calibration ?? DEFAULT_CALIBRATION;
+  const oneLineMaxChars = cal.oneLineMax || DEFAULT_CALIBRATION.oneLineMax;
+  const twoLineMaxChars = cal.twoLineMax || DEFAULT_CALIBRATION.twoLineMax;
+
+  const slots = buildSlotsFromResume(resume, oneLineMaxChars, twoLineMaxChars);
+  const bannedLower = tiers.tier_2_banned.map((b) => b.toLowerCase());
+  const centralizedTargetKeywords = getCentralizedTargetKeywords(
+    tiers.tier_1_framing,
+    tiers.tier_0_workflow
+  );
+
+  const guardCtx = createGuardContext(tiers, cal, undefined, 7, SINGLE_LINE_NCU);
+  const rejectionCountsByKeyword = new Map<string, Partial<Record<ViolationCode, number>>>();
+
+  const { candidates: llmCandidates, telemetry: llmTelemetry } =
+    await proposeAndValidateLlmBulletCandidates({
+      slots,
+      keywords: centralizedTargetKeywords,
+      tiers,
+      cal,
+      completer: options.llm,
+      model: options.llmModel,
+      guardCtx,
+      rejectionCountsByKeyword,
+    });
+
+  const statsOut = new Map<string, KeywordCandidateStats>();
+  const bulletProposals = selectBulletMutations(
+    slots,
+    centralizedTargetKeywords,
+    bannedLower,
+    cal,
+    variantOffset,
+    SINGLE_LINE_NCU,
+    tiers,
+    guardCtx,
+    statsOut,
+    llmCandidates
+  );
+
+  const malleableCount = cal.malleableLines ?? 1;
+  const malleableBullets = synthesizeMalleableOneLineBullets(
+    resume,
+    tiers,
+    malleableCount,
+    variantOffset
+  );
+
+  if (options.includeLlmMalleable && malleableBullets.length > 0) {
+    const containers = selectEligibleContainersForMalleableLines(resume).slice(
+      0,
+      malleableBullets.length
+    );
+    await Promise.all(
+      malleableBullets.map(async (mb, idx) => {
+        const container = containers[idx];
+        if (!container) return;
+        const llmOpts = await draftAndValidateLlmMalleableOptions({
+          container,
+          containerIdx: idx,
+          targetKeywords: mb.injectedKeywords,
+          tiers,
+          cal,
+          completer: options.llm!,
+          guardCtx,
+        });
+        if (llmOpts.length > 0) {
+          mb.options.push(...llmOpts);
+        }
+      })
+    );
+  }
+
+  const aiRecommendation = evaluateBelievabilityAndRecommend(
+    malleableBullets,
+    bulletProposals,
+    cal
+  );
+
+  const guardrailVerifiedZeroBanned = verifyRunGuardrailZeroBanned(
+    updatedCategories,
+    bulletProposals,
+    malleableBullets,
+    bannedLower
+  );
+
+  return {
+    tiers,
+    skillSwaps,
+    updatedSkills: updatedCategories,
+    bulletProposals,
+    malleableBullets,
+    aiRecommendation,
+    guardrailVerifiedZeroBanned,
+    llmTelemetry,
   };
 }

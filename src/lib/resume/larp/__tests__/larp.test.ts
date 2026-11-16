@@ -484,4 +484,115 @@ Requirements:
       assert.strictEqual(redisCheck.contextOverlap, true);
     });
   });
+
+  describe("Phase 7: LLM Candidate Proposer & Guardrail Filtering", () => {
+    it("filters out hostile/non-compliant LLM responses (malformed JSON, banned terms, extra tech, metric changes, >7 words) and keeps only compliant rewrites", async () => {
+      const {
+        clearLlmRewriteCache,
+        proposeAndValidateLlmBulletCandidates,
+        runLarpAlignmentPipelineAsync,
+      } = await import("../../larpEngine");
+
+      clearLlmRewriteCache();
+
+      let callCount = 0;
+      const hostileCompleter = async (prompt: string): Promise<string> => {
+        callCount++;
+        if (callCount === 1) {
+          return "```json\n{ malformed json without closing bracket";
+        }
+        if (prompt.includes("include the keyword **Docker**") || prompt.includes("keyword **Docker**")) {
+          return JSON.stringify({
+            rewrites: [
+              // 1. Banned term (Rust)
+              "Built zero-shot **Auto Label** pipeline combining **SAM 2**, **Rust**, and **Docker** in **Python** to accelerate dataset annotation by **4x** across **50,000+** images.",
+              // 2. Extra non-target tech (GraphQL)
+              "Built zero-shot **Auto Label** pipeline combining **SAM 2**, **GraphQL**, and **Docker** in **Python** to accelerate dataset annotation by **4x** across **50,000+** images.",
+              // 3. Too many changes (12+ words changed)
+              "Completely re-architected our entire cloud backend using **Docker** containers to handle all customer calls automatically in real time across **4x** and **50,000+** images.",
+              // 4. Compliant rewrite! (<= 7 words changed, preserves tools & metrics)
+              "Built zero-shot **Auto Label** pipeline combining **SAM 2** and **VLM** detectors in **Python** and **Docker** to accelerate dataset annotation by **4x** across **50,000+** images.",
+            ],
+          });
+        }
+        if (prompt.includes("keyword **AWS**")) {
+          return JSON.stringify({
+            rewrites: [
+              // Metric changed (50,000+ -> 90,000+)
+              "Built zero-shot **Auto Label** pipeline combining **SAM 2** and **VLM** detectors in **Python** with **AWS** to accelerate dataset annotation by **4x** across **90,000+** images.",
+            ],
+          });
+        }
+        return '{"rewrites":[]}';
+      };
+
+      const slots = [
+        {
+          bullet: masterResume.experience[1].bullets[0], // b_ally_1
+          containerId: "job_ally",
+          containerTitle: "Software Engineering Intern · Ally Voice AI",
+          containerKind: "experience" as const,
+          containerStack: ["ElevenLabs", "FastAPI", "Firebase"],
+          context: "cloud-deploy-infra" as const,
+          tags: ["backend" as const, "infra" as const],
+          defensibilityBonus: 5,
+          origPlainLen: 135,
+          maxAllowedChars: 216,
+          charSlack: 81,
+        },
+        {
+          bullet: masterResume.experience[0].bullets[0], // b_rf_1 (has 4x and 50,000+)
+          containerId: "job_roboflow",
+          containerTitle: "Machine Learning Engineering Intern · Roboflow",
+          containerKind: "experience" as const,
+          containerStack: ["Python", "SAM 2", "VLM"],
+          context: "backend-api-db" as const,
+          tags: ["ml" as const, "backend" as const],
+          defensibilityBonus: 0,
+          origPlainLen: 138,
+          maxAllowedChars: 216,
+          charSlack: 78,
+        },
+      ];
+
+      const tiers = {
+        matched: ["Python", "FastAPI", "Firebase"],
+        tier_0_workflow: ["Agile"],
+        tier_1_framing: ["Docker", "AWS"],
+        tier_1_5_skills_only: ["Docker", "AWS"],
+        tier_2_banned: ["Rust", "Kubernetes"],
+      };
+
+      const rejectionMap = new Map();
+      const { candidates, telemetry } = await proposeAndValidateLlmBulletCandidates({
+        slots,
+        keywords: ["Docker", "AWS"],
+        tiers,
+        cal: { oneLineMax: 108, twoLineMax: 216, malleableLines: 1 },
+        completer: hostileCompleter,
+        rejectionCountsByKeyword: rejectionMap,
+      });
+
+      assert.ok(telemetry.callsAttempted >= 2);
+      assert.strictEqual(candidates.length, 1, "Only the single compliant Docker rewrite should survive");
+      assert.strictEqual(candidates[0].keyword, "Docker");
+      assert.strictEqual(candidates[0].source, "llm");
+      assert.strictEqual(candidates[0].baseScore, 80);
+      assert.ok(candidates[0].mutatedMarkup.includes("**Docker**"));
+      assert.ok(!candidates[0].mutatedMarkup.includes("Rust"));
+      assert.ok(!candidates[0].mutatedMarkup.includes("Kubernetes"));
+
+      const dockerRejections = rejectionMap.get("docker");
+      assert.ok(dockerRejections?.banned_term >= 1);
+      assert.ok(dockerRejections?.too_many_changes >= 1);
+
+      const awsRejections = rejectionMap.get("aws");
+      assert.ok(awsRejections?.metric_changed >= 1);
+
+      // Also verify that with LLM disabled (no completer), runLarpAlignmentPipelineAsync still produces rule-based suggestions
+      const fallbackRun = await runLarpAlignmentPipelineAsync(jds.pylon_fullstack.text, masterResume);
+      assert.ok(fallbackRun.bulletProposals.length >= 3);
+      assert.strictEqual(fallbackRun.guardrailVerifiedZeroBanned, true);
+    });
+  });
 });

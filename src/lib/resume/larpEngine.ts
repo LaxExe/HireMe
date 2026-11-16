@@ -79,7 +79,26 @@ export {
 
 export { evaluateBelievabilityAndRecommend } from "./larp/verify";
 
-export { runLarpAlignmentPipeline } from "./larp/pipeline";
+export {
+  buildBulletRewritePrompt,
+  clearLlmRewriteCache,
+  DEFAULT_LLM_MODEL,
+  draftAndValidateLlmMalleableOptions,
+  parseLlmRewritesJson,
+  PROMPT_VERSION,
+  proposeAndValidateLlmBulletCandidates,
+  shortlistPlausibleSlotsForKeyword,
+  wordJaccardSimilarity,
+  type Completer,
+  type LlmTelemetry,
+  type LlmValidatedCandidate,
+} from "./larp/llm";
+
+export {
+  runLarpAlignmentPipeline,
+  runLarpAlignmentPipelineAsync,
+  type LarpPipelineOptions,
+} from "./larp/pipeline";
 
 export {
   applyLarpMutationsToResume,
