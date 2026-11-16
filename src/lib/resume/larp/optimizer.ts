@@ -2,6 +2,7 @@ import { markupToLatex } from "../latex";
 import { checkSlotPlausibility, tryMinimalKeywordInjection } from "./candidates";
 import { createGuardContext, evaluateCandidateGuardrails, type GuardContext } from "./guardrails";
 import type { LlmValidatedCandidate } from "./llm";
+import { scoreCandidate } from "./scoring";
 import { fitBulletToCalibratedLineArea } from "./text";
 import type {
   BulletMutationProposal,
@@ -9,6 +10,7 @@ import type {
   CandidateBulletSlot,
   LarpTierClassification,
   LineBudgetCheck,
+  ScoreFeatures,
   ViolationCode,
   WordReframeStats,
 } from "./types";
@@ -112,6 +114,7 @@ interface EvaluatedPairCandidate {
   mutatedMarkup: string;
   reason: string;
   score: number;
+  scoreFeatures: ScoreFeatures;
   budget: LineBudgetCheck;
   wordStats: WordReframeStats;
   source: "rule" | "generic" | "llm";
@@ -208,21 +211,24 @@ export function selectBulletMutations(
               (kwStats.rejectionCountsByCode[v.code] ?? 0) + 1;
           }
         } else {
-          const greenBonus = guard.budget.candFit.tone === "green" ? 12 : 0;
-          const pairsWithBonus = plausibility.pairsWithHit ? 10 : 0;
-          const totalScore =
-            attempt.fitScore +
-            slot.defensibilityBonus +
-            greenBonus +
-            pairsWithBonus +
-            Math.min(8, slot.charSlack / 6);
+          const features = scoreCandidate({
+            ruleScore: attempt.fitScore,
+            jdWeight: kwWeight,
+            wordsChanged: guard.wordStats.reframedWords,
+            fit: guard.budget.candFit,
+            domainOverlap: plausibility.contextOverlap,
+            pairsWithHit: plausibility.pairsWithHit,
+            containerKind: slot.containerKind,
+            isOlderRole: slot.defensibilityBonus > 0 && slot.containerKind === "experience",
+          });
 
           pairOptions.push({
             slot,
             keyword,
             mutatedMarkup: fittedMarkup,
             reason: attempt.reason,
-            score: totalScore,
+            score: features.total,
+            scoreFeatures: features,
             budget: guard.budget,
             wordStats: guard.wordStats,
             source: attempt.source ?? "rule",
@@ -236,12 +242,23 @@ export function selectBulletMutations(
             llmCand.keyword.toLowerCase() === kwLower &&
             llmCand.slot.bullet.id === slot.bullet.id
           ) {
+            const llmFeatures = scoreCandidate({
+              ruleScore: llmCand.baseScore,
+              jdWeight: kwWeight,
+              wordsChanged: llmCand.wordStats.reframedWords,
+              fit: llmCand.budget.candFit,
+              domainOverlap: plausibility.contextOverlap,
+              pairsWithHit: plausibility.pairsWithHit,
+              containerKind: slot.containerKind,
+              isOlderRole: slot.defensibilityBonus > 0 && slot.containerKind === "experience",
+            });
             pairOptions.push({
               slot: llmCand.slot,
               keyword,
               mutatedMarkup: llmCand.mutatedMarkup,
               reason: llmCand.reason,
-              score: llmCand.score,
+              score: llmFeatures.total,
+              scoreFeatures: llmFeatures,
               budget: llmCand.budget,
               wordStats: llmCand.wordStats,
               source: "llm",
@@ -318,6 +335,8 @@ export function selectBulletMutations(
           reason: chosen.reason,
           accepted: true,
           source: chosen.source,
+          scoreFeatures: chosen.scoreFeatures,
+          totalScore: chosen.score,
         });
       }
     }

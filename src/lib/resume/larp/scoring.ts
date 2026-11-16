@@ -1,8 +1,104 @@
-import type { BulletFitResult, Context } from "./types";
+import { findCatalogEntry } from "./catalog";
+import { containsPhrase } from "./text";
+import type { BulletFitResult, Context, ScoreFeatures } from "./types";
 
 /**
- * Dynamically computes an authentic, multi-dimensional AI Believability Score (88% - 98%)
- * based on domain proximity, existing stack overlap, claim modesty, and line-fit margin.
+ * Explainable additive feature sum for scoring any candidate bullet edit or new malleable bullet:
+ * - rewrite naturalness (`ruleScore * 0.5`)
+ * - JD importance (`weight * 20`)
+ * - minimal edit (`-2 * wordsChanged`)
+ * - line fit (`+10` ideal, `-6` orphan/overflow)
+ * - domain fit (`+8` if context overlaps, `-8` if mismatch, `0` neutral)
+ * - pairsWith hit (`+10`)
+ * - harder to verify (`+4` project, `+3` older role)
+ */
+export function scoreCandidate(params: {
+  ruleScore: number;
+  jdWeight?: number;
+  wordsChanged: number;
+  fit: BulletFitResult;
+  domainOverlap: boolean;
+  domainMismatch?: boolean;
+  pairsWithHit: boolean;
+  containerKind: "experience" | "project";
+  isOlderRole?: boolean;
+}): ScoreFeatures {
+  const {
+    ruleScore,
+    jdWeight = 1.0,
+    wordsChanged,
+    fit,
+    domainOverlap,
+    domainMismatch = false,
+    pairsWithHit,
+    containerKind,
+    isOlderRole = false,
+  } = params;
+
+  const rewriteNaturalness = Number((ruleScore * 0.5).toFixed(1));
+  const jdImportance = Number((jdWeight * 20).toFixed(1));
+  const minimalEdit = -2 * Math.max(0, wordsChanged);
+
+  let lineFit = 0;
+  if (fit.status === "ideal-1" || fit.status === "ideal-2") {
+    lineFit = 10;
+  } else if (fit.status === "orphan-2" || fit.status === "overflow") {
+    lineFit = -6;
+  }
+
+  let domainFit = 0;
+  if (domainOverlap) {
+    domainFit = 8;
+  } else if (domainMismatch) {
+    domainFit = -8;
+  }
+
+  const pairsWithBonus = pairsWithHit ? 10 : 0;
+  const harderToVerifyBonus =
+    containerKind === "project" ? 4 : isOlderRole ? 3 : 0;
+
+  const rawTotal =
+    rewriteNaturalness +
+    jdImportance +
+    minimalEdit +
+    lineFit +
+    domainFit +
+    pairsWithBonus +
+    harderToVerifyBonus;
+
+  const total = Math.max(0, Math.round(rawTotal));
+
+  return {
+    rewriteNaturalness,
+    jdImportance,
+    minimalEdit,
+    lineFit,
+    domainFit,
+    pairsWithBonus,
+    harderToVerifyBonus,
+    total,
+  };
+}
+
+export function formatScoreBreakdownSummary(features: ScoreFeatures): string {
+  const parts: string[] = [
+    `naturalness +${features.rewriteNaturalness}`,
+    `JD weight +${features.jdImportance}`,
+  ];
+  if (features.minimalEdit !== 0) parts.push(`edit ${features.minimalEdit}`);
+  if (features.lineFit !== 0)
+    parts.push(`line fit ${features.lineFit > 0 ? `+${features.lineFit}` : features.lineFit}`);
+  if (features.domainFit !== 0)
+    parts.push(`domain ${features.domainFit > 0 ? `+${features.domainFit}` : features.domainFit}`);
+  if (features.pairsWithBonus > 0) parts.push(`pairsWith +${features.pairsWithBonus}`);
+  if (features.harderToVerifyBonus > 0)
+    parts.push(`context +${features.harderToVerifyBonus}`);
+  return `Score ${features.total} (${parts.join(", ")})`;
+}
+
+/**
+ * Computes explainable feature-based believability score for malleable or mutated bullets,
+ * replacing the legacy 88-98 clamp.
  */
 export function calculateDynamicBelievabilityScore(params: {
   proposedKeywords: string[];
@@ -14,137 +110,90 @@ export function calculateDynamicBelievabilityScore(params: {
   actionStyle: string;
   lineBudgetFit?: BulletFitResult;
   isSubtleEdit?: boolean;
-}): { score: number; critique: string; interviewDefense: string } {
+  isOlderRole?: boolean;
+  jdWeight?: number;
+  wordsChanged?: number;
+}): {
+  score: number;
+  features: ScoreFeatures;
+  critique: string;
+  interviewDefense: string;
+} {
   const {
     proposedKeywords,
+    containerKind,
     containerTitle,
     domain,
     existingTechSignals,
     existingBulletsText,
     actionStyle,
     lineBudgetFit,
-    isSubtleEdit,
+    isSubtleEdit = false,
+    isOlderRole = false,
+    jdWeight = 0.85,
+    wordsChanged = isSubtleEdit ? 3 : 6,
   } = params;
 
-  let score = isSubtleEdit ? 95 : 91;
+  const primaryKw = proposedKeywords[0] ?? "";
+  const entry = findCatalogEntry(primaryKw);
+  const combinedSignals = `${existingTechSignals.join(" ")} ${existingBulletsText}`;
 
-  const kwLower = proposedKeywords.map((k) => k.toLowerCase());
-  const hasKw = (k: string) => kwLower.some((x) => x.includes(k.toLowerCase()));
+  const pairsWithHit =
+    entry?.pairsWith?.some((pw) => containsPhrase(combinedSignals, pw)) ??
+    existingTechSignals.some((s) =>
+      proposedKeywords.some((k) => s.toLowerCase() === k.toLowerCase())
+    );
 
-  if (domain === "ml") {
-    if (
-      hasKw("torch") ||
-      hasKw("metric") ||
-      hasKw("eval") ||
-      hasKw("dataset") ||
-      hasKw("python") ||
-      hasKw("docker") ||
-      hasKw("fastapi")
-    ) {
-      score += 4;
-    } else if (hasKw("redis") || hasKw("agile") || hasKw("jira") || hasKw("linear")) {
-      score += 3;
-    } else {
-      score += 2;
-    }
-  } else if (domain === "systems") {
-    if (hasKw("ros") || hasKw("test") || hasKw("c++") || hasKw("sim") || hasKw("docker")) {
-      score += 4;
-    } else if (hasKw("jira") || hasKw("agile")) {
-      score += 3;
-    } else {
-      score += 1;
-    }
-  } else {
-    if (
-      hasKw("redis") ||
-      hasKw("graphql") ||
-      hasKw("rest") ||
-      hasKw("postgres") ||
-      hasKw("tailwind") ||
-      hasKw("fastapi") ||
-      hasKw("webhook") ||
-      hasKw("api")
-    ) {
-      score += 4;
-    } else if (hasKw("docker") || hasKw("aws") || hasKw("agile") || hasKw("jira")) {
-      score += 3;
-    } else {
-      score += 2;
-    }
-  }
+  const domainOverlap =
+    entry?.contexts?.includes(domain) ??
+    (domain !== "general" && proposedKeywords.length > 0);
+  const domainMismatch =
+    domain === "systems" &&
+    entry?.contexts !== undefined &&
+    !entry.contexts.includes("systems");
 
-  const allExistingLower = `${existingTechSignals.join(" ")} ${existingBulletsText}`.toLowerCase();
-  const hasExisting = (k: string) => allExistingLower.includes(k.toLowerCase());
+  const ruleScore =
+    actionStyle === "Testing & Quality" || actionStyle === "Simple Integration"
+      ? 92
+      : actionStyle === "Workflow & Ops"
+      ? 90
+      : 88;
 
-  if (
-    hasKw("redis") &&
-    (hasExisting("postgres") || hasExisting("supabase") || hasExisting("db") || hasExisting("api"))
-  ) {
-    score += 3;
-  } else if (
-    hasKw("docker") &&
-    (hasExisting("python") ||
-      hasExisting("fastapi") ||
-      hasExisting("deploy") ||
-      hasExisting("linux") ||
-      hasExisting("c++"))
-  ) {
-    score += 2;
-  } else if (
-    hasKw("graphql") &&
-    (hasExisting("rest") || hasExisting("api") || hasExisting("react") || hasExisting("next"))
-  ) {
-    score += 2;
-  } else if (
-    hasKw("tailwind") &&
-    (hasExisting("react") || hasExisting("next") || hasExisting("ui"))
-  ) {
-    score += 3;
-  } else if (hasKw("fastapi") && hasExisting("python")) {
-    score += 3;
-  } else if (hasKw("agile") || hasKw("jira") || hasKw("linear")) {
-    score += 2;
-  }
+  const fit: BulletFitResult = lineBudgetFit ?? {
+    length: 100,
+    status: "ideal-1",
+    targetLines: 1,
+    line1Progress: 0.92,
+    line2Progress: 0,
+    overallRatio: 0.46,
+    label: "1 line full",
+    tooltip: "",
+    badge: "1L",
+    tone: "green",
+  };
 
-  if (actionStyle === "Testing & Quality" || actionStyle === "Simple Integration") {
-    score += 2;
-  } else if (actionStyle === "Workflow & Ops") {
-    score += 2;
-  } else {
-    score += 1;
-  }
-
-  if (lineBudgetFit) {
-    if (lineBudgetFit.tone === "green") {
-      score += 2;
-    } else if (lineBudgetFit.tone === "red") {
-      score -= 3;
-    }
-  }
-
-  const finalScore = Math.max(88, Math.min(98, score));
+  const features = scoreCandidate({
+    ruleScore,
+    jdWeight,
+    wordsChanged,
+    fit,
+    domainOverlap,
+    domainMismatch,
+    pairsWithHit,
+    containerKind,
+    isOlderRole,
+  });
 
   const kwListStr = proposedKeywords.join(", ") || "target tool";
-  let critique = "";
-  let interviewDefense = "";
-
-  if (actionStyle === "Testing & Quality") {
-    critique = `High defensibility (${finalScore}%): framed as automated regression checks and test suites for ${containerTitle}. Interviewers respect testing without questioning authority.`;
-    interviewDefense = `"I authored automated validation checks and regression suites to catch issues early and verify reliability before shipping."`;
-  } else if (actionStyle === "Simple Integration") {
-    critique = `Solid defensibility (${finalScore}%): integrates ${kwListStr} as client consumption or caching on top of ${containerTitle}. No complex distributed server architecture claimed.`;
-    interviewDefense = `"We consumed ${kwListStr} as a standard integration to fetch and cache status updates alongside our existing stack."`;
-  } else if (actionStyle === "Workflow & Ops") {
-    critique = `Very low risk (${finalScore}%): positions ${kwListStr} purely as sprint ticket tracking and release coordination in ${containerTitle}.`;
-    interviewDefense = `"Our team used ${kwListStr} for weekly sprint planning, ticket triage, and tracking feature milestones across releases."`;
-  } else {
-    critique = `Direct and credible (${finalScore}%): day-to-day coding in your primary language adding ${kwListStr} features to ${containerTitle}.`;
-    interviewDefense = `"I implemented modular endpoints and data processing utilities using ${kwListStr} directly in our existing service."`;
-  }
+  const breakdown = formatScoreBreakdownSummary(features);
+  const critique = `${breakdown} · Framed as ${actionStyle.toLowerCase()} in ${containerTitle} (${kwListStr}).`;
+  const interviewDefense = `"We integrated ${kwListStr} within ${containerTitle} alongside our existing ${
+    existingTechSignals.slice(0, 3).join(", ") || "core"
+  } stack."`;
 
   return {
-    score: finalScore,
+    score: features.total,
+    features,
     critique,
     interviewDefense,
   };

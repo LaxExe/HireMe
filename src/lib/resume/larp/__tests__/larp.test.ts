@@ -643,4 +643,76 @@ Requirements:
       assert.notStrictEqual(plan1Key, plan2Key, "Regenerate with excludePairs must produce a different assignment plan");
     });
   });
+
+  describe("Phase 9: Real Explainable Scoring & Real Verification Checks", () => {
+    it("computes additive feature breakdown (naturalness, JD weight, minimalEdit, lineFit, domainFit, pairsWith, harderToVerify) without arbitrary 88-98 clamping", async () => {
+      const { scoreCandidate } = await import("../../larpEngine");
+      const features = scoreCandidate({
+        ruleScore: 98,
+        jdWeight: 1.0,
+        wordsChanged: 2,
+        fit: {
+          length: 97,
+          status: "ideal-1",
+          targetLines: 1,
+          line1Progress: 0.9,
+          line2Progress: 0,
+          overallRatio: 0.45,
+          label: "1 line full",
+          tooltip: "",
+          badge: "1L",
+          tone: "green",
+        },
+        domainOverlap: true,
+        pairsWithHit: true,
+        containerKind: "project",
+      });
+
+      assert.strictEqual(features.rewriteNaturalness, 49);
+      assert.strictEqual(features.jdImportance, 20);
+      assert.strictEqual(features.minimalEdit, -4);
+      assert.strictEqual(features.lineFit, 10);
+      assert.strictEqual(features.domainFit, 8);
+      assert.strictEqual(features.pairsWithBonus, 10);
+      assert.strictEqual(features.harderToVerifyBonus, 4);
+      assert.strictEqual(features.total, 97);
+    });
+
+    it("runs 6 real verification checks and marks the run as failed if any check fails (e.g., tier-1.5 leakage or duplicate bullets)", async () => {
+      const { runLarpAlignmentPipeline, runRealVerificationPasses } = await import(
+        "../../larpEngine"
+      );
+
+      const cleanRun = runLarpAlignmentPipeline(jds.pylon_fullstack.text, masterResume, 0);
+      assert.ok(cleanRun.aiRecommendation);
+      assert.strictEqual(cleanRun.aiRecommendation.verified, true);
+      assert.strictEqual(cleanRun.aiRecommendation.verificationPasses.length, 6);
+      assert.ok(
+        cleanRun.aiRecommendation.verificationPasses.every((p) => p.status === "passed")
+      );
+
+      // Now inject a deliberate Tier-1.5 skills-only leak (MongoDB) and a duplicate bullet
+      const badProposal = structuredClone(cleanRun.bulletProposals[0]);
+      badProposal.mutatedMarkup =
+        "Processed inbound event streams with **MongoDB** and **AWS** across **5** services.";
+
+      const failedCheck = runRealVerificationPasses({
+        jobDescription: jds.pylon_fullstack.text,
+        baseResume: masterResume,
+        updatedSkills: cleanRun.updatedSkills,
+        tiers: {
+          ...cleanRun.tiers,
+          tier_1_5_skills_only: [...cleanRun.tiers.tier_1_5_skills_only, "MongoDB"],
+        },
+        bulletProposals: [badProposal],
+        malleableBullets: cleanRun.malleableBullets,
+      });
+
+      assert.strictEqual(failedCheck.allPassed, false);
+      const check1 = failedCheck.passes.find((p) => p.passNumber === 1);
+      const check3 = failedCheck.passes.find((p) => p.passNumber === 3);
+      assert.strictEqual(check1?.status, "failed");
+      assert.strictEqual(check3?.status, "failed");
+    });
+  });
 });

@@ -147,6 +147,17 @@ export interface GuardrailViolation {
   message: string;
 }
 
+export interface ScoreFeatures {
+  rewriteNaturalness: number;
+  jdImportance: number;
+  minimalEdit: number;
+  lineFit: number;
+  domainFit: number;
+  pairsWithBonus: number;
+  harderToVerifyBonus: number;
+  total: number;
+}
+
 export interface BulletMutationProposal {
   bulletId: string;
   containerId: string;
@@ -164,6 +175,8 @@ export interface BulletMutationProposal {
   accepted: boolean;
   source?: "rule" | "generic" | "llm";
   violations?: GuardrailViolation[];
+  scoreFeatures?: ScoreFeatures;
+  totalScore?: number;
 }
 
 export interface MalleableBulletOption {
@@ -202,6 +215,7 @@ export interface MalleableSynthesizedBullet {
   roleContextSummary: string;
   believabilityScore: number;
   believabilityCritique: string;
+  scoreFeatures?: ScoreFeatures;
   recommended: boolean;
   options: MalleableBulletOption[];
 }
@@ -222,12 +236,14 @@ export interface AiBelievabilityRecommendation {
   whyMostBelievable: string;
   interviewTalkingPoint: string;
   iterationsRun: number;
+  verified: boolean;
   verificationPasses: AiVerificationPass[];
   rankings: {
     id: string;
     label: string;
     containerTitle: string;
     score: number;
+    scoreFeatures?: ScoreFeatures;
     verdict: "Top Pick · Most Believable" | "Highly Defensible" | "Safe & Subtle";
     rationale: string;
   }[];

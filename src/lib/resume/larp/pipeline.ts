@@ -189,7 +189,13 @@ export function runLarpAlignmentPipeline(
   const aiRecommendation = evaluateBelievabilityAndRecommend(
     malleableBullets,
     bulletProposals,
-    cal
+    cal,
+    {
+      jobDescription,
+      baseResume: resume,
+      updatedSkills: updatedCategories,
+      tiers,
+    }
   );
 
   const guardrailVerifiedZeroBanned = verifyRunGuardrailZeroBanned(
@@ -315,7 +321,13 @@ export async function runLarpAlignmentPipelineAsync(
   const aiRecommendation = evaluateBelievabilityAndRecommend(
     malleableBullets,
     bulletProposals,
-    cal
+    cal,
+    {
+      jobDescription,
+      baseResume: resume,
+      updatedSkills: updatedCategories,
+      tiers,
+    }
   );
 
   const guardrailVerifiedZeroBanned = verifyRunGuardrailZeroBanned(

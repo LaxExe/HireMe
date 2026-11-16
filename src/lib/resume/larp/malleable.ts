@@ -403,6 +403,7 @@ export function synthesizeMalleableOneLineBullets(
       existingBulletsText: combinedExisting,
       actionStyle: primaryOpt.styleLabel,
       lineBudgetFit: primaryOpt.fit,
+      isOlderRole: containerIdx > 0 && target.kind === "experience",
     });
 
     results.push({
@@ -422,6 +423,7 @@ export function synthesizeMalleableOneLineBullets(
       roleContextSummary: target.roleSummary,
       believabilityScore: believability.score,
       believabilityCritique: believability.critique,
+      scoreFeatures: believability.features,
       recommended: containerIdx === 0,
       options: builtOptions,
     });

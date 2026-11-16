@@ -188,7 +188,7 @@
           "Docker",
           "Python"
         ],
-        "believabilityScore": 98,
+        "believabilityScore": 69,
         "optionCount": 3
       },
       {
@@ -201,7 +201,7 @@
           "Redis",
           "FastAPI"
         ],
-        "believabilityScore": 98,
+        "believabilityScore": 80,
         "optionCount": 4
       },
       {
@@ -214,7 +214,7 @@
           "Docker",
           "Python"
         ],
-        "believabilityScore": 98,
+        "believabilityScore": 72,
         "optionCount": 3
       },
       {
@@ -227,7 +227,7 @@
           "Docker",
           "C++"
         ],
-        "believabilityScore": 98,
+        "believabilityScore": 57,
         "optionCount": 3
       },
       {
@@ -240,7 +240,7 @@
           "Redis",
           "REST APIs"
         ],
-        "believabilityScore": 98,
+        "believabilityScore": 81,
         "optionCount": 4
       }
     ],
@@ -429,7 +429,7 @@
           "Docker",
           "Python"
         ],
-        "believabilityScore": 98,
+        "believabilityScore": 69,
         "optionCount": 3
       },
       {
@@ -442,7 +442,7 @@
           "Redis",
           "FastAPI"
         ],
-        "believabilityScore": 98,
+        "believabilityScore": 80,
         "optionCount": 4
       },
       {
@@ -455,7 +455,7 @@
           "Docker",
           "Python"
         ],
-        "believabilityScore": 98,
+        "believabilityScore": 72,
         "optionCount": 3
       },
       {
@@ -468,7 +468,7 @@
           "Docker",
           "C++"
         ],
-        "believabilityScore": 98,
+        "believabilityScore": 57,
         "optionCount": 3
       },
       {
@@ -481,7 +481,7 @@
           "Redis",
           "REST APIs"
         ],
-        "believabilityScore": 98,
+        "believabilityScore": 81,
         "optionCount": 4
       }
     ],
@@ -635,12 +635,12 @@
         "containerId": "job_roboflow",
         "contextCategory": "backend-api-db",
         "originalMarkup": "Developed **REST APIs** and relational **PostgreSQL** schemas to standardize eligibility records across **5** internal services.",
-        "mutatedMarkup": "Built **REST/GraphQL APIs** and **PostgreSQL** schemas standardizing eligibility data across **5** internal services.",
+        "mutatedMarkup": "Developed **REST APIs** and **PostgreSQL** schemas to standardize eligibility records across **5** **Docker** services.",
         "injectedKeywords": [
-          "GraphQL"
+          "Docker"
         ],
-        "reframedWords": 4,
-        "candChars": 105,
+        "reframedWords": 1,
+        "candChars": 103,
         "candLines": 1,
         "candFitStatus": "ideal-1"
       }
@@ -656,7 +656,7 @@
           "Docker",
           "Python"
         ],
-        "believabilityScore": 98,
+        "believabilityScore": 69,
         "optionCount": 3
       },
       {
@@ -669,7 +669,7 @@
           "Redis",
           "FastAPI"
         ],
-        "believabilityScore": 98,
+        "believabilityScore": 80,
         "optionCount": 4
       },
       {
@@ -682,7 +682,7 @@
           "Docker",
           "Python"
         ],
-        "believabilityScore": 98,
+        "believabilityScore": 72,
         "optionCount": 3
       },
       {
@@ -695,7 +695,7 @@
           "Docker",
           "C++"
         ],
-        "believabilityScore": 98,
+        "believabilityScore": 57,
         "optionCount": 3
       },
       {
@@ -708,7 +708,7 @@
           "Redis",
           "REST APIs"
         ],
-        "believabilityScore": 98,
+        "believabilityScore": 81,
         "optionCount": 4
       }
     ],
@@ -855,7 +855,7 @@
           "Python",
           "PyTorch"
         ],
-        "believabilityScore": 98,
+        "believabilityScore": 77,
         "optionCount": 3
       },
       {
@@ -868,7 +868,7 @@
           "FastAPI",
           "Python"
         ],
-        "believabilityScore": 98,
+        "believabilityScore": 80,
         "optionCount": 4
       },
       {
@@ -881,7 +881,7 @@
           "FastAPI",
           "Python"
         ],
-        "believabilityScore": 98,
+        "believabilityScore": 70,
         "optionCount": 3
       },
       {
@@ -894,7 +894,7 @@
           "C++",
           "Testing"
         ],
-        "believabilityScore": 98,
+        "believabilityScore": 83,
         "optionCount": 3
       },
       {
@@ -907,7 +907,7 @@
           "TypeScript",
           "REST APIs"
         ],
-        "believabilityScore": 98,
+        "believabilityScore": 81,
         "optionCount": 4
       }
     ],

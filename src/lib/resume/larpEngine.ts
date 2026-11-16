@@ -14,6 +14,7 @@ export {
   type MalleableBulletOption,
   type MalleableSynthesizedBullet,
   type PolicyMode,
+  type ScoreFeatures,
   type SkillCandidateOption,
   type SkillSwapChange,
   type TextSegment,
@@ -69,7 +70,11 @@ export {
   type PlausibilityCheckResult,
 } from "./larp/candidates";
 
-export { calculateDynamicBelievabilityScore } from "./larp/scoring";
+export {
+  calculateDynamicBelievabilityScore,
+  formatScoreBreakdownSummary,
+  scoreCandidate,
+} from "./larp/scoring";
 
 export {
   autoTagResumeContainers,
@@ -77,7 +82,11 @@ export {
   synthesizeMalleableOneLineBullets,
 } from "./larp/malleable";
 
-export { evaluateBelievabilityAndRecommend } from "./larp/verify";
+export {
+  evaluateBelievabilityAndRecommend,
+  runRealVerificationPasses,
+  type RealVerificationInput,
+} from "./larp/verify";
 
 export {
   buildBulletRewritePrompt,
