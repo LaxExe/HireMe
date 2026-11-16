@@ -318,6 +318,7 @@ export function updatePreviewQueueItem(
       | "title"
       | "roleName"
       | "roleUrl"
+      | "baseResume"
       | "larpRun"
       | "acceptedBulletIds"
       | "acceptedMalleableIds"

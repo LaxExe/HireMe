@@ -20,16 +20,19 @@ import {
   ChevronUp,
   ShieldAlert,
   CheckCircle2,
+  AlertTriangle,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import {
   loadPreviewQueue,
   loadPreviewQueueAsync,
   subscribePreviewQueue,
+  savePreviewQueue,
   updatePreviewQueueItem,
   deletePreviewQueueItem,
   type PreviewQueueItem,
 } from "@/lib/resume/previewQueue";
+import { loadMasterResume } from "@/lib/resume/store";
 import {
   apiCompleter,
   applyLarpMutationsToResume,
@@ -77,6 +80,8 @@ export default function PreviewPage() {
     fileName: string;
     roleName: string;
   } | null>(null);
+  const [refreshModalStep, setRefreshModalStep] = useState<null | "step1" | "step2" | "refreshing">(null);
+  const [refreshProgress, setRefreshProgress] = useState<{ current: number; total: number; roleName: string } | null>(null);
 
   useEffect(() => {
     if (!loading && !user) {
@@ -127,6 +132,7 @@ export default function PreviewPage() {
         | "title"
         | "roleName"
         | "roleUrl"
+        | "baseResume"
         | "larpRun"
         | "acceptedBulletIds"
         | "acceptedMalleableIds"
@@ -266,8 +272,8 @@ export default function PreviewPage() {
     }
   };
 
-  const handleRegenerateOptions = () => {
-    if (!activeItem) return;
+  const handleRegenerateOptions = async () => {
+    if (!activeItem || !user) return;
     setRegeneratingId(activeItem.id);
     const currentOffset = variantOffsetsBySlot[activeItem.id] || 0;
     const nextOffset = currentOffset + 1;
@@ -284,9 +290,11 @@ export default function PreviewPage() {
       [activeItem.id]: Array.from(prevExcluded),
     }));
 
+    const currentMaster = (await loadMasterResume(user.uid)) || activeItem.baseResume;
+
     const freshRun = runLarpAlignmentPipeline(
       activeItem.jobDescription,
-      activeItem.baseResume,
+      currentMaster,
       {
         jdId: activeItem.roleName || activeItem.title || activeItem.id,
         variantOffset: nextOffset,
@@ -316,6 +324,7 @@ export default function PreviewPage() {
     }, {} as Record<string, string>);
 
     updateActiveItem({
+      baseResume: currentMaster,
       larpRun: freshRun,
       acceptedBulletIds: nextAcceptedBullets,
       acceptedMalleableIds: nextAcceptedMalleable,
@@ -324,7 +333,7 @@ export default function PreviewPage() {
 
     runLarpAlignmentPipelineAsync(
       activeItem.jobDescription,
-      activeItem.baseResume,
+      currentMaster,
       {
         jdId: activeItem.roleName || activeItem.title || activeItem.id,
         variantOffset: nextOffset,
@@ -354,6 +363,7 @@ export default function PreviewPage() {
         }, {} as Record<string, string>);
 
         updateActiveItem({
+          baseResume: currentMaster,
           larpRun: asyncRun,
           acceptedBulletIds: asyncAcceptedBullets,
           acceptedMalleableIds: asyncAcceptedMalleable,
@@ -374,6 +384,102 @@ export default function PreviewPage() {
       }
       return prev;
     });
+  };
+
+  const handleExecuteRefreshAll = async () => {
+    if (!user || queue.length === 0) return;
+    setRefreshModalStep("refreshing");
+    try {
+      const latestMaster = await loadMasterResume(user.uid);
+      if (!latestMaster) {
+        alert("Could not load your latest master resume. Please verify your resume is saved in Experience.");
+        setRefreshModalStep(null);
+        return;
+      }
+
+      const updatedQueue: PreviewQueueItem[] = [];
+
+      for (let i = 0; i < queue.length; i++) {
+        const item = queue[i];
+        setRefreshProgress({
+          current: i + 1,
+          total: queue.length,
+          roleName: item.roleName || item.title || `Slot #${i + 1}`,
+        });
+
+        // 1. Run deterministic alignment pipeline with latest master resume
+        const freshRun = runLarpAlignmentPipeline(item.jobDescription, latestMaster, {
+          jdId: item.roleName || item.title || item.id,
+          mode: "framing",
+        });
+
+        // 2. Re-analyze with LLM candidate proposer
+        let finalRun = freshRun;
+        try {
+          const asyncRun = await runLarpAlignmentPipelineAsync(item.jobDescription, latestMaster, {
+            jdId: item.roleName || item.title || item.id,
+            mode: "framing",
+            llm: apiCompleter,
+            includeLlmMalleable: true,
+          });
+          if (asyncRun) {
+            finalRun = asyncRun;
+          }
+        } catch (err) {
+          console.warn("Async LLM proposal failed during refresh for slot:", item.id, err);
+        }
+
+        const topPick = finalRun.aiRecommendation?.topPickId;
+        const nextAcceptedBullets =
+          topPick && finalRun.bulletProposals.some((b) => b.bulletId === topPick)
+            ? [topPick]
+            : finalRun.bulletProposals.length > 0
+            ? [finalRun.bulletProposals[0].bulletId]
+            : [];
+
+        const nextAcceptedMalleable =
+          topPick && finalRun.malleableBullets.some((m) => m.id === topPick)
+            ? [topPick]
+            : finalRun.malleableBullets.length > 0
+            ? [finalRun.malleableBullets[0].id]
+            : [];
+
+        const nextSelectedMalleableOpt = finalRun.malleableBullets.reduce((acc, m) => {
+          acc[m.id] = m.options[0]?.id;
+          return acc;
+        }, {} as Record<string, string>);
+
+        const nextSkillNames =
+          item.applySkillsSwap && finalRun.skillSwaps
+            ? finalRun.skillSwaps.flatMap((s) => s.added)
+            : item.selectedSkillNames;
+
+        updatedQueue.push({
+          ...item,
+          baseResume: structuredClone(latestMaster),
+          larpRun: finalRun,
+          acceptedBulletIds: nextAcceptedBullets,
+          acceptedMalleableIds: nextAcceptedMalleable,
+          selectedMalleableOptionBySlotId: nextSelectedMalleableOpt,
+          selectedSkillNames: nextSkillNames,
+        });
+      }
+
+      savePreviewQueue(user.uid, updatedQueue);
+      setQueue(updatedQueue);
+      setVisualizedUrlBySlot({});
+      setPushedAgentBanner({
+        slotId: "refresh-sync-banner",
+        fileName: `${updatedQueue.length} ${updatedQueue.length === 1 ? "preview" : "previews"}`,
+        roleName: "Updated with latest master resume & re-analyzed",
+      });
+    } catch (err) {
+      console.error("Failed to refresh previews:", err);
+      alert("An error occurred while refreshing previews.");
+    } finally {
+      setRefreshModalStep(null);
+      setRefreshProgress(null);
+    }
   };
 
   const handleDeleteSlot = (slotId: string) => {
@@ -495,9 +601,22 @@ export default function PreviewPage() {
       {/* Header */}
       <div className="flex items-center justify-between border-b border-[#ebebeb] pb-5 gap-4 flex-wrap">
         <div>
-          <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-neutral-900 lowercase">
-            preview
-          </h1>
+          <div className="flex items-center gap-2.5">
+            <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-neutral-900 lowercase">
+              preview
+            </h1>
+            {queue.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setRefreshModalStep("step1")}
+                className="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-medium text-neutral-700 bg-white hover:bg-neutral-50 border border-[#ebebeb] rounded-full shadow-2xs active:scale-95 transition-all cursor-pointer"
+                title="Refresh all previews with latest master resume"
+              >
+                <RotateCw className="w-3.5 h-3.5 text-neutral-500" />
+                <span>Refresh Previews</span>
+              </button>
+            )}
+          </div>
           <p className="text-xs text-neutral-500 mt-0.5">
             Select or customize proposed edits per queued role slot and visualize the compiled PDF on screen
           </p>
@@ -516,6 +635,161 @@ export default function PreviewPage() {
           </button>
         </div>
       </div>
+
+      {/* Double-Confirmation Modal for Refreshing Previews */}
+      {refreshModalStep && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-[2px] p-4 animate-fadeIn"
+          onClick={() => {
+            if (refreshModalStep !== "refreshing") setRefreshModalStep(null);
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-md rounded-2xl border border-[#ebebeb] bg-white p-6 shadow-modal space-y-5 animate-scaleIn"
+          >
+            {refreshModalStep === "step1" && (
+              <>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-9 h-9 rounded-xl bg-neutral-100 border border-[#ebebeb] flex items-center justify-center text-neutral-800">
+                      <RotateCw className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-semibold text-neutral-900">
+                        Refresh All Previews
+                      </h3>
+                      <p className="text-[11px] text-neutral-500">
+                        Sync with latest Master Resume
+                      </p>
+                    </div>
+                  </div>
+                  <span className="font-mono text-[10px] bg-amber-50 text-amber-800 border border-amber-200/60 px-2 py-0.5 rounded-full font-medium">
+                    Step 1 of 2
+                  </span>
+                </div>
+
+                <div className="rounded-xl border border-amber-200/80 bg-amber-50/60 p-3.5 space-y-2 text-xs text-amber-950">
+                  <div className="flex items-center gap-2 font-medium">
+                    <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                    <span>Credit Usage Warning</span>
+                  </div>
+                  <p className="text-[11px] leading-relaxed text-amber-900/90">
+                    Refreshing previews and reanalyzing takes up a lot of credits. This will re-run LARP keyword alignment and AI candidate proposals across all <span className="font-semibold">{queue.length}</span> queued role {queue.length === 1 ? "slot" : "slots"} using your latest Master Resume changes (such as updated job titles, dates, or skills).
+                  </p>
+                </div>
+
+                <p className="text-xs font-medium text-neutral-800">
+                  Are you sure you want to do this?
+                </p>
+
+                <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-[#ebebeb]">
+                  <button
+                    type="button"
+                    onClick={() => setRefreshModalStep(null)}
+                    className="px-3.5 py-1.5 text-xs font-medium text-neutral-600 hover:text-neutral-900 bg-white hover:bg-neutral-50 border border-[#ebebeb] rounded-lg shadow-2xs active:scale-95 transition-all cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setRefreshModalStep("step2")}
+                    className="px-4 py-1.5 text-xs font-medium text-white bg-neutral-900 hover:bg-neutral-800 rounded-lg shadow-2xs active:scale-95 transition-all cursor-pointer"
+                  >
+                    Continue
+                  </button>
+                </div>
+              </>
+            )}
+
+            {refreshModalStep === "step2" && (
+              <>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-9 h-9 rounded-xl bg-red-50 border border-red-200/60 flex items-center justify-center text-red-600">
+                      <AlertTriangle className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-semibold text-neutral-900">
+                        Confirm Re-analysis
+                      </h3>
+                      <p className="text-[11px] text-neutral-500">
+                        Final confirmation required
+                      </p>
+                    </div>
+                  </div>
+                  <span className="font-mono text-[10px] bg-red-50 text-red-700 border border-red-200/60 px-2 py-0.5 rounded-full font-medium">
+                    Step 2 of 2
+                  </span>
+                </div>
+
+                <div className="rounded-xl border border-neutral-200 bg-neutral-50 p-3.5 space-y-1.5 text-xs text-neutral-800">
+                  <p className="font-semibold text-neutral-900">
+                    Are you really sure you want to do this?
+                  </p>
+                  <p className="text-[11px] leading-relaxed text-neutral-600">
+                    This will overwrite the base resume for all <span className="font-mono font-medium text-neutral-900">{queue.length}</span> preview slots with your latest Master Resume and invoke the AI proposer for each job description.
+                  </p>
+                </div>
+
+                <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-[#ebebeb]">
+                  <button
+                    type="button"
+                    onClick={() => setRefreshModalStep("step1")}
+                    className="px-3.5 py-1.5 text-xs font-medium text-neutral-600 hover:text-neutral-900 bg-white hover:bg-neutral-50 border border-[#ebebeb] rounded-lg shadow-2xs active:scale-95 transition-all cursor-pointer"
+                  >
+                    Back
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleExecuteRefreshAll}
+                    className="px-4 py-1.5 text-xs font-medium text-white bg-red-600 hover:bg-red-700 rounded-lg shadow-2xs active:scale-95 transition-all cursor-pointer"
+                  >
+                    Yes, Refresh All Previews
+                  </button>
+                </div>
+              </>
+            )}
+
+            {refreshModalStep === "refreshing" && (
+              <div className="py-4 space-y-4 text-center">
+                <div className="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-neutral-100 border border-[#ebebeb] text-neutral-800">
+                  <RotateCw className="w-5 h-5 animate-spin" />
+                </div>
+                <div className="space-y-1">
+                  <h3 className="text-sm font-semibold text-neutral-900">
+                    Refreshing Previews with Latest Resume
+                  </h3>
+                  <p className="text-xs text-neutral-500">
+                    {refreshProgress ? (
+                      <>
+                        Analyzing slot <span className="font-mono font-semibold text-neutral-900">{refreshProgress.current}</span> of{" "}
+                        <span className="font-mono font-semibold text-neutral-900">{refreshProgress.total}</span>:{" "}
+                        <span className="text-neutral-700 font-medium">{refreshProgress.roleName}</span>
+                      </>
+                    ) : (
+                      "Fetching latest master resume..."
+                    )}
+                  </p>
+                </div>
+                <div className="w-full bg-neutral-100 rounded-full h-1.5 overflow-hidden">
+                  <div
+                    className="bg-neutral-900 h-1.5 transition-all duration-300"
+                    style={{
+                      width: refreshProgress
+                        ? `${Math.round((refreshProgress.current / refreshProgress.total) * 100)}%`
+                        : "20%",
+                    }}
+                  />
+                </div>
+                <p className="text-[10px] text-neutral-400">
+                  Please keep this window open while alignment runs.
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {pushedAgentBanner && (
         <div className="flex items-center justify-between gap-3 flex-wrap rounded-xl border border-[#ebebeb] bg-white shadow-subtle px-4 py-3">
