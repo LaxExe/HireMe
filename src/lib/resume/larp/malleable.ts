@@ -1,15 +1,46 @@
 import { markupToLatex } from "../latex";
 import { bulletFit, plainText } from "../utils";
-import { DEFAULT_CALIBRATION, DOMAIN_HINTS } from "./config";
+import { DEFAULT_CALIBRATION, inferDomainTags } from "./config";
 import { calculateDynamicBelievabilityScore } from "./scoring";
 import { computeVisualWidth, fitBulletToCalibratedLineArea } from "./text";
 import type {
   ContainerCandidate,
+  Context,
   LarpTierClassification,
   MalleableBulletOption,
   MalleableSynthesizedBullet,
   MasterResume,
 } from "./types";
+
+function primaryContextFromTags(tags: Context[]): Context {
+  if (tags.includes("systems")) return "systems";
+  if (tags.includes("ml")) return "ml";
+  if (tags.includes("backend")) return "backend";
+  if (tags.includes("frontend")) return "frontend";
+  if (tags.includes("infra")) return "infra";
+  return "general";
+}
+
+/**
+ * Populates `tags: Context[]` on each job and project of a `MasterResume` if not already set.
+ */
+export function autoTagResumeContainers(resume: MasterResume): MasterResume {
+  const cloned = structuredClone(resume);
+  for (const job of cloned.experience) {
+    if (!job.tags || job.tags.length === 0) {
+      const bulletsText = job.bullets.map((b) => plainText(b.text)).join(" ");
+      const tools = job.bullets.flatMap((b) => b.tools);
+      job.tags = inferDomainTags(`${job.title} ${job.company} ${bulletsText}`, tools);
+    }
+  }
+  for (const proj of cloned.projects) {
+    if (!proj.tags || proj.tags.length === 0) {
+      const bulletsText = proj.bullets.map((b) => plainText(b.text)).join(" ");
+      proj.tags = inferDomainTags(`${proj.name} ${bulletsText}`, proj.techStack);
+    }
+  }
+  return cloned;
+}
 
 /**
  * Selects all eligible candidate roles and projects from the resume so the user
@@ -22,22 +53,13 @@ export function selectEligibleContainersForMalleableLines(
 
   resume.experience.forEach((job, idx) => {
     const bulletsText = job.bullets.map((b) => plainText(b.text)).join(" ");
-    const combined = `${job.title} ${job.company} ${bulletsText}`;
-
-    let domain: ContainerCandidate["domain"] = "general";
-    if (DOMAIN_HINTS.mlVision.test(combined)) {
-      domain = "ml-vision";
-    } else if (DOMAIN_HINTS.mlResearch.test(combined)) {
-      domain = "ml-research";
-    } else if (DOMAIN_HINTS.voiceAi.test(combined)) {
-      domain = "voice-ai";
-    } else if (DOMAIN_HINTS.systemsRoboticsRole.test(combined)) {
-      domain = "systems-robotics";
-    } else if (DOMAIN_HINTS.fullstackBackendRole.test(combined)) {
-      domain = "fullstack-backend";
-    }
-
     const techSignals = job.bullets.flatMap((b) => b.tools);
+    const tags =
+      job.tags && job.tags.length > 0
+        ? job.tags
+        : inferDomainTags(`${job.title} ${job.company} ${bulletsText}`, techSignals);
+    const domain = primaryContextFromTags(tags);
+
     let baseScore = 85;
     if (domain !== "general") baseScore += 8;
     if (idx === 0) baseScore += 5;
@@ -51,6 +73,7 @@ export function selectEligibleContainersForMalleableLines(
       existingBullets: job.bullets.map((b) => plainText(b.text)),
       techSignals: Array.from(new Set(techSignals)).slice(0, 8),
       roleSummary: `${job.title} at ${job.company} (${job.dates || "recent role"})`,
+      tags,
       domain,
       score: baseScore,
     });
@@ -58,16 +81,11 @@ export function selectEligibleContainersForMalleableLines(
 
   for (const proj of resume.projects) {
     const bulletsText = proj.bullets.map((b) => plainText(b.text)).join(" ");
-    const combined = `${proj.name} ${proj.techStack.join(" ")} ${bulletsText}`;
-
-    let domain: ContainerCandidate["domain"] = "general";
-    if (DOMAIN_HINTS.systemsRoboticsProject.test(combined)) {
-      domain = "systems-robotics";
-    } else if (DOMAIN_HINTS.mlVisionProject.test(combined)) {
-      domain = "ml-vision";
-    } else if (DOMAIN_HINTS.fullstackBackendProject.test(combined)) {
-      domain = "fullstack-backend";
-    }
+    const tags =
+      proj.tags && proj.tags.length > 0
+        ? proj.tags
+        : inferDomainTags(`${proj.name} ${bulletsText}`, proj.techStack);
+    const domain = primaryContextFromTags(tags);
 
     let baseScore = 80;
     if (proj.techStack.length > 0) baseScore += 6;
@@ -81,6 +99,7 @@ export function selectEligibleContainersForMalleableLines(
       existingBullets: proj.bullets.map((b) => plainText(b.text)),
       techSignals: proj.techStack.slice(0, 8),
       roleSummary: `${proj.name} (${proj.techStack.slice(0, 4).join(", ")})`,
+      tags,
       domain,
       score: baseScore,
     });
@@ -91,21 +110,25 @@ export function selectEligibleContainersForMalleableLines(
 }
 
 /**
- * Generates context-aware 1-line LARP bullets tailored across MULTIPLE candidate roles
- * and experiences, providing distinct phrasing styles and genuine, dynamic believability scores.
+ * Generates context-aware 1-line LARP bullets tailored across candidate roles
+ * and experiences, using domain tags (`ml`, `backend`, `frontend`, `infra`, `systems`)
+ * and existing tech signals rather than resume-specific hardcoded company names.
  */
 export function synthesizeMalleableOneLineBullets(
   resume: MasterResume,
   tiers: LarpTierClassification,
-  malleableCount: number,
+  malleableCount?: number,
   variantOffset = 0
 ): MalleableSynthesizedBullet[] {
-  void malleableCount;
   const allContainers = selectEligibleContainersForMalleableLines(resume);
   if (allContainers.length === 0) return [];
 
+  if (malleableCount !== undefined && malleableCount <= 0) {
+    return [];
+  }
+
   const cal = resume.calibration ?? DEFAULT_CALIBRATION;
-  const oneLineMax = cal.oneLineMax || 108;
+  const oneLineMax = cal.oneLineMax || DEFAULT_CALIBRATION.oneLineMax;
   const minOneLineChars = Math.ceil(oneLineMax * 0.82);
 
   const tier1 = tiers.tier_1_framing;
@@ -125,7 +148,9 @@ export function synthesizeMalleableOneLineBullets(
   const pmTool = tier0.find((k) => /^(?:Jira|Linear|Agile)$/i.test(k)) || "Agile";
 
   const results: MalleableSynthesizedBullet[] = [];
-  const targetContainers = allContainers.slice(0, 5);
+  const maxSlots =
+    malleableCount && malleableCount > 1 ? Math.min(allContainers.length, malleableCount) : 5;
+  const targetContainers = allContainers.slice(0, maxSlots);
 
   targetContainers.forEach((target, containerIdx) => {
     interface OptionSpec {
@@ -137,62 +162,133 @@ export function synthesizeMalleableOneLineBullets(
 
     const optionSpecs: OptionSpec[] = [];
     const combinedExisting = target.existingBullets.join(" ");
+    const signalsLower = `${target.techSignals.join(" ")} ${combinedExisting}`.toLowerCase();
 
-    if (target.domain === "ml-vision") {
-      optionSpecs.push({
-        styleLabel: "Casual & Direct",
-        variants: [
-          `Integrated automated **Python** validation scripts to verify bounding-box coordinates across auto-label batches.`,
-          `Built modular **PyTorch** and **OpenCV** evaluation scripts to measure detection precision across demo runs.`,
-          `Configured **Docker** containers to standardize VLM detector evaluation and inference benchmarking.`,
-        ],
-        easyExplanation:
-          "Grounded directly in everyday computer vision scripting and model output verification.",
-        keywords: hasDocker ? ["Docker", "Python"] : ["Python", "PyTorch"],
-      });
+    if (target.tags.includes("systems")) {
       optionSpecs.push({
         styleLabel: "Testing & Quality",
         variants: [
-          `Authored automated **TorchMetrics** test suites to evaluate held-out mAP and IoU regression across model builds.`,
-          `Implemented automated image audit checks in **Python** to validate IoU precision prior to dataset export.`,
-          `Structured reproducible evaluation benchmarks to catch bounding-box drift across zero-shot runs.`,
+          `Implemented automated simulation regression tests in **C++** to validate path planning stability.`,
+          `Structured automated simulation test runs in **C++** to verify obstacle avoidance routines under load.`,
+          hasDocker
+            ? `Configured **Docker** simulation containers and automated build checks for software releases.`
+            : `Wrote unit tests for **ROS 2** node transformations to ensure reliable sensor scan mapping.`,
         ],
         easyExplanation:
-          "Standard quality engineering and metric reporting that sounds completely authoritative in an interview.",
-        keywords: ["TorchMetrics", "Evaluation"],
+          "Simulation testing and automated build checks—standard, defensible systems software engineering.",
+        keywords: hasDocker ? ["Docker", "C++"] : ["C++", "Testing"],
+      });
+      optionSpecs.push({
+        styleLabel: "Casual & Direct",
+        variants: [
+          `Implemented modular **C++** state-machine interfaces for real-time control and telemetry routines.`,
+          `Structured message publishers and subscriber callbacks in **C++** to pipe sensor data across nodes.`,
+        ],
+        easyExplanation: "Clean state-machine or message piping in C++.",
+        keywords: ["C++"],
       });
       optionSpecs.push({
         styleLabel: "Workflow & Ops",
         variants: [
-          `Collaborated in **${pmTool}** sprints to triage bounding-box anomalies and deliver weekly auto-labeling updates.`,
-          `Coordinated feature milestones and demo release checklists across bi-weekly **${pmTool}** sprint cycles.`,
+          `Tracked systems bug tickets and coordinated simulation test milestones across team **${pmTool}** sprints.`,
+          `Participated in design reviews and managed software integration tasks across **${pmTool}** sprints.`,
         ],
-        easyExplanation:
-          "Everyday team agile coordination and task triage with zero technical overclaim.",
+        easyExplanation: "Subteam ticket management and sprint coordination.",
         keywords: [pmTool],
       });
-    } else if (target.domain === "voice-ai") {
+    } else if (target.tags.includes("ml") && !target.tags.includes("frontend")) {
+      const isComputeCluster = /\b(?:surrogate|cluster|optuna|cross-validation|parameter)\b/i.test(
+        signalsLower
+      );
+      if (isComputeCluster) {
+        optionSpecs.push({
+          styleLabel: "Casual & Direct",
+          variants: [
+            `Developed lightweight **FastAPI** endpoints to query model predictions in sub-millisecond response time.`,
+            `Automated dataset extraction and feature normalization pipelines across batch compute jobs.`,
+            hasDocker
+              ? `Containerized model training workflows in **Docker** to ensure reproducible evaluation runs.`
+              : `Built modular **Python** data loaders to stream simulation inputs into training pipelines.`,
+          ],
+          easyExplanation:
+            "Serving model predictions through a lightweight API or structuring batch inputs.",
+          keywords: hasDocker ? ["Docker", "Python"] : ["FastAPI", "Python"],
+        });
+        optionSpecs.push({
+          styleLabel: "Testing & Quality",
+          variants: [
+            `Automated cross-validation test suites in **Python** to verify model stability across parameter sweeps.`,
+            `Generated model interpretability charts and validation reports to audit predictions across runs.`,
+          ],
+          easyExplanation:
+            "Rigorous validation that demonstrates strong technical discipline.",
+          keywords: ["Python", "Evaluation"],
+        });
+        optionSpecs.push({
+          styleLabel: "Workflow & Ops",
+          variants: [
+            `Documented modeling milestones and coordinated deliverables across bi-weekly **${pmTool}** reviews.`,
+            `Managed batch training queues and tracked evaluation benchmarks across **${pmTool}** milestones.`,
+          ],
+          easyExplanation: "Milestone tracking and research workflow coordination.",
+          keywords: [pmTool],
+        });
+      } else {
+        optionSpecs.push({
+          styleLabel: "Casual & Direct",
+          variants: [
+            `Integrated automated **Python** validation scripts to verify model outputs across evaluation batches.`,
+            `Built modular **PyTorch** evaluation scripts to measure detection precision across benchmark runs.`,
+            `Configured **Docker** containers to standardize model evaluation and inference benchmarking.`,
+          ],
+          easyExplanation:
+            "Grounded directly in everyday ML scripting and model output verification.",
+          keywords: hasDocker ? ["Docker", "Python"] : ["Python", "PyTorch"],
+        });
+        optionSpecs.push({
+          styleLabel: "Testing & Quality",
+          variants: [
+            `Authored automated **Python** test suites to evaluate held-out precision and regression across builds.`,
+            `Implemented automated data audit checks in **Python** to validate output quality prior to export.`,
+            `Structured reproducible evaluation benchmarks to catch prediction drift across inference runs.`,
+          ],
+          easyExplanation:
+            "Standard quality engineering and metric reporting that sounds authoritative in an interview.",
+          keywords: ["Python", "Evaluation"],
+        });
+        optionSpecs.push({
+          styleLabel: "Workflow & Ops",
+          variants: [
+            `Collaborated in **${pmTool}** sprints to triage pipeline anomalies and deliver weekly feature updates.`,
+            `Coordinated feature milestones and release checklists across bi-weekly **${pmTool}** sprint cycles.`,
+          ],
+          easyExplanation:
+            "Everyday team agile coordination and task triage with zero technical overclaim.",
+          keywords: [pmTool],
+        });
+      }
+    } else if (target.tags.includes("backend") && /\bfastapi\b/i.test(signalsLower)) {
       optionSpecs.push({
         styleLabel: "Casual & Direct",
         variants: [
-          `Maintained **FastAPI** streaming endpoints and structured error handlers for real-time voice agent turns.`,
-          `Built lightweight **Python** service utilities to format and inject client scraping context into voice agents.`,
+          `Maintained **FastAPI** streaming endpoints and structured error handlers for real-time service turns.`,
+          `Built lightweight **Python** service utilities to format and inject request context into backend handlers.`,
           hasRedis
-            ? `Stored active call session keys in **Redis** and streamed live status updates to the dispatch interface.`
-            : `Implemented structured WebSocket message handlers in **FastAPI** to stream agent response audio.`,
+            ? `Stored active session keys in **Redis** and streamed live status updates to the client interface.`
+            : `Implemented structured message handlers in **FastAPI** to stream low-latency service responses.`,
         ],
-        easyExplanation: "Straightforward WebSocket and backend API routing in Python.",
-        keywords: hasRedis ? ["Redis", "FastAPI"] : ["FastAPI", "WebSockets"],
+        easyExplanation: "Straightforward backend API routing in Python and FastAPI.",
+        keywords: hasRedis ? ["Redis", "FastAPI"] : ["FastAPI", "Python"],
       });
       optionSpecs.push({
         styleLabel: "Simple Integration",
         variants: [
           hasWebhooks
-            ? `Handled incoming client **Webhooks** and event triggers to update agent dispatch workflows in real time.`
-            : `Connected client **REST APIs** with automated voice agent triggers to streamline customer intake.`,
+            ? `Handled incoming client **Webhooks** and event triggers to update service workflows in real time.`
+            : `Connected client **REST APIs** with automated backend triggers to streamline request intake.`,
           hasDocker
-            ? `Containerized **FastAPI** scraper services in **Docker** to ensure reproducible client environment builds.`
-            : `Structured modular **REST API** client adapters to pipe parsed website data into agent context.`,
+            ? `Containerized **FastAPI** backend services in **Docker** to ensure reproducible environment builds.`
+            : `Structured modular **REST API** client adapters to pipe parsed request data into service handlers.`,
         ],
         easyExplanation:
           "Frames external services as basic webhooks or REST API calls—easy to defend.",
@@ -201,85 +297,20 @@ export function synthesizeMalleableOneLineBullets(
       optionSpecs.push({
         styleLabel: "Testing & Quality",
         variants: [
-          `Authored automated WebSocket integration tests to measure and maintain sub-2s voice response latency.`,
-          `Added structured request logging and timeout alerts to monitor voice agent turn stability under load.`,
+          `Authored automated API integration tests to measure and maintain low-latency endpoint responses.`,
+          `Added structured request logging and timeout alerts to monitor backend service stability under load.`,
         ],
         easyExplanation:
           "Latency benchmarking and integration tests—very impressive to hiring managers.",
-        keywords: ["Testing", "WebSockets"],
+        keywords: ["Testing", "REST APIs"],
       });
       optionSpecs.push({
         styleLabel: "Workflow & Ops",
         variants: [
-          `Tracked agent deployment tickets and client integration bugs across bi-weekly **${pmTool}** sprint reviews.`,
-          `Coordinated release verification and client onboarding checklists in **${pmTool}** sprint standups.`,
+          `Tracked service deployment tickets and client integration bugs across bi-weekly **${pmTool}** sprint reviews.`,
+          `Coordinated release verification and onboarding checklists in **${pmTool}** sprint standups.`,
         ],
         easyExplanation: "Agile ticket tracking and feature delivery.",
-        keywords: [pmTool],
-      });
-    } else if (target.domain === "ml-research") {
-      optionSpecs.push({
-        styleLabel: "Casual & Direct",
-        variants: [
-          `Developed lightweight **FastAPI** endpoints to query surrogate model predictions in sub-millisecond response time.`,
-          `Automated surrogate dataset extraction and feature normalization pipelines across Slurm compute arrays.`,
-          hasDocker
-            ? `Containerized surrogate modeling workflows in **Docker** to ensure reproducible cluster runs.`
-            : `Built modular **Python** data loaders to stream pore-network simulation inputs into training arrays.`,
-        ],
-        easyExplanation:
-          "Serving surrogate predictions through a lightweight API or structuring batch inputs.",
-        keywords: hasDocker ? ["Docker", "Python"] : ["FastAPI", "Python"],
-      });
-      optionSpecs.push({
-        styleLabel: "Testing & Quality",
-        variants: [
-          `Automated 10-fold cross-validation suites in **Python** to verify surrogate model stability across parameter sweeps.`,
-          `Generated SHAP interpretability charts and validation reports to audit model predictions across conditions.`,
-        ],
-        easyExplanation:
-          "Rigorous scientific validation that demonstrates strong technical discipline.",
-        keywords: ["Python", "Evaluation"],
-      });
-      optionSpecs.push({
-        styleLabel: "Workflow & Ops",
-        variants: [
-          `Documented surrogate model milestones and coordinated research deliverables across bi-weekly team reviews.`,
-          `Managed simulation job queues and tracked computational benchmarks for co-authored preprint milestones.`,
-        ],
-        easyExplanation: "Research milestone tracking and publication workflow coordination.",
-        keywords: [pmTool],
-      });
-    } else if (target.domain === "systems-robotics") {
-      optionSpecs.push({
-        styleLabel: "Testing & Quality",
-        variants: [
-          `Implemented automated collision regression tests in **Gazebo** to validate Theta* path planning stability.`,
-          `Structured automated simulation test runs in **C++** to verify obstacle avoidance routines under route changes.`,
-          hasDocker
-            ? `Configured **Docker** simulation containers and automated build checks for autonomy software releases.`
-            : `Wrote unit tests for ROS 2 occupancy-grid node transformations to ensure reliable LiDAR scan mapping.`,
-        ],
-        easyExplanation:
-          "Simulation testing in Gazebo/Docker—standard, defensible robotics software engineering.",
-        keywords: hasDocker ? ["Docker", "C++"] : ["Gazebo", "C++"],
-      });
-      optionSpecs.push({
-        styleLabel: "Casual & Direct",
-        variants: [
-          `Implemented modular **C++** state-machine interfaces for gripper pick-and-place routines on Pioneer robot.`,
-          `Structured ROS 2 message publishers and subscriber callbacks to pipe simulated LiDAR data to grid nodes.`,
-        ],
-        easyExplanation: "Clean state-machine or message piping in C++.",
-        keywords: ["C++", "ROS 2"],
-      });
-      optionSpecs.push({
-        styleLabel: "Workflow & Ops",
-        variants: [
-          `Tracked autonomy stack bug tickets and coordinated Gazebo simulation milestones across team **${pmTool}** sprints.`,
-          `Participated in design reviews and managed software integration tasks across robotics team sprints.`,
-        ],
-        easyExplanation: "Autonomy subteam ticket management and sprint coordination.",
         keywords: [pmTool],
       });
     } else {
@@ -355,6 +386,8 @@ export function synthesizeMalleableOneLineBullets(
         widthNcu: computeVisualWidth(latex),
         fit: bulletFit(chosen, cal),
         easyExplanation: spec.easyExplanation,
+        isNewClaim: true,
+        source: "template",
       };
     });
 
@@ -378,6 +411,7 @@ export function synthesizeMalleableOneLineBullets(
       targetContainerTitle: target.title,
       targetContainerKind: target.kind,
       targetTechContext: target.techSignals,
+      tags: target.tags,
       markup: primaryOpt.markup,
       latex: primaryOpt.latex,
       chars: primaryOpt.chars,

@@ -197,4 +197,46 @@ describe("LARP Engine — Golden Snapshots & Non-Negotiable Invariants", () => {
       }
     });
   }
+
+  it("Phase 3: data-driven catalog, policy modes, auto-tagger, and zero resume-specific strings", async () => {
+    const {
+      autoTagResumeContainers,
+      buildResumeInventory,
+      catalogFromDictionary,
+      findCatalogEntry,
+      placementFor,
+      synthesizeMalleableOneLineBullets,
+    } = await import("../../larpEngine");
+
+    const fullCat = catalogFromDictionary(true);
+    assert.ok(fullCat.length >= 90, "Extended catalog merges TECH_DICTIONARY entries");
+
+    const inv = buildResumeInventory(masterResume);
+    const awsEntry = findCatalogEntry("AWS");
+    assert.ok(awsEntry);
+    assert.strictEqual(placementFor(awsEntry, inv, "framing"), "bullet");
+    assert.strictEqual(placementFor(awsEntry, inv, "evidence"), "confirm");
+
+    const rustEntry = findCatalogEntry("Rust");
+    assert.ok(rustEntry);
+    assert.strictEqual(placementFor(rustEntry, inv, "framing"), "blocked");
+    assert.strictEqual(placementFor(rustEntry, inv, "evidence"), "blocked");
+
+    const tagged = autoTagResumeContainers(masterResume);
+    assert.ok(tagged.experience[0].tags?.includes("ml"));
+    assert.ok(tagged.projects[0].tags?.includes("systems"));
+
+    const zeroMalleable = synthesizeMalleableOneLineBullets(
+      masterResume,
+      {
+        matched: [],
+        tier_0_workflow: ["Agile"],
+        tier_1_framing: ["Redis"],
+        tier_1_5_skills_only: [],
+        tier_2_banned: [],
+      },
+      0
+    );
+    assert.strictEqual(zeroMalleable.length, 0);
+  });
 });

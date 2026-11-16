@@ -43,7 +43,7 @@ export function updateMalleableOptionWithCustomMarkup(
   calibration?: CalibrationConfig
 ): MalleableSynthesizedBullet {
   const cal = calibration ?? DEFAULT_CALIBRATION;
-  const oneLineMax = cal.oneLineMax || 108;
+  const oneLineMax = cal.oneLineMax || DEFAULT_CALIBRATION.oneLineMax;
   const nextOptions = malleable.options.map((opt) => {
     if (opt.id !== optionId) return opt;
     const latex = `\\item ${markupToLatex(customMarkup)}`;

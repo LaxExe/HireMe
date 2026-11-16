@@ -168,8 +168,8 @@
         "id": "malleable-1",
         "targetContainerId": "job_roboflow",
         "targetContainerTitle": "Machine Learning Engineering Intern · Roboflow",
-        "markup": "Integrated automated **Python** validation scripts to verify bounding-box coordinates across auto-label batches.",
-        "chars": 108,
+        "markup": "Integrated automated **Python** validation scripts to verify model outputs across evaluation batches.",
+        "chars": 97,
         "injectedKeywords": [
           "Docker",
           "Python"
@@ -181,8 +181,8 @@
         "id": "malleable-2",
         "targetContainerId": "job_ally",
         "targetContainerTitle": "Software Engineering Intern · Ally Voice AI",
-        "markup": "Maintained **FastAPI** streaming endpoints and structured error handlers for real-time voice agent turns.",
-        "chars": 101,
+        "markup": "Maintained **FastAPI** streaming endpoints and structured error handlers for real-time service turns.",
+        "chars": 97,
         "injectedKeywords": [
           "Redis",
           "FastAPI"
@@ -194,8 +194,8 @@
         "id": "malleable-3",
         "targetContainerId": "job_research",
         "targetContainerTitle": "Undergraduate Machine Learning Researcher · van der Heijden Lab",
-        "markup": "Automated surrogate dataset extraction and feature normalization pipelines across Slurm compute arrays.",
-        "chars": 103,
+        "markup": "Developed lightweight **FastAPI** endpoints to query model predictions in sub-millisecond response time.",
+        "chars": 100,
         "injectedKeywords": [
           "Docker",
           "Python"
@@ -207,8 +207,8 @@
         "id": "malleable-4",
         "targetContainerId": "proj_wato",
         "targetContainerTitle": "WATonomous Rover Autonomy (Project)",
-        "markup": "Implemented automated collision regression tests in **Gazebo** to validate Theta* path planning stability.",
-        "chars": 102,
+        "markup": "Implemented automated simulation regression tests in **C++** to validate path planning stability.",
+        "chars": 93,
         "injectedKeywords": [
           "Docker",
           "C++"
@@ -395,8 +395,8 @@
         "id": "malleable-1",
         "targetContainerId": "job_roboflow",
         "targetContainerTitle": "Machine Learning Engineering Intern · Roboflow",
-        "markup": "Integrated automated **Python** validation scripts to verify bounding-box coordinates across auto-label batches.",
-        "chars": 108,
+        "markup": "Integrated automated **Python** validation scripts to verify model outputs across evaluation batches.",
+        "chars": 97,
         "injectedKeywords": [
           "Docker",
           "Python"
@@ -408,8 +408,8 @@
         "id": "malleable-2",
         "targetContainerId": "job_ally",
         "targetContainerTitle": "Software Engineering Intern · Ally Voice AI",
-        "markup": "Maintained **FastAPI** streaming endpoints and structured error handlers for real-time voice agent turns.",
-        "chars": 101,
+        "markup": "Maintained **FastAPI** streaming endpoints and structured error handlers for real-time service turns.",
+        "chars": 97,
         "injectedKeywords": [
           "Redis",
           "FastAPI"
@@ -421,8 +421,8 @@
         "id": "malleable-3",
         "targetContainerId": "job_research",
         "targetContainerTitle": "Undergraduate Machine Learning Researcher · van der Heijden Lab",
-        "markup": "Automated surrogate dataset extraction and feature normalization pipelines across Slurm compute arrays.",
-        "chars": 103,
+        "markup": "Developed lightweight **FastAPI** endpoints to query model predictions in sub-millisecond response time.",
+        "chars": 100,
         "injectedKeywords": [
           "Docker",
           "Python"
@@ -434,8 +434,8 @@
         "id": "malleable-4",
         "targetContainerId": "proj_wato",
         "targetContainerTitle": "WATonomous Rover Autonomy (Project)",
-        "markup": "Implemented automated collision regression tests in **Gazebo** to validate Theta* path planning stability.",
-        "chars": 102,
+        "markup": "Implemented automated simulation regression tests in **C++** to validate path planning stability.",
+        "chars": 93,
         "injectedKeywords": [
           "Docker",
           "C++"
@@ -608,8 +608,8 @@
         "id": "malleable-1",
         "targetContainerId": "job_roboflow",
         "targetContainerTitle": "Machine Learning Engineering Intern · Roboflow",
-        "markup": "Integrated automated **Python** validation scripts to verify bounding-box coordinates across auto-label batches.",
-        "chars": 108,
+        "markup": "Integrated automated **Python** validation scripts to verify model outputs across evaluation batches.",
+        "chars": 97,
         "injectedKeywords": [
           "Docker",
           "Python"
@@ -621,8 +621,8 @@
         "id": "malleable-2",
         "targetContainerId": "job_ally",
         "targetContainerTitle": "Software Engineering Intern · Ally Voice AI",
-        "markup": "Maintained **FastAPI** streaming endpoints and structured error handlers for real-time voice agent turns.",
-        "chars": 101,
+        "markup": "Maintained **FastAPI** streaming endpoints and structured error handlers for real-time service turns.",
+        "chars": 97,
         "injectedKeywords": [
           "Redis",
           "FastAPI"
@@ -634,8 +634,8 @@
         "id": "malleable-3",
         "targetContainerId": "job_research",
         "targetContainerTitle": "Undergraduate Machine Learning Researcher · van der Heijden Lab",
-        "markup": "Automated surrogate dataset extraction and feature normalization pipelines across Slurm compute arrays.",
-        "chars": 103,
+        "markup": "Developed lightweight **FastAPI** endpoints to query model predictions in sub-millisecond response time.",
+        "chars": 100,
         "injectedKeywords": [
           "Docker",
           "Python"
@@ -647,8 +647,8 @@
         "id": "malleable-4",
         "targetContainerId": "proj_wato",
         "targetContainerTitle": "WATonomous Rover Autonomy (Project)",
-        "markup": "Implemented automated collision regression tests in **Gazebo** to validate Theta* path planning stability.",
-        "chars": 102,
+        "markup": "Implemented automated simulation regression tests in **C++** to validate path planning stability.",
+        "chars": 93,
         "injectedKeywords": [
           "Docker",
           "C++"
@@ -807,8 +807,8 @@
         "id": "malleable-1",
         "targetContainerId": "job_roboflow",
         "targetContainerTitle": "Machine Learning Engineering Intern · Roboflow",
-        "markup": "Integrated automated **Python** validation scripts to verify bounding-box coordinates across auto-label batches.",
-        "chars": 108,
+        "markup": "Integrated automated **Python** validation scripts to verify model outputs across evaluation batches.",
+        "chars": 97,
         "injectedKeywords": [
           "Python",
           "PyTorch"
@@ -820,11 +820,11 @@
         "id": "malleable-2",
         "targetContainerId": "job_ally",
         "targetContainerTitle": "Software Engineering Intern · Ally Voice AI",
-        "markup": "Maintained **FastAPI** streaming endpoints and structured error handlers for real-time voice agent turns.",
-        "chars": 101,
+        "markup": "Maintained **FastAPI** streaming endpoints and structured error handlers for real-time service turns.",
+        "chars": 97,
         "injectedKeywords": [
           "FastAPI",
-          "WebSockets"
+          "Python"
         ],
         "believabilityScore": 98,
         "optionCount": 4
@@ -833,8 +833,8 @@
         "id": "malleable-3",
         "targetContainerId": "job_research",
         "targetContainerTitle": "Undergraduate Machine Learning Researcher · van der Heijden Lab",
-        "markup": "Automated surrogate dataset extraction and feature normalization pipelines across Slurm compute arrays.",
-        "chars": 103,
+        "markup": "Developed lightweight **FastAPI** endpoints to query model predictions in sub-millisecond response time.",
+        "chars": 100,
         "injectedKeywords": [
           "FastAPI",
           "Python"
@@ -846,11 +846,11 @@
         "id": "malleable-4",
         "targetContainerId": "proj_wato",
         "targetContainerTitle": "WATonomous Rover Autonomy (Project)",
-        "markup": "Implemented automated collision regression tests in **Gazebo** to validate Theta* path planning stability.",
-        "chars": 102,
+        "markup": "Implemented automated simulation regression tests in **C++** to validate path planning stability.",
+        "chars": 93,
         "injectedKeywords": [
-          "Gazebo",
-          "C++"
+          "C++",
+          "Testing"
         ],
         "believabilityScore": 98,
         "optionCount": 3

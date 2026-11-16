@@ -1,7 +1,9 @@
+import { DEFAULT_CALIBRATION } from "./config";
 import type {
   AiBelievabilityRecommendation,
   AiVerificationPass,
   BulletMutationProposal,
+  CalibrationConfig,
   MalleableSynthesizedBullet,
 } from "./types";
 
@@ -11,8 +13,12 @@ import type {
  */
 export function evaluateBelievabilityAndRecommend(
   malleableBullets: MalleableSynthesizedBullet[],
-  bulletProposals: BulletMutationProposal[]
+  bulletProposals: BulletMutationProposal[],
+  calibration: CalibrationConfig = DEFAULT_CALIBRATION
 ): AiBelievabilityRecommendation | null {
+  const oneLineMax = calibration.oneLineMax || DEFAULT_CALIBRATION.oneLineMax;
+  const twoLineMax = calibration.twoLineMax || DEFAULT_CALIBRATION.twoLineMax;
+
   const rankings: AiBelievabilityRecommendation["rankings"] = [];
 
   for (const bp of bulletProposals) {
@@ -25,7 +31,7 @@ export function evaluateBelievabilityAndRecommend(
       containerTitle: bp.containerTitle,
       score: baseScore,
       verdict: baseScore >= 96 ? "Top Pick · Most Believable" : "Highly Defensible",
-      rationale: `Subtle 1-3 word addition keeping 90%+ of your authentic work in ${bp.containerTitle} (${bp.budget.candChars}/${bp.budget.candLines === 1 ? 108 : 216} chars · ${bp.budget.candFit.badge}).`,
+      rationale: `Subtle 1-3 word addition keeping 90%+ of your authentic work in ${bp.containerTitle} (${bp.budget.candChars}/${bp.budget.candLines === 1 ? oneLineMax : twoLineMax} chars · ${bp.budget.candFit.badge}).`,
     });
   }
 
@@ -87,7 +93,7 @@ export function evaluateBelievabilityAndRecommend(
       detail: `Verified that all ${malleableBullets.reduce(
         (acc, m) => acc + m.options.length,
         0
-      )} phrasing options across all roles fit inside calibrated 1-line boundaries (<= ${108} chars).`,
+      )} phrasing options across all roles fit inside calibrated 1-line boundaries (<= ${oneLineMax} chars).`,
     },
     {
       passNumber: 4,

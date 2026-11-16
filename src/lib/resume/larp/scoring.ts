@@ -1,4 +1,4 @@
-import type { BulletFitResult, ContainerCandidate } from "./types";
+import type { BulletFitResult, Context } from "./types";
 
 /**
  * Dynamically computes an authentic, multi-dimensional AI Believability Score (88% - 98%)
@@ -8,7 +8,7 @@ export function calculateDynamicBelievabilityScore(params: {
   proposedKeywords: string[];
   containerKind: "experience" | "project";
   containerTitle: string;
-  domain: ContainerCandidate["domain"];
+  domain: Context;
   existingTechSignals: string[];
   existingBulletsText: string;
   actionStyle: string;
@@ -26,21 +26,20 @@ export function calculateDynamicBelievabilityScore(params: {
     isSubtleEdit,
   } = params;
 
-  // 1. Base defensibility
   let score = isSubtleEdit ? 95 : 91;
 
-  // 2. Domain & Context Proximity (+1 to +4)
   const kwLower = proposedKeywords.map((k) => k.toLowerCase());
   const hasKw = (k: string) => kwLower.some((x) => x.includes(k.toLowerCase()));
 
-  if (domain === "ml-vision") {
+  if (domain === "ml") {
     if (
       hasKw("torch") ||
       hasKw("metric") ||
       hasKw("eval") ||
       hasKw("dataset") ||
       hasKw("python") ||
-      hasKw("docker")
+      hasKw("docker") ||
+      hasKw("fastapi")
     ) {
       score += 4;
     } else if (hasKw("redis") || hasKw("agile") || hasKw("jira") || hasKw("linear")) {
@@ -48,38 +47,10 @@ export function calculateDynamicBelievabilityScore(params: {
     } else {
       score += 2;
     }
-  } else if (domain === "voice-ai") {
-    if (
-      hasKw("redis") ||
-      hasKw("websocket") ||
-      hasKw("fastapi") ||
-      hasKw("webhook") ||
-      hasKw("api")
-    ) {
+  } else if (domain === "systems") {
+    if (hasKw("ros") || hasKw("test") || hasKw("c++") || hasKw("sim") || hasKw("docker")) {
       score += 4;
-    } else if (hasKw("docker") || hasKw("aws") || hasKw("testing") || hasKw("agile")) {
-      score += 3;
-    } else {
-      score += 2;
-    }
-  } else if (domain === "ml-research") {
-    if (
-      hasKw("python") ||
-      hasKw("fastapi") ||
-      hasKw("eval") ||
-      hasKw("cross-val") ||
-      hasKw("slurm")
-    ) {
-      score += 4;
-    } else if (hasKw("docker") || hasKw("redis") || hasKw("agile")) {
-      score += 3;
-    } else {
-      score += 2;
-    }
-  } else if (domain === "systems-robotics") {
-    if (hasKw("gazebo") || hasKw("ros") || hasKw("test") || hasKw("c++") || hasKw("sim")) {
-      score += 4;
-    } else if (hasKw("docker") || hasKw("jira") || hasKw("agile")) {
+    } else if (hasKw("jira") || hasKw("agile")) {
       score += 3;
     } else {
       score += 1;
@@ -90,7 +61,10 @@ export function calculateDynamicBelievabilityScore(params: {
       hasKw("graphql") ||
       hasKw("rest") ||
       hasKw("postgres") ||
-      hasKw("tailwind")
+      hasKw("tailwind") ||
+      hasKw("fastapi") ||
+      hasKw("webhook") ||
+      hasKw("api")
     ) {
       score += 4;
     } else if (hasKw("docker") || hasKw("aws") || hasKw("agile") || hasKw("jira")) {
@@ -100,7 +74,6 @@ export function calculateDynamicBelievabilityScore(params: {
     }
   }
 
-  // 3. Existing Tech Signal Continuity (+1 to +3)
   const allExistingLower = `${existingTechSignals.join(" ")} ${existingBulletsText}`.toLowerCase();
   const hasExisting = (k: string) => allExistingLower.includes(k.toLowerCase());
 
@@ -114,7 +87,8 @@ export function calculateDynamicBelievabilityScore(params: {
     (hasExisting("python") ||
       hasExisting("fastapi") ||
       hasExisting("deploy") ||
-      hasExisting("linux"))
+      hasExisting("linux") ||
+      hasExisting("c++"))
   ) {
     score += 2;
   } else if (
@@ -133,7 +107,6 @@ export function calculateDynamicBelievabilityScore(params: {
     score += 2;
   }
 
-  // 4. Action Style Modesty (+1 to +2)
   if (actionStyle === "Testing & Quality" || actionStyle === "Simple Integration") {
     score += 2;
   } else if (actionStyle === "Workflow & Ops") {
@@ -142,7 +115,6 @@ export function calculateDynamicBelievabilityScore(params: {
     score += 1;
   }
 
-  // 5. Line-budget Visual Fit (+2 to -3)
   if (lineBudgetFit) {
     if (lineBudgetFit.tone === "green") {
       score += 2;

@@ -1,5 +1,13 @@
-import type { Bullet, CalibrationConfig, MasterResume, SkillCategory } from "../types";
+import type {
+  Bullet,
+  CalibrationConfig,
+  DomainContext,
+  MasterResume,
+  SkillCategory,
+} from "../types";
 import type { BulletFitResult } from "../utils";
+
+export type Context = DomainContext;
 
 export interface TextSegment {
   text: string;
@@ -55,18 +63,56 @@ export type BulletDomainContext =
   | "frontend-ui"
   | "systems-cpp-robotics";
 
-export interface CatalogItem {
+export interface RewriteRuleSpec {
+  find: RegExp;
+  /** Supports `{kw}` expanding to `**Label**` and `{label}` expanding to `Label`, plus regex capture groups `$1`, `$2`... */
+  replace: string;
+  score: number;
+  reason?: string;
+  contexts?: Context[];
+}
+
+export interface SuffixRuleSpec {
+  /** e.g. ` using {kw}` or `, tracked in {kw}` */
+  suffix: string;
+  score: number;
+  reason?: string;
+  contexts?: Context[];
+  requiresVerb?: RegExp;
+}
+
+export type SkillsCategoryBucket =
+  | "Languages"
+  | "Frameworks & Libraries"
+  | "Databases & Cloud"
+  | "Developer Tools & DevOps";
+
+export interface CatalogEntry {
+  id: string;
+  label: string;
+  /** Compatibility alias for `label` */
   name: string;
   aliases: string[];
+  weakAliases?: string[];
+  tier: Tier;
+  /** Compatibility alias for `tier` */
   defaultTierIfMissing: Tier;
+  caseSensitive?: boolean;
+  skillsCategory?: SkillsCategoryBucket;
+  /** Compatibility alias for `skillsCategory` */
+  targetSkillCategory?: SkillsCategoryBucket;
+  alsoSkills?: boolean;
+  /** Compatibility alias for `alsoSkills` */
   alsoSkillsOnly?: boolean;
-  targetSkillCategory?:
-    | "Languages"
-    | "Frameworks & Libraries"
-    | "Databases & Cloud"
-    | "Developer Tools & DevOps";
+  adjacentTo?: string[];
+  pairsWith?: string[];
+  contexts?: Context[];
   compatibleBulletContexts?: BulletDomainContext[];
+  rules?: RewriteRuleSpec[];
+  suffixes?: SuffixRuleSpec[];
 }
+
+export type CatalogItem = CatalogEntry;
 
 export interface SkillSwapChange {
   categoryId: string;
@@ -101,6 +147,7 @@ export interface BulletMutationProposal {
   injectedKeywords: string[];
   reason: string;
   accepted: boolean;
+  source?: "rule" | "generic" | "llm";
 }
 
 export interface MalleableBulletOption {
@@ -118,6 +165,8 @@ export interface MalleableBulletOption {
   widthNcu: number;
   fit: BulletFitResult;
   easyExplanation: string;
+  isNewClaim?: boolean;
+  source?: "template" | "llm";
 }
 
 export interface MalleableSynthesizedBullet {
@@ -126,6 +175,7 @@ export interface MalleableSynthesizedBullet {
   targetContainerTitle: string;
   targetContainerKind: "experience" | "project";
   targetTechContext: string[];
+  tags?: Context[];
   markup: string;
   latex: string;
   chars: number;
@@ -176,13 +226,8 @@ export interface ContainerCandidate {
   existingBullets: string[];
   techSignals: string[];
   roleSummary: string;
-  domain:
-    | "ml-vision"
-    | "ml-research"
-    | "voice-ai"
-    | "fullstack-backend"
-    | "systems-robotics"
-    | "general";
+  tags: Context[];
+  domain: Context;
   score: number;
 }
 
@@ -192,6 +237,7 @@ export interface CandidateBulletSlot {
   containerTitle: string;
   containerKind: "experience" | "project";
   context: BulletDomainContext;
+  tags: Context[];
   defensibilityBonus: number;
   origPlainLen: number;
   maxAllowedChars: number;

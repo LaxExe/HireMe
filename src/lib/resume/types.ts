@@ -1,3 +1,11 @@
+export type DomainContext =
+  | "backend"
+  | "frontend"
+  | "infra"
+  | "systems"
+  | "ml"
+  | "general";
+
 export interface Bullet {
   id: string;
   /** Text with `**bold**` markers preserved from the source resume. */
@@ -18,6 +26,8 @@ export interface Job {
   bullets: Bullet[];
   /** True if parsed from a separate Leadership & Extracurriculars section. */
   isLeadership?: boolean;
+  /** Optional domain tags (auto-inferred via DOMAIN_HINTS and user-editable). */
+  tags?: DomainContext[];
 }
 
 export interface ProjectLink {
@@ -39,6 +49,8 @@ export interface Project {
   techStack: string[];
   meta: string;
   bullets: Bullet[];
+  /** Optional domain tags (auto-inferred via DOMAIN_HINTS and user-editable). */
+  tags?: DomainContext[];
 }
 
 export interface Education {
