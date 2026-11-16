@@ -8,6 +8,8 @@ export {
   type ContainerCandidate,
   type Context,
   type GuardrailViolation,
+  type KeywordDiagnostic,
+  type KeywordDiagnosticStatus,
   type LarpAlignmentRun,
   type LarpTierClassification,
   type LineBudgetCheck,
@@ -83,6 +85,7 @@ export {
 } from "./larp/malleable";
 
 export {
+  buildKeywordDiagnostics,
   evaluateBelievabilityAndRecommend,
   runRealVerificationPasses,
   type RealVerificationInput,

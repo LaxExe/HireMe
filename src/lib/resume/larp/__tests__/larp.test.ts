@@ -715,4 +715,129 @@ Requirements:
       assert.strictEqual(check3?.status, "failed");
     });
   });
+
+  describe("Phase 10: Diagnostics for Every Keyword (Zero Silent Failures)", () => {
+    it("produces a diagnostic status and human-readable reason for every JD keyword across all statuses", async () => {
+      const { buildKeywordDiagnostics, runLarpAlignmentPipeline } = await import(
+        "../../larpEngine"
+      );
+
+      for (const [key, jd] of Object.entries(jds)) {
+        const run = runLarpAlignmentPipeline(jd.text, masterResume, 0);
+        const allUniqueJdKeywords = new Set([
+          ...run.tiers.matched,
+          ...run.tiers.tier_0_workflow,
+          ...run.tiers.tier_1_framing,
+          ...run.tiers.tier_1_5_skills_only,
+          ...run.tiers.tier_2_banned,
+        ]);
+
+        assert.strictEqual(
+          run.diagnostics.length,
+          allUniqueJdKeywords.size,
+          `Every unique JD keyword in ${key} must have exactly one diagnostic entry`
+        );
+
+        for (const diag of run.diagnostics) {
+          assert.ok(diag.reason.length > 5, `Diagnostic for ${diag.keyword} has reason`);
+        }
+      }
+
+      // Verify specific statuses on pylon_fullstack:
+      const pylonRun = runLarpAlignmentPipeline(jds.pylon_fullstack.text, masterResume, 0);
+      const byKw = new Map(pylonRun.diagnostics.map((d) => [d.keyword, d]));
+
+      assert.strictEqual(byKw.get("Python")?.status, "already_covered");
+      assert.strictEqual(byKw.get("Rust")?.status, "blocked");
+      assert.strictEqual(byKw.get("AWS")?.status, "applied");
+      assert.strictEqual(byKw.get("Redis")?.status, "applied");
+      assert.strictEqual(byKw.get("Docker")?.status, "outcompeted");
+      assert.strictEqual(byKw.get("Tailwind CSS")?.status, "no_candidate");
+
+      // Verify no_candidate, all_rejected, outcompeted, and needs_confirmation statuses
+      const customStats = new Map([
+        [
+          "webhooks",
+          {
+            keyword: "Webhooks",
+            implausibleSlotsCount: 2,
+            noRuleMatchSlotsCount: 4,
+            rejectionCountsByCode: {},
+            validCandidateCount: 0,
+          },
+        ],
+        [
+          "graphql",
+          {
+            keyword: "GraphQL",
+            implausibleSlotsCount: 1,
+            noRuleMatchSlotsCount: 2,
+            rejectionCountsByCode: { too_many_changes: 3, overflow: 1 },
+            validCandidateCount: 0,
+          },
+        ],
+        [
+          "docker",
+          {
+            keyword: "Docker",
+            implausibleSlotsCount: 1,
+            noRuleMatchSlotsCount: 0,
+            rejectionCountsByCode: {},
+            validCandidateCount: 2,
+          },
+        ],
+      ]);
+
+      const customDiags = buildKeywordDiagnostics({
+        tiers: {
+          matched: ["Python"],
+          tier_0_workflow: [],
+          tier_1_framing: ["Webhooks", "GraphQL", "Docker"],
+          tier_1_5_skills_only: ["MongoDB"],
+          tier_2_banned: ["Rust"],
+        },
+        skillSwaps: [],
+        bulletProposals: [],
+        candidateStats: customStats,
+        keywordWeights: new Map(),
+        resume: masterResume,
+        mode: "framing",
+      });
+
+      const whDiag = customDiags.find((d) => d.keyword === "Webhooks");
+      assert.strictEqual(whDiag?.status, "no_candidate");
+      assert.strictEqual(
+        whDiag?.reason,
+        "No rewrite rule matched. 2 bullets were skipped as implausible. Add a rule or pairsWith, or enable the LLM proposer."
+      );
+
+      const gqlDiag = customDiags.find((d) => d.keyword === "GraphQL");
+      assert.strictEqual(gqlDiag?.status, "all_rejected");
+      assert.ok(gqlDiag?.reason.includes("too_many_changes×3, overflow×1"));
+
+      const dockerDiag = customDiags.find((d) => d.keyword === "Docker");
+      assert.strictEqual(dockerDiag?.status, "outcompeted");
+
+      const mongoDiag = customDiags.find((d) => d.keyword === "MongoDB");
+      assert.strictEqual(mongoDiag?.status, "skills_only");
+
+      // Verify evidence mode needs_confirmation
+      const evidenceDiags = buildKeywordDiagnostics({
+        tiers: {
+          matched: ["Python"],
+          tier_0_workflow: [],
+          tier_1_framing: ["AWS"],
+          tier_1_5_skills_only: [],
+          tier_2_banned: [],
+        },
+        skillSwaps: [],
+        bulletProposals: [],
+        candidateStats: new Map(),
+        keywordWeights: new Map(),
+        resume: masterResume,
+        mode: "evidence",
+      });
+      assert.strictEqual(evidenceDiags.find((d) => d.keyword === "AWS")?.status, "needs_confirmation");
+    });
+  });
 });

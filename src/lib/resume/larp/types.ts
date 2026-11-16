@@ -277,6 +277,26 @@ export interface CandidateBulletSlot {
   charSlack: number;
 }
 
+export type KeywordDiagnosticStatus =
+  | "applied"
+  | "already_covered"
+  | "skills_only"
+  | "blocked"
+  | "no_candidate"
+  | "all_rejected"
+  | "outcompeted"
+  | "needs_confirmation";
+
+export interface KeywordDiagnostic {
+  keyword: string;
+  tier: Tier | "matched";
+  status: KeywordDiagnosticStatus;
+  reason: string;
+  weight?: number;
+  rejectionCounts?: Partial<Record<ViolationCode, number>>;
+  implausibleSlotsCount?: number;
+}
+
 export interface LarpAlignmentRun {
   tiers: LarpTierClassification;
   skillSwaps: SkillSwapChange[];
@@ -285,6 +305,14 @@ export interface LarpAlignmentRun {
   malleableBullets: MalleableSynthesizedBullet[];
   aiRecommendation: AiBelievabilityRecommendation | null;
   guardrailVerifiedZeroBanned: boolean;
+  diagnostics: KeywordDiagnostic[];
+  coverage?: {
+    beforePercent: number;
+    afterPercent: number;
+    weightedBeforePercent: number;
+    weightedAfterPercent: number;
+    unknownTerms: string[];
+  };
 }
 
 export type { Bullet, CalibrationConfig, MasterResume, SkillCategory, BulletFitResult };

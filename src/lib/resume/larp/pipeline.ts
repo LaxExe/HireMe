@@ -1,8 +1,13 @@
 import { plainText } from "../utils";
+import { applyLarpMutationsToResume } from "./apply";
 import { classifyBulletContext } from "./candidates";
 import { DEFAULT_CALIBRATION, inferDomainTags, SINGLE_LINE_NCU } from "./config";
 import { createGuardContext, verifyRunGuardrailZeroBanned } from "./guardrails";
-import { classifyJobDescriptionTiers, extractWeightedJdKeywords } from "./jd";
+import {
+  classifyJobDescriptionTiers,
+  computeCoverageBeforeAfter,
+  extractWeightedJdKeywords,
+} from "./jd";
 import {
   draftAndValidateLlmMalleableOptions,
   proposeAndValidateLlmBulletCandidates,
@@ -23,7 +28,7 @@ import type {
   PolicyMode,
   ViolationCode,
 } from "./types";
-import { evaluateBelievabilityAndRecommend } from "./verify";
+import { buildKeywordDiagnostics, evaluateBelievabilityAndRecommend } from "./verify";
 
 export interface LarpPipelineOptions {
   variantOffset?: number;
@@ -164,6 +169,7 @@ export function runLarpAlignmentPipeline(
     tiers.tier_0_workflow
   );
 
+  const statsOut = new Map<string, KeywordCandidateStats>();
   const bulletProposals = selectBulletMutations(
     slots,
     centralizedTargetKeywords,
@@ -173,7 +179,7 @@ export function runLarpAlignmentPipeline(
     SINGLE_LINE_NCU,
     tiers,
     undefined,
-    undefined,
+    statsOut,
     undefined,
     keywordWeights,
     options.excludePairs
@@ -205,6 +211,36 @@ export function runLarpAlignmentPipeline(
     bannedLower
   );
 
+  const diagnostics = buildKeywordDiagnostics({
+    tiers,
+    skillSwaps,
+    bulletProposals,
+    candidateStats: statsOut,
+    keywordWeights,
+    resume,
+    mode: options.mode ?? "framing",
+  });
+
+  const acceptedBulletIds = new Set(bulletProposals.map((p) => p.bulletId));
+  const acceptedMalleableIds = new Set(malleableBullets.slice(0, 1).map((m) => m.id));
+  const afterResume = applyLarpMutationsToResume(
+    resume,
+    {
+      tiers,
+      skillSwaps,
+      updatedSkills: updatedCategories,
+      bulletProposals,
+      malleableBullets,
+      aiRecommendation,
+      guardrailVerifiedZeroBanned,
+      diagnostics,
+    },
+    acceptedBulletIds,
+    true,
+    acceptedMalleableIds
+  );
+  const coverage = computeCoverageBeforeAfter(jobDescription, resume, afterResume);
+
   return {
     tiers,
     skillSwaps,
@@ -213,6 +249,8 @@ export function runLarpAlignmentPipeline(
     malleableBullets,
     aiRecommendation,
     guardrailVerifiedZeroBanned,
+    diagnostics,
+    coverage,
   };
 }
 
@@ -285,6 +323,17 @@ export async function runLarpAlignmentPipelineAsync(
     options.excludePairs
   );
 
+  // Merge LLM rejection counts into statsOut so all_rejected diagnostics include LLM rejections
+  for (const [kwLower, llmRejs] of rejectionCountsByKeyword.entries()) {
+    const existing = statsOut.get(kwLower);
+    if (existing) {
+      for (const [code, cnt] of Object.entries(llmRejs) as [ViolationCode, number][]) {
+        existing.rejectionCountsByCode[code] =
+          (existing.rejectionCountsByCode[code] ?? 0) + (cnt ?? 0);
+      }
+    }
+  }
+
   const malleableCount = cal.malleableLines ?? 1;
   const malleableBullets = synthesizeMalleableOneLineBullets(
     resume,
@@ -337,6 +386,36 @@ export async function runLarpAlignmentPipelineAsync(
     bannedLower
   );
 
+  const diagnostics = buildKeywordDiagnostics({
+    tiers,
+    skillSwaps,
+    bulletProposals,
+    candidateStats: statsOut,
+    keywordWeights,
+    resume,
+    mode: options.mode ?? "framing",
+  });
+
+  const acceptedBulletIds = new Set(bulletProposals.map((p) => p.bulletId));
+  const acceptedMalleableIds = new Set(malleableBullets.slice(0, 1).map((m) => m.id));
+  const afterResume = applyLarpMutationsToResume(
+    resume,
+    {
+      tiers,
+      skillSwaps,
+      updatedSkills: updatedCategories,
+      bulletProposals,
+      malleableBullets,
+      aiRecommendation,
+      guardrailVerifiedZeroBanned,
+      diagnostics,
+    },
+    acceptedBulletIds,
+    true,
+    acceptedMalleableIds
+  );
+  const coverage = computeCoverageBeforeAfter(jobDescription, resume, afterResume);
+
   return {
     tiers,
     skillSwaps,
@@ -345,6 +424,8 @@ export async function runLarpAlignmentPipelineAsync(
     malleableBullets,
     aiRecommendation,
     guardrailVerifiedZeroBanned,
+    diagnostics,
+    coverage,
     llmTelemetry,
   };
 }

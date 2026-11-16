@@ -1,8 +1,11 @@
 import { bulletFit, plainText } from "../utils";
 import { applyLarpMutationsToResume } from "./apply";
+import { findCatalogEntry } from "./catalog";
 import { DEFAULT_CALIBRATION } from "./config";
 import { createGuardContext, validateRewrite, verifyZeroBannedInMarkup } from "./guardrails";
 import { computeCoverageBeforeAfter } from "./jd";
+import type { KeywordCandidateStats } from "./optimizer";
+import { buildResumeInventory, placementFor } from "./policy";
 import { formatScoreBreakdownSummary, scoreCandidate } from "./scoring";
 import { containsPhrase } from "./text";
 import type {
@@ -10,11 +13,199 @@ import type {
   AiVerificationPass,
   BulletMutationProposal,
   CalibrationConfig,
+  KeywordDiagnostic,
   LarpTierClassification,
   MalleableSynthesizedBullet,
   MasterResume,
+  PolicyMode,
   SkillCategory,
+  SkillSwapChange,
+  ViolationCode,
 } from "./types";
+
+/**
+ * Produces a deterministic, human-readable diagnostic for every detected JD keyword,
+ * guaranteeing that no keyword fails silently.
+ */
+export function buildKeywordDiagnostics(params: {
+  tiers: LarpTierClassification;
+  skillSwaps: SkillSwapChange[];
+  bulletProposals: BulletMutationProposal[];
+  candidateStats: Map<string, KeywordCandidateStats>;
+  keywordWeights: Map<string, number>;
+  resume: MasterResume;
+  mode?: PolicyMode;
+}): KeywordDiagnostic[] {
+  const {
+    tiers,
+    skillSwaps,
+    bulletProposals,
+    candidateStats,
+    keywordWeights,
+    resume,
+    mode = "framing",
+  } = params;
+
+  const diagnostics: KeywordDiagnostic[] = [];
+  const inventory = buildResumeInventory(resume);
+  const appliedSkillSet = new Set(
+    skillSwaps.flatMap((s) => s.added).map((n) => n.toLowerCase())
+  );
+  const appliedProposalByKw = new Map<string, BulletMutationProposal>();
+  for (const bp of bulletProposals) {
+    for (const kw of bp.injectedKeywords) {
+      appliedProposalByKw.set(kw.toLowerCase(), bp);
+    }
+  }
+
+  // 1. Matched keywords -> already_covered
+  for (const kw of tiers.matched) {
+    diagnostics.push({
+      keyword: kw,
+      tier: "matched",
+      status: "already_covered",
+      reason: `Already present on your resume.`,
+      weight: keywordWeights.get(kw.toLowerCase()),
+    });
+  }
+
+  // 2. Tier 2 Banned keywords -> blocked
+  for (const kw of tiers.tier_2_banned) {
+    diagnostics.push({
+      keyword: kw,
+      tier: "tier_2_banned",
+      status: "blocked",
+      reason: `Blocked (Tier-2 hard technology not present on your resume; never fabricated).`,
+      weight: keywordWeights.get(kw.toLowerCase()),
+    });
+  }
+
+  // 3. Pure Tier 1.5 Skills-only keywords -> skills_only
+  const framingOrWorkflowLower = new Set(
+    [...tiers.tier_0_workflow, ...tiers.tier_1_framing].map((k) => k.toLowerCase())
+  );
+  for (const kw of tiers.tier_1_5_skills_only) {
+    if (framingOrWorkflowLower.has(kw.toLowerCase())) continue;
+    const wasAddedToSkills = appliedSkillSet.has(kw.toLowerCase());
+    diagnostics.push({
+      keyword: kw,
+      tier: "tier_1_5_skills_only",
+      status: "skills_only",
+      reason: wasAddedToSkills
+        ? `Added to the Skills section (Tier-1.5 skills-only; never injected into bullets).`
+        : `Eligible for the Skills section only (Tier-1.5; never injected into bullets).`,
+      weight: keywordWeights.get(kw.toLowerCase()),
+    });
+  }
+
+  // 4. Tier 1 Framing & Tier 0 Workflow keywords
+  const bulletTargetKeywords = [
+    ...tiers.tier_1_framing.map((kw) => ({ kw, tier: "tier_1_framing" as const })),
+    ...tiers.tier_0_workflow.map((kw) => ({ kw, tier: "tier_0_workflow" as const })),
+  ];
+
+  const seenTargetLower = new Set<string>();
+  for (const { kw, tier } of bulletTargetKeywords) {
+    const lower = kw.toLowerCase();
+    if (seenTargetLower.has(lower)) continue;
+    seenTargetLower.add(lower);
+
+    const weight = keywordWeights.get(lower);
+
+    // Check evidence mode policy first
+    if (mode === "evidence" && tier === "tier_1_framing") {
+      const entry = findCatalogEntry(kw);
+      if (entry) {
+        const decision = placementFor(entry, inventory, "evidence");
+        if (decision === "confirm") {
+          diagnostics.push({
+            keyword: kw,
+            tier,
+            status: "needs_confirmation",
+            reason: `Evidence mode: adjacent stack found on resume; requires user confirmation before injecting "${kw}".`,
+            weight,
+          });
+          continue;
+        }
+        if (decision === "blocked") {
+          diagnostics.push({
+            keyword: kw,
+            tier,
+            status: "blocked",
+            reason: `Evidence mode: blocked because no strong adjacent technology for "${kw}" was found on your resume.`,
+            weight,
+          });
+          continue;
+        }
+      }
+    }
+
+    const appliedBp = appliedProposalByKw.get(lower);
+    if (appliedBp) {
+      diagnostics.push({
+        keyword: kw,
+        tier,
+        status: "applied",
+        reason: `Injected into ${appliedBp.containerTitle} (${appliedBp.wordStats.reframedWords} words changed · ${appliedBp.budget.candFit.badge}).`,
+        weight,
+      });
+      continue;
+    }
+
+    const stats = candidateStats.get(lower);
+    if (!stats) {
+      diagnostics.push({
+        keyword: kw,
+        tier,
+        status: "outcompeted",
+        reason: `Valid workflow option existed, but bullet budget was prioritized for higher-weight technical framing keywords.`,
+        weight,
+      });
+      continue;
+    }
+
+    if (stats.validCandidateCount > 0) {
+      diagnostics.push({
+        keyword: kw,
+        tier,
+        status: "outcompeted",
+        reason: `Valid options existed (${stats.validCandidateCount} compliant candidate(s)), but target bullets were assigned to higher-weight keywords.`,
+        weight,
+        implausibleSlotsCount: stats.implausibleSlotsCount,
+      });
+      continue;
+    }
+
+    const rejEntries = Object.entries(stats.rejectionCountsByCode) as [
+      ViolationCode,
+      number,
+    ][];
+    if (rejEntries.length > 0) {
+      const summary = rejEntries.map(([code, cnt]) => `${code}×${cnt}`).join(", ");
+      diagnostics.push({
+        keyword: kw,
+        tier,
+        status: "all_rejected",
+        reason: `All candidate rewrites were rejected by guardrails (${summary}).`,
+        weight,
+        rejectionCounts: stats.rejectionCountsByCode,
+        implausibleSlotsCount: stats.implausibleSlotsCount,
+      });
+      continue;
+    }
+
+    diagnostics.push({
+      keyword: kw,
+      tier,
+      status: "no_candidate",
+      reason: `No rewrite rule matched. ${stats.implausibleSlotsCount} bullets were skipped as implausible. Add a rule or pairsWith, or enable the LLM proposer.`,
+      weight,
+      implausibleSlotsCount: stats.implausibleSlotsCount,
+    });
+  }
+
+  return diagnostics;
+}
 
 export interface RealVerificationInput {
   jobDescription?: string;
@@ -226,6 +417,7 @@ export function runRealVerificationPasses(input: RealVerificationInput): {
         malleableBullets,
         aiRecommendation: null,
         guardrailVerifiedZeroBanned: verifyZeroBannedInMarkup(allCandidateText, bannedList),
+        diagnostics: [],
       },
       acceptedBulletIds,
       true,
