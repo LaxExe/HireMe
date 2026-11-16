@@ -34,7 +34,12 @@ import {
   applyLarpMutationsToResume,
   applySelectedSkillsToResumeCategories,
   evaluateBelievabilityAndRecommend,
+  exportLedgerToCsv,
+  exportLedgerToJson,
+  formatScoreBreakdownSummary,
   getAvailableSkillCandidates,
+  logLarpUserActionEvent,
+  registerCustomCatalogTerm,
   runLarpAlignmentPipeline,
   updateBulletProposalWithCustomMarkup,
   updateMalleableOptionWithCustomMarkup,
@@ -62,6 +67,7 @@ export default function PreviewPage() {
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [customSkillInput, setCustomSkillInput] = useState("");
   const [variantOffsetsBySlot, setVariantOffsetsBySlot] = useState<Record<string, number>>({});
+  const [excludedPairsBySlot, setExcludedPairsBySlot] = useState<Record<string, string[]>>({});
   const [showJdDrawer, setShowJdDrawer] = useState(false);
   const [regeneratingId, setRegeneratingId] = useState<string | null>(null);
   const [pushedAgentBanner, setPushedAgentBanner] = useState<{
@@ -138,16 +144,37 @@ export default function PreviewPage() {
   const handleToggleBullet = (bulletId: string) => {
     if (!activeItem) return;
     const set = new Set(activeItem.acceptedBulletIds);
-    if (set.has(bulletId)) set.delete(bulletId);
+    const wasSelected = set.has(bulletId);
+    if (wasSelected) set.delete(bulletId);
     else set.add(bulletId);
+    const bp = activeItem.larpRun.bulletProposals.find((p) => p.bulletId === bulletId);
+    logLarpUserActionEvent({
+      action: wasSelected ? "reject" : "accept",
+      targetKind: "bullet_edit",
+      targetId: bulletId,
+      keyword: bp?.injectedKeywords[0],
+      beforeText: bp?.originalMarkup,
+      afterText: bp?.mutatedMarkup,
+      jdId: activeItem.larpRun.runMetadata?.jdId ?? activeItem.id,
+    });
     updateActiveItem({ acceptedBulletIds: Array.from(set) });
   };
 
   const handleToggleMalleable = (malleableId: string) => {
     if (!activeItem) return;
     const set = new Set(activeItem.acceptedMalleableIds);
-    if (set.has(malleableId)) set.delete(malleableId);
+    const wasSelected = set.has(malleableId);
+    if (wasSelected) set.delete(malleableId);
     else set.add(malleableId);
+    const mb = activeItem.larpRun.malleableBullets.find((m) => m.id === malleableId);
+    logLarpUserActionEvent({
+      action: wasSelected ? "reject" : "accept",
+      targetKind: "new_bullet",
+      targetId: malleableId,
+      keyword: mb?.injectedKeywords.join(", "),
+      afterText: mb?.markup,
+      jdId: activeItem.larpRun.runMetadata?.jdId ?? activeItem.id,
+    });
     updateActiveItem({ acceptedMalleableIds: Array.from(set) });
   };
 
@@ -167,6 +194,13 @@ export default function PreviewPage() {
 
   const handleEditBulletProposalInPreview = (bulletId: string, newMarkup: string) => {
     if (!activeItem) return;
+    logLarpUserActionEvent({
+      action: "edit",
+      targetKind: "bullet_edit",
+      targetId: bulletId,
+      afterText: newMarkup,
+      jdId: activeItem.larpRun.runMetadata?.jdId ?? activeItem.id,
+    });
     const nextProposals = activeItem.larpRun.bulletProposals.map((bp) =>
       bp.bulletId === bulletId
         ? updateBulletProposalWithCustomMarkup(
@@ -237,10 +271,25 @@ export default function PreviewPage() {
     const nextOffset = currentOffset + 1;
     setVariantOffsetsBySlot((prev) => ({ ...prev, [activeItem.id]: nextOffset }));
 
+    const prevExcluded = new Set(excludedPairsBySlot[activeItem.id] ?? []);
+    for (const bp of activeItem.larpRun.bulletProposals) {
+      for (const kw of bp.injectedKeywords) {
+        prevExcluded.add(`${bp.bulletId}|${kw.toLowerCase()}`);
+      }
+    }
+    setExcludedPairsBySlot((prev) => ({
+      ...prev,
+      [activeItem.id]: Array.from(prevExcluded),
+    }));
+
     const freshRun = runLarpAlignmentPipeline(
       activeItem.jobDescription,
       activeItem.baseResume,
-      nextOffset
+      {
+        jdId: activeItem.roleName || activeItem.title || activeItem.id,
+        variantOffset: nextOffset,
+        excludePairs: prevExcluded,
+      }
     );
 
     const topPick = freshRun.aiRecommendation?.topPickId;
@@ -657,11 +706,38 @@ export default function PreviewPage() {
                     disabled={downloadingId === activeItem.id}
                     onClick={() => handleOptionalDownload(activeItem)}
                     className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-neutral-700 bg-white hover:bg-neutral-50 border border-[#ebebeb] rounded-full shadow-2xs active:scale-95 transition-all cursor-pointer disabled:opacity-40"
-                    title="Optional PDF download"
+                    title="Optional PDF download (tagged SYNTHETIC)"
                   >
                     <Download className="w-3.5 h-3.5" />
                     <span>Download</span>
                   </button>
+
+                  {activeItem.larpRun.ledger && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const json = exportLedgerToJson(
+                          activeItem.larpRun.ledger,
+                          activeItem.larpRun.runMetadata
+                        );
+                        const blob = new Blob([json], { type: "application/json" });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement("a");
+                        a.href = url;
+                        a.download = `larp_study_ledger_${
+                          activeItem.larpRun.runMetadata?.jdId || activeItem.id
+                        }.json`;
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        setTimeout(() => URL.revokeObjectURL(url), 1500);
+                      }}
+                      className="inline-flex items-center gap-1 px-3 py-1.5 font-mono text-[11px] text-neutral-700 bg-white hover:bg-neutral-50 border border-[#ebebeb] rounded-full shadow-2xs active:scale-95 transition-all cursor-pointer"
+                    >
+                      <Download className="w-3 h-3" />
+                      <span>Ledger JSON</span>
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -669,15 +745,23 @@ export default function PreviewPage() {
               {matchResult && (
                 <div className="bg-[#fafafa] rounded-xl border border-[#ebebeb] p-4 sm:p-5 space-y-3">
                   <div className="flex flex-wrap items-baseline justify-between gap-4">
-                    <div className="flex items-baseline gap-3">
+                    <div className="flex items-baseline gap-3 flex-wrap">
                       <span className="text-2xl sm:text-3xl font-bold font-mono tracking-tight text-neutral-900">
-                        {matchResult.scorePercent}%
+                        {activeItem.larpRun.coverage
+                          ? `${activeItem.larpRun.coverage.beforePercent}% → ${activeItem.larpRun.coverage.afterPercent}%`
+                          : `${matchResult.scorePercent}%`}
                       </span>
                       <span className="text-xs font-semibold text-neutral-800">
-                        Keyword Match
+                        Keyword Coverage (Before → After)
                       </span>
+                      {activeItem.larpRun.coverage && (
+                        <span className="font-mono text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
+                          Weighted: {activeItem.larpRun.coverage.weightedBeforePercent}% →{" "}
+                          {activeItem.larpRun.coverage.weightedAfterPercent}%
+                        </span>
+                      )}
                       <span className="font-mono text-[11px] text-neutral-500">
-                        ({matchResult.matchedCount} of {matchResult.totalDetected} technologies & skills on resume)
+                        ({matchResult.matchedCount} of {matchResult.totalDetected} technologies & skills on base resume)
                       </span>
                     </div>
 
@@ -902,7 +986,8 @@ export default function PreviewPage() {
                     activeItem.larpRun.aiRecommendation.verificationPasses.length > 0 && (
                       <div className="space-y-1.5 pt-1">
                         <span className="block font-mono text-[10px] text-neutral-400 uppercase">
-                          AI Multi-Check Log ({activeItem.larpRun.aiRecommendation.iterationsRun} passes verified)
+                          Real Guardrail & Coverage Verification ({activeItem.larpRun.aiRecommendation.iterationsRun}{" "}
+                          checks · {activeItem.larpRun.aiRecommendation.verified ? "All Passed" : "Issues Detected"})
                         </span>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                           {activeItem.larpRun.aiRecommendation.verificationPasses.map((vp) => (
@@ -912,7 +997,13 @@ export default function PreviewPage() {
                             >
                               <div className="flex items-center justify-between font-mono text-[10px]">
                                 <span className="font-semibold text-neutral-900">{vp.name}</span>
-                                <span className="text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded">
+                                <span
+                                  className={`px-1.5 py-0.5 rounded uppercase ${
+                                    vp.status === "failed"
+                                      ? "text-red-700 bg-red-50"
+                                      : "text-emerald-700 bg-emerald-50"
+                                  }`}
+                                >
                                   {vp.status}
                                 </span>
                               </div>
@@ -922,6 +1013,50 @@ export default function PreviewPage() {
                         </div>
                       </div>
                     )}
+                </div>
+              )}
+
+              {/* Per-Keyword Diagnostics Panel in Preview */}
+              {activeItem.larpRun.diagnostics && activeItem.larpRun.diagnostics.length > 0 && (
+                <div className="bg-white rounded-xl border border-[#ebebeb] shadow-subtle p-4 space-y-2.5">
+                  <div className="flex items-center justify-between border-b border-[#ebebeb] pb-2">
+                    <span className="font-mono text-[10px] uppercase tracking-wider text-neutral-500 font-semibold">
+                      Keyword Diagnostics ({activeItem.larpRun.diagnostics.length} JD keywords tracked)
+                    </span>
+                    <span className="font-mono text-[10px] text-neutral-400">
+                      Zero Silent Failures
+                    </span>
+                  </div>
+                  <div className="divide-y divide-[#ebebeb] max-h-48 overflow-y-auto">
+                    {activeItem.larpRun.diagnostics.map((diag) => (
+                      <div
+                        key={diag.keyword}
+                        className="py-1.5 flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 text-xs"
+                      >
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-semibold text-neutral-900">{diag.keyword}</span>
+                          <span
+                            className={`font-mono text-[10px] px-1.5 py-0.5 rounded-full border ${
+                              diag.status === "applied"
+                                ? "bg-emerald-50 border-emerald-200 text-emerald-700"
+                                : diag.status === "already_covered"
+                                ? "bg-neutral-100 border-neutral-200 text-neutral-700"
+                                : diag.status === "skills_only"
+                                ? "bg-violet-50 border-violet-200 text-violet-700"
+                                : diag.status === "blocked"
+                                ? "bg-red-50 border-red-200 text-red-700"
+                                : "bg-amber-50 border-amber-200 text-amber-800"
+                            }`}
+                          >
+                            {diag.status}
+                          </span>
+                        </div>
+                        <span className="font-mono text-[11px] text-neutral-600">
+                          {diag.reason}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
 
@@ -1236,6 +1371,20 @@ export default function PreviewPage() {
                             </div>
 
                             <div className="flex flex-wrap items-center gap-1.5">
+                              <span
+                                className="font-mono text-[10px] px-2 py-0.5 rounded-full bg-neutral-100 border border-[#ebebeb] text-neutral-700 uppercase"
+                                title="Candidate proposer source"
+                              >
+                                {prop.source ?? "rule"}
+                              </span>
+                              {prop.scoreFeatures && (
+                                <span
+                                  className="font-mono text-[10px] px-2 py-0.5 rounded-full bg-neutral-900 text-white"
+                                  title={formatScoreBreakdownSummary(prop.scoreFeatures)}
+                                >
+                                  Score {prop.totalScore ?? prop.scoreFeatures.total}
+                                </span>
+                              )}
                               {prop.injectedKeywords.map((kw) => (
                                 <span
                                   key={kw}
@@ -1370,8 +1519,18 @@ export default function PreviewPage() {
                               </span>
                             </label>
                             <div className="flex items-center gap-1.5 flex-wrap">
-                              <span className="font-mono text-[10px] px-2 py-0.5 rounded-full bg-neutral-100 text-neutral-700 border border-neutral-200">
-                                {mb.believabilityScore}% Believable
+                              <span
+                                className="font-mono text-[10px] px-2 py-0.5 rounded-full bg-neutral-100 text-neutral-700 border border-neutral-200"
+                                title={
+                                  mb.scoreFeatures
+                                    ? formatScoreBreakdownSummary(mb.scoreFeatures)
+                                    : mb.believabilityCritique
+                                }
+                              >
+                                Score {mb.believabilityScore}
+                              </span>
+                              <span className="font-mono text-[10px] px-2 py-0.5 rounded-full bg-neutral-100 border border-[#ebebeb] text-neutral-600 uppercase">
+                                {mb.options?.[0]?.source ?? "template"}
                               </span>
                               {mb.injectedKeywords.map((kw) => (
                                 <span

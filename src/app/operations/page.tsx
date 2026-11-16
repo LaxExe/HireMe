@@ -12,6 +12,8 @@ import {
   Sparkles,
   Pencil,
   X,
+  RotateCw,
+  Download,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { loadMasterResume, subscribeMasterResume } from "@/lib/resume/store";
@@ -25,8 +27,14 @@ import {
   evaluateBelievabilityAndRecommend,
   updateBulletProposalWithCustomMarkup,
   updateMalleableOptionWithCustomMarkup,
+  exportLedgerToCsv,
+  exportLedgerToJson,
+  formatScoreBreakdownSummary,
+  logLarpUserActionEvent,
+  registerCustomCatalogTerm,
   PYLON_TEST_JD,
   type LarpAlignmentRun,
+  type Tier,
 } from "@/lib/resume/larpEngine";
 import {
   enqueuePreviewItem,
@@ -66,6 +74,8 @@ export default function OperationsPage() {
   const [missingResumePrompt, setMissingResumePrompt] = useState(false);
   const [scrapingUrl, setScrapingUrl] = useState(false);
   const [scrapeError, setScrapeError] = useState<string | null>(null);
+  const [excludedPairs, setExcludedPairs] = useState<Set<string>>(new Set());
+  const [variantOffset, setVariantOffset] = useState(0);
 
   const fetchJobDescriptionFromUrl = async (urlToFetch: string) => {
     if (!urlToFetch || !urlToFetch.trim()) return;
@@ -161,9 +171,18 @@ export default function OperationsPage() {
 
   const hasValidResume = Boolean(resume && !isEmptyResume(resume));
 
-  const executeAnalysisAndLarp = (targetJd: string, currentResume: MasterResume) => {
+  const executeAnalysisAndLarp = (
+    targetJd: string,
+    currentResume: MasterResume,
+    customExcludedPairs?: Set<string>,
+    customVariantOffset = 0
+  ) => {
     const kwResult = matchJobDescriptionWithResume(targetJd, currentResume);
-    const alignment = runLarpAlignmentPipeline(targetJd, currentResume);
+    const alignment = runLarpAlignmentPipeline(targetJd, currentResume, {
+      jdId: roleName || undefined,
+      variantOffset: customVariantOffset,
+      excludePairs: customExcludedPairs,
+    });
     setMatchResult(kwResult);
     setLarpRun(alignment);
     setAcceptedBullets(new Set(alignment.bulletProposals.map((p) => p.bulletId)));
@@ -183,6 +202,44 @@ export default function OperationsPage() {
     setQueuedSlotBanner(null);
   };
 
+  const handleRegenerateInOperations = () => {
+    if (!resume || !larpRun || !jobDescription.trim()) return;
+    const nextExclude = new Set(excludedPairs);
+    for (const bp of larpRun.bulletProposals) {
+      for (const kw of bp.injectedKeywords) {
+        nextExclude.add(`${bp.bulletId}|${kw.toLowerCase()}`);
+      }
+    }
+    const nextOffset = variantOffset + 1;
+    setExcludedPairs(nextExclude);
+    setVariantOffset(nextOffset);
+    executeAnalysisAndLarp(jobDescription.trim(), resume, nextExclude, nextOffset);
+  };
+
+  const handleAddUnknownTermToCatalog = (term: string, tier: Tier = "tier_1_framing") => {
+    if (!resume || !jobDescription.trim()) return;
+    registerCustomCatalogTerm({ label: term, tier });
+    executeAnalysisAndLarp(jobDescription.trim(), resume, excludedPairs, variantOffset);
+  };
+
+  const handleExportLedger = (format: "json" | "csv") => {
+    if (!larpRun) return;
+    const content =
+      format === "json"
+        ? exportLedgerToJson(larpRun.ledger, larpRun.runMetadata)
+        : exportLedgerToCsv(larpRun.ledger, larpRun.runMetadata);
+    const mime = format === "json" ? "application/json" : "text/csv;charset=utf-8";
+    const blob = new Blob([content], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `larp_study_ledger_${larpRun.runMetadata.jdId}.${format}`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
+  };
+
   const handleSubmitJobDescription = () => {
     const targetJd = jobDescription.trim();
     if (!targetJd) return;
@@ -195,14 +252,27 @@ export default function OperationsPage() {
     }
 
     setMissingResumePrompt(false);
-    executeAnalysisAndLarp(targetJd, resume);
+    setExcludedPairs(new Set());
+    setVariantOffset(0);
+    executeAnalysisAndLarp(targetJd, resume, new Set(), 0);
   };
 
   const handleToggleBullet = (bulletId: string) => {
     setAcceptedBullets((prev) => {
       const next = new Set(prev);
-      if (next.has(bulletId)) next.delete(bulletId);
+      const wasSelected = next.has(bulletId);
+      if (wasSelected) next.delete(bulletId);
       else next.add(bulletId);
+      const bp = larpRun?.bulletProposals.find((p) => p.bulletId === bulletId);
+      logLarpUserActionEvent({
+        action: wasSelected ? "reject" : "accept",
+        targetKind: "bullet_edit",
+        targetId: bulletId,
+        keyword: bp?.injectedKeywords[0],
+        beforeText: bp?.originalMarkup,
+        afterText: bp?.mutatedMarkup,
+        jdId: larpRun?.runMetadata.jdId,
+      });
       return next;
     });
   };
@@ -210,13 +280,30 @@ export default function OperationsPage() {
   const handleToggleMalleable = (malleableId: string) => {
     setAcceptedMalleable((prev) => {
       const next = new Set(prev);
-      if (next.has(malleableId)) next.delete(malleableId);
+      const wasSelected = next.has(malleableId);
+      if (wasSelected) next.delete(malleableId);
       else next.add(malleableId);
+      const mb = larpRun?.malleableBullets.find((m) => m.id === malleableId);
+      logLarpUserActionEvent({
+        action: wasSelected ? "reject" : "accept",
+        targetKind: "new_bullet",
+        targetId: malleableId,
+        keyword: mb?.injectedKeywords.join(", "),
+        afterText: mb?.markup,
+        jdId: larpRun?.runMetadata.jdId,
+      });
       return next;
     });
   };
 
   const handleCustomBulletProposalTextChange = (bulletId: string, newMarkup: string) => {
+    logLarpUserActionEvent({
+      action: "edit",
+      targetKind: "bullet_edit",
+      targetId: bulletId,
+      afterText: newMarkup,
+      jdId: larpRun?.runMetadata.jdId,
+    });
     setLarpRun((prev) => {
       if (!prev) return prev;
       const nextProposals = prev.bulletProposals.map((bp) =>
@@ -499,19 +586,51 @@ export default function OperationsPage() {
               {/* Summary Score Bar */}
               <div className="bg-white rounded-xl border border-[#ebebeb] shadow-subtle p-5 space-y-3.5">
                 <div className="flex flex-wrap items-baseline justify-between gap-4">
-                  <div className="flex items-baseline gap-3">
+                  <div className="flex items-baseline gap-3 flex-wrap">
                     <span className="text-2xl font-bold font-mono tracking-tight text-neutral-900">
-                      {matchResult.scorePercent}%
+                      {larpRun.coverage
+                        ? `${larpRun.coverage.beforePercent}% → ${larpRun.coverage.afterPercent}%`
+                        : `${matchResult.scorePercent}%`}
                     </span>
                     <span className="text-xs font-medium text-neutral-600">
-                      Keyword Match
+                      Keyword Coverage (Before → After)
                     </span>
+                    {larpRun.coverage && (
+                      <span className="font-mono text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
+                        Weighted: {larpRun.coverage.weightedBeforePercent}% →{" "}
+                        {larpRun.coverage.weightedAfterPercent}%
+                      </span>
+                    )}
                     <span className="font-mono text-[11px] text-neutral-400">
-                      ({matchResult.matchedCount} of {matchResult.totalDetected} technologies & skills on resume)
+                      ({matchResult.matchedCount} of {matchResult.totalDetected} technologies & skills on base resume)
                     </span>
                   </div>
 
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <button
+                      type="button"
+                      onClick={handleRegenerateInOperations}
+                      className="inline-flex items-center gap-1.5 font-mono text-[11px] text-neutral-700 hover:text-neutral-900 bg-[#fafafa] hover:bg-neutral-100 border border-[#ebebeb] px-2.5 py-1 rounded-full active:scale-95 transition-all cursor-pointer"
+                    >
+                      <RotateCw className="w-3 h-3" />
+                      <span>Regenerate Plan</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleExportLedger("json")}
+                      className="inline-flex items-center gap-1 font-mono text-[11px] text-neutral-700 hover:text-neutral-900 bg-white hover:bg-neutral-50 border border-[#ebebeb] px-2.5 py-1 rounded-full active:scale-95 transition-all cursor-pointer"
+                    >
+                      <Download className="w-3 h-3" />
+                      <span>Ledger JSON</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleExportLedger("csv")}
+                      className="inline-flex items-center gap-1 font-mono text-[11px] text-neutral-700 hover:text-neutral-900 bg-white hover:bg-neutral-50 border border-[#ebebeb] px-2.5 py-1 rounded-full active:scale-95 transition-all cursor-pointer"
+                    >
+                      <Download className="w-3 h-3" />
+                      <span>Ledger CSV</span>
+                    </button>
                     {larpRun.guardrailVerifiedZeroBanned && (
                       <span className="inline-flex items-center gap-1 font-mono text-[10px] text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-full">
                         <Check className="w-3 h-3" />
@@ -530,16 +649,96 @@ export default function OperationsPage() {
                 <div className="w-full h-2 rounded-full bg-neutral-100 overflow-hidden border border-[#ebebeb]">
                   <div
                     className={`h-full rounded-full transition-all duration-300 ${
-                      matchResult.scorePercent >= 75
+                      (larpRun.coverage?.afterPercent ?? matchResult.scorePercent) >= 75
                         ? "bg-emerald-500"
-                        : matchResult.scorePercent >= 45
+                        : (larpRun.coverage?.afterPercent ?? matchResult.scorePercent) >= 45
                         ? "bg-amber-400"
                         : "bg-red-500"
                     }`}
-                    style={{ width: `${matchResult.scorePercent}%` }}
+                    style={{
+                      width: `${larpRun.coverage?.afterPercent ?? matchResult.scorePercent}%`,
+                    }}
                   />
                 </div>
+
+                {/* Unknown JD Terms List with Add to Catalog Action */}
+                {larpRun.coverage && larpRun.coverage.unknownTerms.length > 0 && (
+                  <div className="pt-2 border-t border-[#ebebeb] flex items-center justify-between gap-2 flex-wrap">
+                    <span className="font-mono text-[10px] uppercase text-neutral-500">
+                      Unclassified JD Terms ({larpRun.coverage.unknownTerms.length}):
+                    </span>
+                    <div className="flex flex-wrap gap-1.5">
+                      {larpRun.coverage.unknownTerms.slice(0, 12).map((term) => (
+                        <button
+                          key={term}
+                          type="button"
+                          onClick={() => handleAddUnknownTermToCatalog(term, "tier_1_5_skills_only")}
+                          className="inline-flex items-center gap-1 font-mono text-[10px] px-2 py-0.5 rounded-full bg-[#fafafa] hover:bg-neutral-100 border border-[#ebebeb] text-neutral-700 active:scale-95 transition-all cursor-pointer"
+                          title={`Add ${term} to catalog as Tier 1.5 skill`}
+                        >
+                          <Plus className="w-2.5 h-2.5 text-neutral-500" />
+                          <span>{term}</span>
+                          <span className="text-neutral-400">· Add to catalog</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
+
+              {/* Per-Keyword Diagnostics Panel */}
+              {larpRun.diagnostics && larpRun.diagnostics.length > 0 && (
+                <div className="bg-white rounded-xl border border-[#ebebeb] shadow-subtle p-5 space-y-3">
+                  <div className="flex items-center justify-between border-b border-[#ebebeb] pb-2.5">
+                    <div>
+                      <h2 className="text-xs font-semibold text-neutral-900">
+                        Keyword Diagnostics ({larpRun.diagnostics.length} JD keywords tracked)
+                      </h2>
+                      <p className="text-[11px] text-neutral-500 mt-0.5">
+                        Deterministic outcome and guardrail audit for every detected JD technology
+                      </p>
+                    </div>
+                    <span className="font-mono text-[10px] text-neutral-500 bg-[#fafafa] border border-[#ebebeb] px-2 py-0.5 rounded">
+                      Zero Silent Failures
+                    </span>
+                  </div>
+                  <div className="divide-y divide-[#ebebeb] max-h-60 overflow-y-auto">
+                    {larpRun.diagnostics.map((diag) => (
+                      <div
+                        key={diag.keyword}
+                        className="py-2 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs"
+                      >
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-semibold text-neutral-900">{diag.keyword}</span>
+                          <span
+                            className={`font-mono text-[10px] px-2 py-0.5 rounded-full border ${
+                              diag.status === "applied"
+                                ? "bg-emerald-50 border-emerald-200 text-emerald-700"
+                                : diag.status === "already_covered"
+                                ? "bg-neutral-100 border-neutral-200 text-neutral-700"
+                                : diag.status === "skills_only"
+                                ? "bg-violet-50 border-violet-200 text-violet-700"
+                                : diag.status === "blocked"
+                                ? "bg-red-50 border-red-200 text-red-700"
+                                : "bg-amber-50 border-amber-200 text-amber-800"
+                            }`}
+                          >
+                            {diag.status}
+                          </span>
+                          {diag.weight !== undefined && (
+                            <span className="font-mono text-[10px] text-neutral-400">
+                              w={diag.weight}
+                            </span>
+                          )}
+                        </div>
+                        <span className="font-mono text-[11px] text-neutral-600">
+                          {diag.reason}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* Step 1: 4-Tier Defensibility Classification Spec */}
               <div className="bg-white rounded-xl border border-[#ebebeb] shadow-subtle p-5 space-y-4">
@@ -800,6 +999,20 @@ export default function OperationsPage() {
                             </div>
 
                             <div className="flex flex-wrap items-center gap-1.5">
+                              <span
+                                className="font-mono text-[10px] px-2 py-0.5 rounded-full bg-neutral-100 border border-[#ebebeb] text-neutral-700 uppercase"
+                                title="Candidate proposer source"
+                              >
+                                {prop.source ?? "rule"}
+                              </span>
+                              {prop.scoreFeatures && (
+                                <span
+                                  className="font-mono text-[10px] px-2 py-0.5 rounded-full bg-neutral-900 text-white"
+                                  title={formatScoreBreakdownSummary(prop.scoreFeatures)}
+                                >
+                                  Score {prop.totalScore ?? prop.scoreFeatures.total}
+                                </span>
+                              )}
                               {prop.injectedKeywords.map((kw) => (
                                 <span
                                   key={kw}
@@ -973,14 +1186,31 @@ export default function OperationsPage() {
                                   </span>
                                 </label>
                                 {isTopPick ? (
-                                  <span className="font-mono text-[10px] px-2 py-0.5 rounded-full bg-neutral-900 text-white font-medium">
-                                    AI Recommended · Top Pick ({mb.believabilityScore}%)
+                                  <span
+                                    className="font-mono text-[10px] px-2 py-0.5 rounded-full bg-neutral-900 text-white font-medium"
+                                    title={
+                                      mb.scoreFeatures
+                                        ? formatScoreBreakdownSummary(mb.scoreFeatures)
+                                        : mb.believabilityCritique
+                                    }
+                                  >
+                                    Top Pick · Score {mb.believabilityScore}
                                   </span>
                                 ) : (
-                                  <span className="font-mono text-[10px] px-2 py-0.5 rounded-full bg-neutral-100 text-neutral-700 border border-neutral-200">
-                                    {mb.believabilityScore}% Believable
+                                  <span
+                                    className="font-mono text-[10px] px-2 py-0.5 rounded-full bg-neutral-100 text-neutral-700 border border-neutral-200"
+                                    title={
+                                      mb.scoreFeatures
+                                        ? formatScoreBreakdownSummary(mb.scoreFeatures)
+                                        : mb.believabilityCritique
+                                    }
+                                  >
+                                    Score {mb.believabilityScore}
                                   </span>
                                 )}
+                                <span className="font-mono text-[10px] px-2 py-0.5 rounded-full bg-neutral-100 border border-[#ebebeb] text-neutral-600 uppercase">
+                                  {activeOpt?.source ?? "template"}
+                                </span>
                               </div>
 
                               <div className="flex flex-wrap items-center gap-1.5">
@@ -1181,13 +1411,13 @@ export default function OperationsPage() {
                         {larpRun.aiRecommendation.interviewTalkingPoint}
                       </div>
 
-                      {/* Multi-Iteration Verification Passes */}
+                      {/* Real Deterministic Verification Passes */}
                       {larpRun.aiRecommendation.verificationPasses &&
                         larpRun.aiRecommendation.verificationPasses.length > 0 && (
                           <div className="space-y-1.5 pt-1">
                             <span className="block font-mono text-[10px] text-neutral-400 uppercase">
-                              AI Multi-Check & Context Iteration Log ({larpRun.aiRecommendation.iterationsRun}{" "}
-                              passes verified)
+                              Real Guardrail & Coverage Verification ({larpRun.aiRecommendation.iterationsRun}{" "}
+                              checks · {larpRun.aiRecommendation.verified ? "All Passed" : "Issues Detected"})
                             </span>
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                               {larpRun.aiRecommendation.verificationPasses.map((vp) => (
@@ -1199,7 +1429,13 @@ export default function OperationsPage() {
                                     <span className="font-mono text-[10px] font-semibold text-neutral-900">
                                       {vp.name}
                                     </span>
-                                    <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 uppercase">
+                                    <span
+                                      className={`font-mono text-[10px] px-1.5 py-0.5 rounded border uppercase ${
+                                        vp.status === "failed"
+                                          ? "bg-red-50 text-red-700 border-red-200"
+                                          : "bg-emerald-50 text-emerald-700 border-emerald-200"
+                                      }`}
+                                    >
                                       {vp.status}
                                     </span>
                                   </div>

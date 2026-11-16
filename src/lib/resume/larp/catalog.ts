@@ -496,6 +496,46 @@ export function catalogFromDictionary(
 export const LARP_CATALOG: CatalogEntry[] = catalogFromDictionary(false);
 export const EXTENDED_LARP_CATALOG: CatalogEntry[] = catalogFromDictionary(true);
 
+/**
+ * Adds a newly discovered technical term to the active `LARP_CATALOG` and `EXTENDED_LARP_CATALOG` at runtime.
+ */
+export function registerCustomCatalogTerm(params: {
+  label: string;
+  tier?: Tier;
+  skillsCategory?: SkillsCategoryBucket;
+}): CatalogEntry {
+  const clean = params.label.trim();
+  const id = slugId(clean);
+  const existing = findCatalogEntry(clean);
+  if (existing) return existing;
+
+  const tier = params.tier ?? "tier_1_5_skills_only";
+  const skillsCategory = params.skillsCategory ?? "Developer Tools & DevOps";
+  const entry: CatalogEntry = {
+    id,
+    label: clean,
+    name: clean,
+    aliases: [clean.toLowerCase()],
+    tier,
+    defaultTierIfMissing: tier,
+    skillsCategory,
+    targetSkillCategory: skillsCategory,
+    alsoSkills: tier === "tier_1_framing" || tier === "tier_0_workflow",
+    alsoSkillsOnly: tier === "tier_1_framing" || tier === "tier_0_workflow",
+    contexts: ["backend", "frontend", "infra"],
+    suffixes:
+      tier === "tier_1_framing"
+        ? GENERIC_TECH_SUFFIXES
+        : tier === "tier_0_workflow"
+        ? WORKFLOW_TRACKING_SUFFIXES
+        : undefined,
+  };
+
+  LARP_CATALOG.push(entry);
+  EXTENDED_LARP_CATALOG.push(entry);
+  return entry;
+}
+
 export function findCatalogEntry(keywordOrId: string): CatalogEntry | undefined {
   const lower = keywordOrId.toLowerCase();
   return (

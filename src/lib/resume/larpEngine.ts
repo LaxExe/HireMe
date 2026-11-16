@@ -32,6 +32,7 @@ export {
   EXTENDED_LARP_CATALOG,
   findCatalogEntry,
   LARP_CATALOG,
+  registerCustomCatalogTerm,
 } from "./larp/catalog";
 export { buildResumeInventory, placementFor } from "./larp/policy";
 export {
