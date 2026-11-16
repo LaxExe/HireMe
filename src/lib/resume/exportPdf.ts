@@ -1,4 +1,5 @@
 import { reconstructLatexResume } from "./latex";
+import { formatSyntheticResumeFilename } from "./larp/ledger";
 import {
   DEFAULT_RESUME_FORMAT,
   hasResumeSection,
@@ -1119,12 +1120,15 @@ export async function compileResumePdfBlobUrl(resume: MasterResume): Promise<str
  * falling back to the client-side vector PDF generator only if offline.
  */
 export async function downloadResumePdf(resume: MasterResume, rawName: string): Promise<void> {
-  const cleanName =
+  const baseClean =
     rawName
       .trim()
       .replace(/\.pdf$/i, "")
       .replace(/[^a-zA-Z0-9._-\s]/g, "")
       .trim() || "Resume";
+  const cleanName = resume.isSynthetic
+    ? formatSyntheticResumeFilename(baseClean)
+    : baseClean;
 
   const latexSource = reconstructLatexResume(resume);
   let pdfBytes: Uint8Array | null = null;
@@ -1165,12 +1169,15 @@ export async function downloadResumePdf(resume: MasterResume, rawName: string): 
  * Download the reconstructed `.tex` file with all current edits and ordering.
  */
 export function downloadResumeTex(resume: MasterResume, rawName: string): void {
-  const cleanName =
+  const baseClean =
     rawName
       .trim()
       .replace(/\.(pdf|tex)$/i, "")
       .replace(/[^a-zA-Z0-9._-\s]/g, "")
       .trim() || "Resume";
+  const cleanName = resume.isSynthetic
+    ? formatSyntheticResumeFilename(baseClean)
+    : baseClean;
 
   const latexSource = reconstructLatexResume(resume);
   const blob = new Blob([latexSource], { type: "text/plain;charset=utf-8" });

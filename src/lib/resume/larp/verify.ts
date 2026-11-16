@@ -4,6 +4,7 @@ import { findCatalogEntry } from "./catalog";
 import { DEFAULT_CALIBRATION } from "./config";
 import { createGuardContext, validateRewrite, verifyZeroBannedInMarkup } from "./guardrails";
 import { computeCoverageBeforeAfter } from "./jd";
+import { buildRunMetadata } from "./ledger";
 import type { KeywordCandidateStats } from "./optimizer";
 import { buildResumeInventory, placementFor } from "./policy";
 import { formatScoreBreakdownSummary, scoreCandidate } from "./scoring";
@@ -418,6 +419,8 @@ export function runRealVerificationPasses(input: RealVerificationInput): {
         aiRecommendation: null,
         guardrailVerifiedZeroBanned: verifyZeroBannedInMarkup(allCandidateText, bannedList),
         diagnostics: [],
+        ledger: [],
+        runMetadata: buildRunMetadata({ jobDescription }),
       },
       acceptedBulletIds,
       true,

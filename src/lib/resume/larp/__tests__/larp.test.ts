@@ -840,4 +840,74 @@ Requirements:
       assert.strictEqual(evidenceDiags.find((d) => d.keyword === "AWS")?.status, "needs_confirmation");
     });
   });
+
+  describe("Phase 11: Study Ledger, Synthetic Marking & JSON/CSV Export", () => {
+    it("records every injected claim (skills, bullet edits, new bullets) in the ledger, exports JSON/CSV with run metadata, and marks mutated resumes as synthetic", async () => {
+      const {
+        applyLarpMutationsToResume,
+        exportLedgerToCsv,
+        exportLedgerToJson,
+        formatSyntheticResumeFilename,
+        logLarpUserActionEvent,
+        runLarpAlignmentPipeline,
+      } = await import("../../larpEngine");
+
+      const run = runLarpAlignmentPipeline(jds.pylon_fullstack.text, masterResume, {
+        jdId: "pylon_fullstack",
+      });
+
+      assert.ok(run.ledger.length > 0);
+      assert.strictEqual(run.runMetadata.jdId, "pylon_fullstack");
+      assert.strictEqual(run.runMetadata.mode, "framing");
+      assert.strictEqual(run.runMetadata.synthetic, true);
+
+      const expectedSkillCount = run.skillSwaps.flatMap((s) => s.added).length;
+      const expectedBulletEditCount = run.bulletProposals.length;
+      const expectedNewBulletCount = run.malleableBullets.length;
+
+      assert.strictEqual(
+        run.ledger.filter((e) => e.kind === "skill_added").length,
+        expectedSkillCount
+      );
+      assert.strictEqual(
+        run.ledger.filter((e) => e.kind === "bullet_edit").length,
+        expectedBulletEditCount
+      );
+      assert.strictEqual(
+        run.ledger.filter((e) => e.kind === "new_bullet").length,
+        expectedNewBulletCount
+      );
+
+      // Log a user action event and verify JSON & CSV export
+      logLarpUserActionEvent({
+        action: "accept",
+        targetKind: "bullet_edit",
+        targetId: run.bulletProposals[0].bulletId,
+        keyword: run.bulletProposals[0].injectedKeywords[0],
+        jdId: "pylon_fullstack",
+      });
+
+      const jsonStr = exportLedgerToJson(run.ledger, run.runMetadata);
+      const parsedJson = JSON.parse(jsonStr);
+      assert.strictEqual(parsedJson.synthetic, true);
+      assert.strictEqual(parsedJson.metadata.jdId, "pylon_fullstack");
+      assert.strictEqual(parsedJson.ledgerCount, run.ledger.length);
+      assert.ok(parsedJson.userEvents.length >= 1);
+
+      const csvStr = exportLedgerToCsv(run.ledger, run.runMetadata);
+      const csvLines = csvStr.trim().split("\n");
+      assert.strictEqual(csvLines.length, run.ledger.length + 1);
+      assert.ok(csvLines[0].includes("jdId,mode,model,promptVersion,timestamp,synthetic,kind"));
+
+      // Verify applyLarpMutationsToResume marks the resume as synthetic
+      const acceptedBullets = new Set(run.bulletProposals.map((p) => p.bulletId));
+      const mutatedResume = applyLarpMutationsToResume(masterResume, run, acceptedBullets, true);
+      assert.strictEqual(mutatedResume.isSynthetic, true);
+      assert.strictEqual(mutatedResume.syntheticMetadata?.jdId, "pylon_fullstack");
+      assert.strictEqual(
+        formatSyntheticResumeFilename("Lakshman_Resume.pdf"),
+        "Lakshman_Resume_SYNTHETIC_LARP"
+      );
+    });
+  });
 });

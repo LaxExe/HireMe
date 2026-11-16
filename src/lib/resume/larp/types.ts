@@ -6,6 +6,7 @@ import type {
   SkillCategory,
 } from "../types";
 import type { BulletFitResult } from "../utils";
+import type { LarpRunMetadata, LedgerEntry } from "./ledger";
 
 export type Context = DomainContext;
 
@@ -306,6 +307,8 @@ export interface LarpAlignmentRun {
   aiRecommendation: AiBelievabilityRecommendation | null;
   guardrailVerifiedZeroBanned: boolean;
   diagnostics: KeywordDiagnostic[];
+  ledger: LedgerEntry[];
+  runMetadata: LarpRunMetadata;
   coverage?: {
     beforePercent: number;
     afterPercent: number;

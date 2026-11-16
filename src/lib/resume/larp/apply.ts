@@ -165,6 +165,19 @@ export function applyLarpMutationsToResume(
     }
   }
 
+  next.isSynthetic = true;
+  next.syntheticMetadata = {
+    jdId: alignment.runMetadata?.jdId,
+    mode: alignment.runMetadata?.mode ?? "framing",
+    model: alignment.runMetadata?.model,
+    promptVersion: alignment.runMetadata?.promptVersion ?? "larp-v2.1",
+    timestamp: new Date().toISOString(),
+    injectedClaimsCount:
+      acceptedBulletIds.size +
+      (acceptedMalleableIds?.size ?? 0) +
+      (selectedSkillNames?.length ??
+        (applySkills ? alignment.skillSwaps.flatMap((s) => s.added).length : 0)),
+  };
   next.updatedAt = new Date().toISOString();
   return next;
 }

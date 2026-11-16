@@ -8,6 +8,7 @@ import {
   computeCoverageBeforeAfter,
   extractWeightedJdKeywords,
 } from "./jd";
+import { buildRunLedger, buildRunMetadata } from "./ledger";
 import {
   draftAndValidateLlmMalleableOptions,
   proposeAndValidateLlmBulletCandidates,
@@ -31,6 +32,7 @@ import type {
 import { buildKeywordDiagnostics, evaluateBelievabilityAndRecommend } from "./verify";
 
 export interface LarpPipelineOptions {
+  jdId?: string;
   variantOffset?: number;
   mode?: PolicyMode;
   llm?: Completer;
@@ -221,6 +223,20 @@ export function runLarpAlignmentPipeline(
     mode: options.mode ?? "framing",
   });
 
+  const ledger = buildRunLedger({
+    tiers,
+    skillSwaps,
+    bulletProposals,
+    malleableBullets,
+  });
+
+  const runMetadata = buildRunMetadata({
+    jdId: options.jdId,
+    jobDescription,
+    mode: options.mode ?? "framing",
+    model: options.llmModel ?? "deterministic-rules",
+  });
+
   const acceptedBulletIds = new Set(bulletProposals.map((p) => p.bulletId));
   const acceptedMalleableIds = new Set(malleableBullets.slice(0, 1).map((m) => m.id));
   const afterResume = applyLarpMutationsToResume(
@@ -234,6 +250,8 @@ export function runLarpAlignmentPipeline(
       aiRecommendation,
       guardrailVerifiedZeroBanned,
       diagnostics,
+      ledger,
+      runMetadata,
     },
     acceptedBulletIds,
     true,
@@ -250,6 +268,8 @@ export function runLarpAlignmentPipeline(
     aiRecommendation,
     guardrailVerifiedZeroBanned,
     diagnostics,
+    ledger,
+    runMetadata,
     coverage,
   };
 }
@@ -396,6 +416,20 @@ export async function runLarpAlignmentPipelineAsync(
     mode: options.mode ?? "framing",
   });
 
+  const ledger = buildRunLedger({
+    tiers,
+    skillSwaps,
+    bulletProposals,
+    malleableBullets,
+  });
+
+  const runMetadata = buildRunMetadata({
+    jdId: options.jdId,
+    jobDescription,
+    mode: options.mode ?? "framing",
+    model: options.llmModel ?? llmTelemetry.model,
+  });
+
   const acceptedBulletIds = new Set(bulletProposals.map((p) => p.bulletId));
   const acceptedMalleableIds = new Set(malleableBullets.slice(0, 1).map((m) => m.id));
   const afterResume = applyLarpMutationsToResume(
@@ -409,6 +443,8 @@ export async function runLarpAlignmentPipelineAsync(
       aiRecommendation,
       guardrailVerifiedZeroBanned,
       diagnostics,
+      ledger,
+      runMetadata,
     },
     acceptedBulletIds,
     true,
@@ -425,6 +461,8 @@ export async function runLarpAlignmentPipelineAsync(
     aiRecommendation,
     guardrailVerifiedZeroBanned,
     diagnostics,
+    ledger,
+    runMetadata,
     coverage,
     llmTelemetry,
   };

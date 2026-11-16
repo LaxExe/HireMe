@@ -258,6 +258,17 @@ export interface MasterResume {
   rawLatex?: string;
   /** ISO timestamp of when the LaTeX document was compiled or reconstructed. */
   latexGeneratedAt?: string;
+  /** True when produced by the LARP study pipeline so it cannot be confused with an unedited base resume. */
+  isSynthetic?: boolean;
+  /** Metadata about the LARP study run that produced this synthetic resume. */
+  syntheticMetadata?: {
+    jdId?: string;
+    mode: "framing" | "evidence";
+    model?: string;
+    promptVersion: string;
+    timestamp: string;
+    injectedClaimsCount: number;
+  };
   contact: Contact;
   education: Education[];
   skills: SkillCategory[];
