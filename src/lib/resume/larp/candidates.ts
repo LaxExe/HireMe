@@ -2,13 +2,68 @@ import { plainText } from "../utils";
 import { findCatalogEntry } from "./catalog";
 import { inferDomainTags } from "./config";
 import { containsPhrase } from "./text";
-import type { BulletDomainContext, Context } from "./types";
+import type { BulletDomainContext, CandidateBulletSlot, Context } from "./types";
 
 export interface MinimalInjectionAttempt {
   mutatedMarkup: string;
   reason: string;
   fitScore: number;
   source?: "rule" | "generic";
+}
+
+export interface PlausibilityCheckResult {
+  ok: boolean;
+  pairsWithHit: boolean;
+  contextOverlap: boolean;
+  reason?: "systems_context" | "implausible_slot";
+}
+
+/**
+ * Hard plausibility gate evaluated BEFORE generating candidates for a `(bulletSlot, keyword)` pair.
+ * - Never injects into `systems-cpp-robotics` bullets.
+ * - `ok = tier_0 OR bullet/container already uses a tech in entry.pairsWith OR entry.contexts overlaps the bullet's tags`
+ */
+export function checkSlotPlausibility(
+  slot: Pick<CandidateBulletSlot, "bullet" | "context" | "tags" | "containerStack">,
+  keywordOrId: string
+): PlausibilityCheckResult {
+  if (slot.context === "systems-cpp-robotics" || slot.tags.includes("systems")) {
+    return {
+      ok: false,
+      pairsWithHit: false,
+      contextOverlap: false,
+      reason: "systems_context",
+    };
+  }
+
+  const entry = findCatalogEntry(keywordOrId);
+  if (!entry) {
+    return {
+      ok: false,
+      pairsWithHit: false,
+      contextOverlap: false,
+      reason: "implausible_slot",
+    };
+  }
+
+  const bulletAndStackText = `${plainText(slot.bullet.text)} ${slot.bullet.tools.join(" ")} ${(
+    slot.containerStack ?? []
+  ).join(" ")}`;
+
+  const pairsWithHit = (entry.pairsWith ?? []).some((pw) =>
+    containsPhrase(bulletAndStackText, pw)
+  );
+  const contextOverlap = (entry.contexts ?? []).some((ctx) => slot.tags.includes(ctx));
+  const isTier0 = entry.tier === "tier_0_workflow";
+
+  const ok = isTier0 || pairsWithHit || contextOverlap;
+
+  return {
+    ok,
+    pairsWithHit,
+    contextOverlap,
+    reason: ok ? undefined : "implausible_slot",
+  };
 }
 
 export function contextToBulletDomainContext(tags: Context[]): BulletDomainContext {

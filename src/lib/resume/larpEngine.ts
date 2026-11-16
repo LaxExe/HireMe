@@ -63,7 +63,11 @@ export {
   smartSwapSkillsSection,
 } from "./larp/skills";
 
-export { classifyBulletContext } from "./larp/candidates";
+export {
+  checkSlotPlausibility,
+  classifyBulletContext,
+  type PlausibilityCheckResult,
+} from "./larp/candidates";
 
 export { calculateDynamicBelievabilityScore } from "./larp/scoring";
 

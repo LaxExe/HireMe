@@ -29,13 +29,11 @@ export function runLarpAlignmentPipeline(
   const slots: CandidateBulletSlot[] = [];
 
   resume.experience.forEach((job, jobIdx) => {
+    const jobStack = job.bullets.flatMap((b) => b.tools);
     const containerTags =
       job.tags && job.tags.length > 0
         ? job.tags
-        : inferDomainTags(
-            `${job.title} ${job.company}`,
-            job.bullets.flatMap((b) => b.tools)
-          );
+        : inferDomainTags(`${job.title} ${job.company}`, jobStack);
 
     for (const bullet of job.bullets) {
       const origPlainLen = plainText(bullet.text).trim().length;
@@ -61,6 +59,7 @@ export function runLarpAlignmentPipeline(
         containerId: job.id,
         containerTitle: `${job.title} · ${job.company}`,
         containerKind: "experience",
+        containerStack: jobStack,
         context,
         tags: bulletTags,
         defensibilityBonus,
@@ -103,6 +102,7 @@ export function runLarpAlignmentPipeline(
         containerId: proj.id,
         containerTitle: proj.name,
         containerKind: "project",
+        containerStack: proj.techStack,
         context,
         tags: bulletTags,
         defensibilityBonus: 6,

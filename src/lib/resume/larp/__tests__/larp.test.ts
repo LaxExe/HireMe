@@ -421,4 +421,67 @@ Requirements:
       assert.ok(matchRes.unknownTerms?.includes("Temporal.io"));
     });
   });
+
+  describe("Phase 6: Plausibility Gate", () => {
+    it("blocks a C++ motion-planner bullet from receiving a Tailwind CSS or Redis injection", async () => {
+      const { checkSlotPlausibility } = await import("../../larpEngine");
+      const cppMotionSlot = {
+        bullet: {
+          id: "b_cpp",
+          text: "Implemented **C++** **ROS 2** occupancy-grid mapping and path planning in simulation at **20Hz**.",
+          tools: ["C++", "ROS 2"],
+          metrics: ["20Hz"],
+        },
+        context: "systems-cpp-robotics" as const,
+        tags: ["systems" as const],
+        containerStack: ["C++", "ROS 2", "Gazebo"],
+      };
+
+      const twCheck = checkSlotPlausibility(cppMotionSlot, "Tailwind CSS");
+      assert.strictEqual(twCheck.ok, false);
+      assert.strictEqual(twCheck.reason, "systems_context");
+
+      const redisCheck = checkSlotPlausibility(cppMotionSlot, "Redis");
+      assert.strictEqual(redisCheck.ok, false);
+    });
+
+    it("rejects implausible domain pairings (e.g. Tailwind CSS on a pure backend/ML bullet without React/HTML/CSS)", async () => {
+      const { checkSlotPlausibility } = await import("../../larpEngine");
+      const backendSlot = {
+        bullet: {
+          id: "b_py",
+          text: "Trained **PyTorch** models across compute clusters to predict permeability with **96%** accuracy.",
+          tools: ["PyTorch"],
+          metrics: ["96%"],
+        },
+        context: "backend-api-db" as const,
+        tags: ["ml" as const],
+        containerStack: ["Python", "PyTorch"],
+      };
+
+      const twCheck = checkSlotPlausibility(backendSlot, "Tailwind CSS");
+      assert.strictEqual(twCheck.ok, false);
+      assert.strictEqual(twCheck.reason, "implausible_slot");
+    });
+
+    it("awards pairsWithHit when bullet or container uses a paired technology (e.g. Redis with PostgreSQL)", async () => {
+      const { checkSlotPlausibility } = await import("../../larpEngine");
+      const pgSlot = {
+        bullet: {
+          id: "b_pg",
+          text: "Developed **REST APIs** and relational **PostgreSQL** schemas across **5** internal services.",
+          tools: ["REST APIs", "PostgreSQL"],
+          metrics: ["5"],
+        },
+        context: "backend-api-db" as const,
+        tags: ["backend" as const],
+        containerStack: ["PostgreSQL", "REST APIs"],
+      };
+
+      const redisCheck = checkSlotPlausibility(pgSlot, "Redis");
+      assert.strictEqual(redisCheck.ok, true);
+      assert.strictEqual(redisCheck.pairsWithHit, true);
+      assert.strictEqual(redisCheck.contextOverlap, true);
+    });
+  });
 });

@@ -252,6 +252,7 @@ export interface CandidateBulletSlot {
   containerId: string;
   containerTitle: string;
   containerKind: "experience" | "project";
+  containerStack?: string[];
   context: BulletDomainContext;
   tags: Context[];
   defensibilityBonus: number;

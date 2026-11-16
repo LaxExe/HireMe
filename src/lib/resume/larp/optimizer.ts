@@ -1,5 +1,5 @@
 import { markupToLatex } from "../latex";
-import { tryMinimalKeywordInjection } from "./candidates";
+import { checkSlotPlausibility, tryMinimalKeywordInjection } from "./candidates";
 import { createGuardContext, evaluateCandidateGuardrails, type GuardContext } from "./guardrails";
 import { fitBulletToCalibratedLineArea } from "./text";
 import type {
@@ -8,8 +8,16 @@ import type {
   CandidateBulletSlot,
   LarpTierClassification,
   LineBudgetCheck,
+  ViolationCode,
   WordReframeStats,
 } from "./types";
+
+export interface KeywordCandidateStats {
+  keyword: string;
+  implausibleSlotsCount: number;
+  rejectionCountsByCode: Partial<Record<ViolationCode, number>>;
+  validCandidateCount: number;
+}
 
 export function selectBulletMutations(
   slots: CandidateBulletSlot[],
@@ -19,13 +27,22 @@ export function selectBulletMutations(
   variantOffset = 0,
   singleLineNcu = 98.0,
   tiers?: LarpTierClassification,
-  guardCtx?: GuardContext
+  guardCtx?: GuardContext,
+  statsOut?: Map<string, KeywordCandidateStats>
 ): BulletMutationProposal[] {
   const usedBulletIds = new Set<string>();
   const bulletProposals: BulletMutationProposal[] = [];
-  const ctx = guardCtx ?? (tiers ? createGuardContext(tiers, cal, undefined, 7, singleLineNcu) : undefined);
+  const ctx =
+    guardCtx ?? (tiers ? createGuardContext(tiers, cal, undefined, 7, singleLineNcu) : undefined);
 
   for (const keyword of centralizedTargetKeywords) {
+    const kwStats: KeywordCandidateStats = {
+      keyword,
+      implausibleSlotsCount: 0,
+      rejectionCountsByCode: {},
+      validCandidateCount: 0,
+    };
+
     const validProposals: Array<{
       slot: CandidateBulletSlot;
       mutatedMarkup: string;
@@ -37,6 +54,12 @@ export function selectBulletMutations(
 
     for (const slot of slots) {
       if (usedBulletIds.has(slot.bullet.id)) continue;
+
+      const plausibility = checkSlotPlausibility(slot, keyword);
+      if (!plausibility.ok) {
+        kwStats.implausibleSlotsCount++;
+        continue;
+      }
 
       const attempt = tryMinimalKeywordInjection(slot.bullet.text, slot.context, keyword);
       if (!attempt) continue;
@@ -52,11 +75,22 @@ export function selectBulletMutations(
         keyword,
         ctx
       );
-      if (!guard.valid || !guard.budget || !guard.wordStats) continue;
+      if (!guard.valid || !guard.budget || !guard.wordStats) {
+        for (const v of guard.violations ?? []) {
+          kwStats.rejectionCountsByCode[v.code] =
+            (kwStats.rejectionCountsByCode[v.code] ?? 0) + 1;
+        }
+        continue;
+      }
 
       const greenBonus = guard.budget.candFit.tone === "green" ? 12 : 0;
+      const pairsWithBonus = plausibility.pairsWithHit ? 10 : 0;
       const totalScore =
-        attempt.fitScore + slot.defensibilityBonus + greenBonus + Math.min(8, slot.charSlack / 6);
+        attempt.fitScore +
+        slot.defensibilityBonus +
+        greenBonus +
+        pairsWithBonus +
+        Math.min(8, slot.charSlack / 6);
 
       validProposals.push({
         slot,
@@ -66,6 +100,11 @@ export function selectBulletMutations(
         budget: guard.budget,
         wordStats: guard.wordStats,
       });
+    }
+
+    kwStats.validCandidateCount = validProposals.length;
+    if (statsOut) {
+      statsOut.set(keyword.toLowerCase(), kwStats);
     }
 
     if (validProposals.length > 0) {
