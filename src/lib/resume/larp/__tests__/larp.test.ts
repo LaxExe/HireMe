@@ -239,4 +239,103 @@ describe("LARP Engine — Golden Snapshots & Non-Negotiable Invariants", () => {
     );
     assert.strictEqual(zeroMalleable.length, 0);
   });
+
+  describe("Phase 4: Single-Source-of-Truth validateRewrite Guardrails", () => {
+    const baseOrig =
+      "Processed inbound event streams using **LLM** prompt engineering across **5** services, reducing latency by **35%**.";
+
+    it("accepts a clean, compliant rewrite", async () => {
+      const { createGuardContext, validateRewrite } = await import("../../larpEngine");
+      const ctx = createGuardContext();
+      const cand =
+        "Processed inbound event streams using **LLM** prompts on **AWS** across **5** services, reducing latency by **35%**.";
+      const violations = validateRewrite(baseOrig, cand, "AWS", ctx);
+      assert.strictEqual(violations.length, 0);
+    });
+
+    it("rejects banned_term (tier-2 or tier-1.5 tech not in original)", async () => {
+      const { createGuardContext, validateRewrite } = await import("../../larpEngine");
+      const ctx = createGuardContext();
+      const candBanned =
+        "Processed inbound event streams using **Rust** and **AWS** across **5** services, reducing latency by **35%**.";
+      const v1 = validateRewrite(baseOrig, candBanned, "AWS", ctx);
+      assert.ok(v1.some((v) => v.code === "banned_term"), "Should flag Rust as banned_term");
+
+      const candSkillsOnly =
+        "Processed inbound event streams using **MongoDB** and **AWS** across **5** services, reducing latency by **35%**.";
+      const v2 = validateRewrite(baseOrig, candSkillsOnly, "AWS", ctx);
+      assert.ok(v2.some((v) => v.code === "banned_term"), "Should flag MongoDB as banned_term");
+    });
+
+    it("rejects new_tech (non-target tech introduced)", async () => {
+      const { createGuardContext, validateRewrite } = await import("../../larpEngine");
+      const ctx = createGuardContext({
+        matched: ["React"],
+        tier_0_workflow: [],
+        tier_1_framing: ["AWS", "Redis"],
+        tier_1_5_skills_only: [],
+        tier_2_banned: [],
+      });
+      const cand =
+        "Processed inbound event streams with **Redis** on **AWS** across **5** services, reducing latency by **35%**.";
+      const violations = validateRewrite(baseOrig, cand, "AWS", ctx);
+      assert.ok(violations.some((v) => v.code === "new_tech"));
+    });
+
+    it("rejects missing_keyword (target keyword absent)", async () => {
+      const { createGuardContext, validateRewrite } = await import("../../larpEngine");
+      const ctx = createGuardContext();
+      const cand =
+        "Processed inbound event streams with **LLM** prompts across **5** services, reducing latency by **35%**.";
+      const violations = validateRewrite(baseOrig, cand, "AWS", ctx);
+      assert.ok(violations.some((v) => v.code === "missing_keyword"));
+    });
+
+    it("rejects no_change (word diff is 0)", async () => {
+      const { createGuardContext, validateRewrite } = await import("../../larpEngine");
+      const ctx = createGuardContext();
+      const origWithAws =
+        "Processed inbound event streams on **AWS** across **5** services, reducing latency by **35%**.";
+      const violations = validateRewrite(origWithAws, origWithAws, "AWS", ctx);
+      assert.ok(violations.some((v) => v.code === "no_change"));
+    });
+
+    it("rejects too_many_changes (word diff > 7)", async () => {
+      const { createGuardContext, validateRewrite } = await import("../../larpEngine");
+      const ctx = createGuardContext();
+      const cand =
+        "Completely architected brand new distributed cloud event streams on **AWS** with custom workers across **5** services, reducing latency by **35%**.";
+      const violations = validateRewrite(baseOrig, cand, "AWS", ctx);
+      assert.ok(violations.some((v) => v.code === "too_many_changes"));
+    });
+
+    it("rejects metric_changed (number or percentage missing/altered)", async () => {
+      const { createGuardContext, validateRewrite } = await import("../../larpEngine");
+      const ctx = createGuardContext();
+      const cand =
+        "Processed inbound event streams using **LLM** prompts on **AWS** across **5** services, reducing latency by **50%**.";
+      const violations = validateRewrite(baseOrig, cand, "AWS", ctx);
+      assert.ok(violations.some((v) => v.code === "metric_changed"));
+    });
+
+    it("rejects overflow (> 2 lines / twoLineMax)", async () => {
+      const { createGuardContext, validateRewrite } = await import("../../larpEngine");
+      const ctx = createGuardContext();
+      const longOrig = `${baseOrig} Built modular validation layers and automated schema verification pipelines across internal service endpoints to maintain strict reliability SLAs.`;
+      const cand = `${longOrig.replace(/\.$/, "")} deployed on **AWS** with multi-region failover and real-time observability dashboards.`;
+      const violations = validateRewrite(longOrig, cand, "AWS", ctx);
+      assert.ok(violations.some((v) => v.code === "overflow"));
+    });
+
+    it("rejects line_growth (grew from 1L to 2L orphan without landing in green zone)", async () => {
+      const { createGuardContext, validateRewrite } = await import("../../larpEngine");
+      const ctx = createGuardContext();
+      const oneLinerOrig =
+        "Built backend event stream pipelines using **LLM** prompt engineering across **5** services, cutting latency **35%**.";
+      const orphan2Cand =
+        "Built backend event stream pipelines using **LLM** prompt engineering across **5** services on **AWS**, cutting latency **35%**.";
+      const violations = validateRewrite(oneLinerOrig, orphan2Cand, "AWS", ctx);
+      assert.ok(violations.some((v) => v.code === "line_growth"));
+    });
+  });
 });

@@ -1,6 +1,7 @@
 import { markupToLatex } from "../latex";
 import { analyzeBullet, bulletFit, knownTools, plainText, splitItems, uid } from "../utils";
 import { DEFAULT_CALIBRATION, SINGLE_LINE_NCU } from "./config";
+import { createGuardContext, validateRewrite, type GuardContext } from "./guardrails";
 import { applySelectedSkillsToResumeCategories } from "./skills";
 import { checkLineBudget, computeVisualWidth, computeWordReframeStats } from "./text";
 import type {
@@ -18,18 +19,25 @@ import type {
 export function updateBulletProposalWithCustomMarkup(
   proposal: BulletMutationProposal,
   customMarkup: string,
-  calibration?: CalibrationConfig
+  calibration?: CalibrationConfig,
+  guardCtx?: GuardContext
 ): BulletMutationProposal {
   const cal = calibration ?? DEFAULT_CALIBRATION;
   const candLatex = `\\item ${markupToLatex(customMarkup)}`;
   const budget = checkLineBudget(proposal.originalMarkup, customMarkup, cal, SINGLE_LINE_NCU);
   const wordStats = computeWordReframeStats(proposal.originalMarkup, customMarkup, 7);
+  const targetKeyword = proposal.injectedKeywords[0] ?? "";
+  const ctx = guardCtx ?? createGuardContext(undefined, cal);
+  const violations = targetKeyword
+    ? validateRewrite(proposal.originalMarkup, customMarkup, targetKeyword, ctx)
+    : [];
   return {
     ...proposal,
     mutatedMarkup: customMarkup,
     mutatedLatex: candLatex,
     budget,
     wordStats,
+    violations,
   };
 }
 

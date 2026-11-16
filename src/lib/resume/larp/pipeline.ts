@@ -125,7 +125,8 @@ export function runLarpAlignmentPipeline(
     bannedLower,
     cal,
     variantOffset,
-    SINGLE_LINE_NCU
+    SINGLE_LINE_NCU,
+    tiers
   );
 
   const malleableCount = cal.malleableLines ?? 1;

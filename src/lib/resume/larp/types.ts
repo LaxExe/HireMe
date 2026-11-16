@@ -132,6 +132,21 @@ export interface SkillCandidateOption {
   targetCategoryName: string;
 }
 
+export type ViolationCode =
+  | "banned_term"
+  | "new_tech"
+  | "missing_keyword"
+  | "no_change"
+  | "too_many_changes"
+  | "metric_changed"
+  | "overflow"
+  | "line_growth";
+
+export interface GuardrailViolation {
+  code: ViolationCode;
+  message: string;
+}
+
 export interface BulletMutationProposal {
   bulletId: string;
   containerId: string;
@@ -148,6 +163,7 @@ export interface BulletMutationProposal {
   reason: string;
   accepted: boolean;
   source?: "rule" | "generic" | "llm";
+  violations?: GuardrailViolation[];
 }
 
 export interface MalleableBulletOption {

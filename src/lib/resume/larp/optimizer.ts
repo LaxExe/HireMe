@@ -1,11 +1,12 @@
 import { markupToLatex } from "../latex";
 import { tryMinimalKeywordInjection } from "./candidates";
-import { evaluateCandidateGuardrails } from "./guardrails";
+import { createGuardContext, evaluateCandidateGuardrails, type GuardContext } from "./guardrails";
 import { fitBulletToCalibratedLineArea } from "./text";
 import type {
   BulletMutationProposal,
   CalibrationConfig,
   CandidateBulletSlot,
+  LarpTierClassification,
   LineBudgetCheck,
   WordReframeStats,
 } from "./types";
@@ -16,10 +17,13 @@ export function selectBulletMutations(
   bannedLower: string[],
   cal: CalibrationConfig,
   variantOffset = 0,
-  singleLineNcu = 98.0
+  singleLineNcu = 98.0,
+  tiers?: LarpTierClassification,
+  guardCtx?: GuardContext
 ): BulletMutationProposal[] {
   const usedBulletIds = new Set<string>();
   const bulletProposals: BulletMutationProposal[] = [];
+  const ctx = guardCtx ?? (tiers ? createGuardContext(tiers, cal, undefined, 7, singleLineNcu) : undefined);
 
   for (const keyword of centralizedTargetKeywords) {
     const validProposals: Array<{
@@ -44,7 +48,9 @@ export function selectBulletMutations(
         bannedLower,
         cal,
         singleLineNcu,
-        7
+        7,
+        keyword,
+        ctx
       );
       if (!guard.valid || !guard.budget || !guard.wordStats) continue;
 

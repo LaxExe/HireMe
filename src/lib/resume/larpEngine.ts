@@ -7,6 +7,7 @@ export {
   type CatalogItem,
   type ContainerCandidate,
   type Context,
+  type GuardrailViolation,
   type LarpAlignmentRun,
   type LarpTierClassification,
   type LineBudgetCheck,
@@ -17,6 +18,7 @@ export {
   type SkillSwapChange,
   type TextSegment,
   type Tier,
+  type ViolationCode,
   type WordDiffToken,
   type WordReframeStats,
 } from "./larp/types";
@@ -29,6 +31,14 @@ export {
   LARP_CATALOG,
 } from "./larp/catalog";
 export { buildResumeInventory, placementFor } from "./larp/policy";
+export {
+  createGuardContext,
+  defaultHeuristicMeasurer,
+  extractMetricsAndNumbers,
+  validateRewrite,
+  type GuardContext,
+  type Measurer,
+} from "./larp/guardrails";
 
 export {
   checkLineBudget,
