@@ -3,7 +3,7 @@ import { createHash } from "crypto";
 import { PROMPT_VERSION } from "@/lib/resume/larp/llm";
 
 const MODEL =
-  process.env.LARP_MODEL ?? process.env.LARP_LLM_MODEL ?? "gemini-2.5-flash";
+  process.env.LARP_MODEL ?? process.env.LARP_LLM_MODEL ?? "gemini-3.5-flash-lite";
 const cache = new Map<string, string>(); // per-instance; use Redis/KV if you deploy serverless
 
 export async function POST(req: Request) {
@@ -50,7 +50,6 @@ export async function POST(req: Request) {
             temperature,
             responseMimeType: "application/json",
             maxOutputTokens: 350,
-            thinkingConfig: { thinkingBudget: 0 },
           },
         }),
       }

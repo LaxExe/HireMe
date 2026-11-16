@@ -46,7 +46,7 @@ export const PROMPT_VERSION = "rewrite-v1";
 export const DEFAULT_LLM_MODEL =
   (typeof process !== "undefined" &&
     (process.env?.LARP_MODEL || process.env?.LARP_LLM_MODEL)) ||
-  "gemini-2.5-flash";
+  "gemini-3.5-flash-lite";
 
 export const SYSTEM = `You are an editor for resume bullet points. You rewrite ONE bullet so it naturally mentions ONE given technology.
 Hard rules:
