@@ -595,4 +595,52 @@ Requirements:
       assert.strictEqual(fallbackRun.guardrailVerifiedZeroBanned, true);
     });
   });
+
+  describe("Phase 8: Global Max-Weight Assignment (Hungarian) & Regenerate with Exclude", () => {
+    it("globally optimizes when two keywords compete for the same bullet and returns a different plan on regenerate with excludePairs", async () => {
+      const { runLarpAlignmentPipeline, solveMaxWeightAssignment } = await import(
+        "../../larpEngine"
+      );
+
+      // Direct unit test of Hungarian max-weight assignment where greedy would fail:
+      // Row 0 (Keyword A): Slot 0 = 100, Slot 1 = 90
+      // Row 1 (Keyword B): Slot 0 = 98,  Slot 1 = 0
+      // Greedy picks (0->0, 1->unassigned) = 100. Global optimal picks (0->1, 1->0) = 188!
+      const weights = [
+        [100, 90, 0, 0],
+        [98, 0, 0, 0],
+      ];
+      const assign = solveMaxWeightAssignment(weights);
+      assert.strictEqual(assign[0], 1, "Keyword A should take Slot 1 so Keyword B can take Slot 0");
+      assert.strictEqual(assign[1], 0, "Keyword B should take Slot 0");
+
+      // Full pipeline check on ml_platform where Redis and GraphQL compete for b_rf_2
+      const run1 = runLarpAlignmentPipeline(jds.ml_platform.text, masterResume, 0);
+      assert.strictEqual(
+        run1.bulletProposals.length,
+        3,
+        "Global assignment assigns all 3 keywords (AWS, Redis, GraphQL) instead of greedy's 2"
+      );
+
+      // Build exclude set from run1's assignments and verify regenerate returns a different plan
+      const excludePairs = new Set(
+        run1.bulletProposals.map(
+          (bp) => `${bp.bulletId}|${bp.injectedKeywords[0].toLowerCase()}`
+        )
+      );
+      const run2 = runLarpAlignmentPipeline(jds.ml_platform.text, masterResume, {
+        excludePairs,
+      });
+
+      const plan1Key = run1.bulletProposals
+        .map((bp) => `${bp.bulletId}:${bp.injectedKeywords[0]}`)
+        .sort()
+        .join(",");
+      const plan2Key = run2.bulletProposals
+        .map((bp) => `${bp.bulletId}:${bp.injectedKeywords[0]}`)
+        .sort()
+        .join(",");
+      assert.notStrictEqual(plan1Key, plan2Key, "Regenerate with excludePairs must produce a different assignment plan");
+    });
+  });
 });

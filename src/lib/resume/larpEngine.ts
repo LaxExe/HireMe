@@ -95,6 +95,12 @@ export {
 } from "./larp/llm";
 
 export {
+  selectBulletMutations,
+  solveMaxWeightAssignment,
+  type KeywordCandidateStats,
+} from "./larp/optimizer";
+
+export {
   runLarpAlignmentPipeline,
   runLarpAlignmentPipelineAsync,
   type LarpPipelineOptions,

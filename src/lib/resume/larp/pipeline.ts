@@ -2,7 +2,7 @@ import { plainText } from "../utils";
 import { classifyBulletContext } from "./candidates";
 import { DEFAULT_CALIBRATION, inferDomainTags, SINGLE_LINE_NCU } from "./config";
 import { createGuardContext, verifyRunGuardrailZeroBanned } from "./guardrails";
-import { classifyJobDescriptionTiers } from "./jd";
+import { classifyJobDescriptionTiers, extractWeightedJdKeywords } from "./jd";
 import {
   draftAndValidateLlmMalleableOptions,
   proposeAndValidateLlmBulletCandidates,
@@ -132,9 +132,21 @@ function buildSlotsFromResume(
 export function runLarpAlignmentPipeline(
   jobDescription: string,
   resume: MasterResume,
-  variantOffset = 0
+  variantOffsetOrOptions: number | LarpPipelineOptions = 0
 ): LarpAlignmentRun {
+  const options: LarpPipelineOptions =
+    typeof variantOffsetOrOptions === "number"
+      ? { variantOffset: variantOffsetOrOptions }
+      : variantOffsetOrOptions;
+  const variantOffset = options.variantOffset ?? 0;
+
   const tiers = classifyJobDescriptionTiers(jobDescription, resume);
+  const weightedMap = extractWeightedJdKeywords(jobDescription);
+  const keywordWeights = new Map<string, number>();
+  for (const [k, v] of weightedMap.entries()) {
+    keywordWeights.set(k, v.weight);
+  }
+
   const { updatedCategories, changes: skillSwaps } = smartSwapSkillsSection(
     resume.skills,
     tiers,
@@ -159,7 +171,12 @@ export function runLarpAlignmentPipeline(
     cal,
     variantOffset,
     SINGLE_LINE_NCU,
-    tiers
+    tiers,
+    undefined,
+    undefined,
+    undefined,
+    keywordWeights,
+    options.excludePairs
   );
 
   const malleableCount = cal.malleableLines ?? 1;
@@ -204,10 +221,16 @@ export async function runLarpAlignmentPipelineAsync(
 ): Promise<LarpAlignmentRun & { llmTelemetry?: LlmTelemetry }> {
   const variantOffset = options.variantOffset ?? 0;
   if (!options.llm) {
-    return runLarpAlignmentPipeline(jobDescription, resume, variantOffset);
+    return runLarpAlignmentPipeline(jobDescription, resume, options);
   }
 
   const tiers = classifyJobDescriptionTiers(jobDescription, resume);
+  const weightedMap = extractWeightedJdKeywords(jobDescription);
+  const keywordWeights = new Map<string, number>();
+  for (const [k, v] of weightedMap.entries()) {
+    keywordWeights.set(k, v.weight);
+  }
+
   const { updatedCategories, changes: skillSwaps } = smartSwapSkillsSection(
     resume.skills,
     tiers,
@@ -251,7 +274,9 @@ export async function runLarpAlignmentPipelineAsync(
     tiers,
     guardCtx,
     statsOut,
-    llmCandidates
+    llmCandidates,
+    keywordWeights,
+    options.excludePairs
   );
 
   const malleableCount = cal.malleableLines ?? 1;
