@@ -1024,7 +1024,7 @@ export default function PreviewPage() {
                     disabled={downloadingId === activeItem.id}
                     onClick={() => handleOptionalDownload(activeItem)}
                     className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-neutral-700 bg-white hover:bg-neutral-50 border border-[#ebebeb] rounded-full shadow-2xs active:scale-95 transition-all cursor-pointer disabled:opacity-40"
-                    title="Optional PDF download (tagged SYNTHETIC)"
+                    title="Download tailored PDF"
                   >
                     <Download className="w-3.5 h-3.5" />
                     <span>Download</span>

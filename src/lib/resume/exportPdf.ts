@@ -1,5 +1,4 @@
 import { reconstructLatexResume } from "./latex";
-import { formatSyntheticResumeFilename } from "./larp/ledger";
 import {
   DEFAULT_RESUME_FORMAT,
   hasResumeSection,
@@ -1155,11 +1154,12 @@ export async function downloadResumePdf(resume: MasterResume, rawName: string): 
     rawName
       .trim()
       .replace(/\.pdf$/i, "")
+      .replace(/_SYNTHETIC_LARP/gi, "")
+      .replace(/_SYNTHETIC/gi, "")
+      .replace(/SYNTHETIC/gi, "")
       .replace(/[^a-zA-Z0-9._-\s]/g, "")
       .trim() || "Resume";
-  const cleanName = resume.isSynthetic
-    ? formatSyntheticResumeFilename(baseClean)
-    : baseClean;
+  const cleanName = baseClean;
 
   const latexSource = reconstructLatexResume(resume);
   let pdfBytes: Uint8Array | null = null;
@@ -1204,11 +1204,12 @@ export function downloadResumeTex(resume: MasterResume, rawName: string): void {
     rawName
       .trim()
       .replace(/\.(pdf|tex)$/i, "")
+      .replace(/_SYNTHETIC_LARP/gi, "")
+      .replace(/_SYNTHETIC/gi, "")
+      .replace(/SYNTHETIC/gi, "")
       .replace(/[^a-zA-Z0-9._-\s]/g, "")
       .trim() || "Resume";
-  const cleanName = resume.isSynthetic
-    ? formatSyntheticResumeFilename(baseClean)
-    : baseClean;
+  const cleanName = baseClean;
 
   const latexSource = reconstructLatexResume(resume);
   const blob = new Blob([latexSource], { type: "text/plain;charset=utf-8" });
