@@ -590,7 +590,21 @@ export default function PreviewPage() {
     setDownloadingId(item.id);
     try {
       const tailored = buildTailoredResumeForSlot(item);
-      await downloadResumePdf(tailored, item.roleName || item.title || "Tailored_Resume");
+      const contactName = tailored.contact?.name?.trim();
+      const rolePart = (item.roleName || item.title || "")
+        .replace(/\.pdf$/i, "")
+        .replace(/_SYNTHETIC_LARP/gi, "")
+        .replace(/_SYNTHETIC/gi, "")
+        .replace(/SYNTHETIC/gi, "")
+        .replace(/_LARP/gi, "")
+        .replace(/\bLARP\b/gi, "")
+        .replace(/Tailored_Resume/gi, "")
+        .replace(/Tailored/gi, "")
+        .trim();
+      const downloadName = contactName
+        ? `${contactName}${rolePart ? `_${rolePart}` : "_Resume"}`
+        : rolePart || "Resume";
+      await downloadResumePdf(tailored, downloadName);
     } finally {
       setDownloadingId(null);
     }

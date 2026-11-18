@@ -39,7 +39,7 @@ export function buildResumePdfFileName(roleName: string, resumeName?: string): s
       .replace(/^_+|_+$/g, "") || fallback;
 
   const baseName = cleanPart(resumeName || "", "Resume");
-  const rolePart = cleanPart(roleName, "Tailored_Role").slice(0, 48);
+  const rolePart = cleanPart(roleName, "Role").slice(0, 48);
   return `${baseName}_${rolePart}.pdf`;
 }
 

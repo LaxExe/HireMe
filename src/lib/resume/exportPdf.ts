@@ -1157,6 +1157,8 @@ export async function downloadResumePdf(resume: MasterResume, rawName: string): 
       .replace(/_SYNTHETIC_LARP/gi, "")
       .replace(/_SYNTHETIC/gi, "")
       .replace(/SYNTHETIC/gi, "")
+      .replace(/_LARP/gi, "")
+      .replace(/\bLARP\b/gi, "")
       .replace(/[^a-zA-Z0-9._-\s]/g, "")
       .trim() || "Resume";
   const cleanName = baseClean;
@@ -1207,6 +1209,8 @@ export function downloadResumeTex(resume: MasterResume, rawName: string): void {
       .replace(/_SYNTHETIC_LARP/gi, "")
       .replace(/_SYNTHETIC/gi, "")
       .replace(/SYNTHETIC/gi, "")
+      .replace(/_LARP/gi, "")
+      .replace(/\bLARP\b/gi, "")
       .replace(/[^a-zA-Z0-9._-\s]/g, "")
       .trim() || "Resume";
   const cleanName = baseClean;
