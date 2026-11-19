@@ -183,7 +183,7 @@ export default function CalibrationBar() {
                 htmlFor="cal-malleable-lines"
                 className="text-[11px] font-mono text-neutral-500 uppercase block"
               >
-                malleable lines (1L larp bullets)
+                malleable lines (1L bullets)
               </label>
               <div className="flex items-center gap-2">
                 <input

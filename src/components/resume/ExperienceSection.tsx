@@ -188,7 +188,7 @@ export default function ExperienceSection({
               }}
               className="w-9 bg-[#fafafa] border border-[#ebebeb] rounded px-1 py-0.5 text-center font-mono text-[11px] text-neutral-900 focus:outline-none focus:border-neutral-400"
             />
-            <span className="text-[10px] text-neutral-400">1L larp</span>
+            <span className="text-[10px] text-neutral-400">1L synth</span>
           </label>
         </div>
         <button

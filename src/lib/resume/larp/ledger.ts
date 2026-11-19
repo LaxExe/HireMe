@@ -42,7 +42,7 @@ export interface LarpUserActionEvent {
   jdId?: string;
 }
 
-const USER_EVENTS_STORAGE_KEY = "hireme_larp_study_events";
+const USER_EVENTS_STORAGE_KEY = "hireme_alignment_events";
 const inMemoryEvents: LarpUserActionEvent[] = [];
 
 export function resolveTierForKeyword(

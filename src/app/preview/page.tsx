@@ -922,7 +922,7 @@ export default function PreviewPage() {
                     <span>Credit Usage Warning</span>
                   </div>
                   <p className="text-[11px] leading-relaxed text-amber-900/90">
-                    Refreshing previews and reanalyzing takes up a lot of credits. This will re-run LARP keyword alignment and AI candidate proposals across all <span className="font-semibold">{queue.length}</span> queued role {queue.length === 1 ? "slot" : "slots"} using your latest Master Resume changes (such as updated job titles, dates, or skills).
+                    Refreshing previews and reanalyzing takes up a lot of credits. This will re-run keyword alignment and AI candidate proposals across all <span className="font-semibold">{queue.length}</span> queued role {queue.length === 1 ? "slot" : "slots"} using your latest Master Resume changes (such as updated job titles, dates, or skills).
                   </p>
                 </div>
 
@@ -1289,7 +1289,7 @@ export default function PreviewPage() {
                         const url = URL.createObjectURL(blob);
                         const a = document.createElement("a");
                         a.href = url;
-                        a.download = `larp_study_ledger_${
+                        a.download = `alignment_ledger_${
                           activeItem.larpRun.runMetadata?.jdId || activeItem.id
                         }.json`;
                         document.body.appendChild(a);
@@ -1300,7 +1300,7 @@ export default function PreviewPage() {
                       className="inline-flex items-center gap-1 px-3 py-1.5 font-mono text-[11px] text-neutral-700 bg-white hover:bg-neutral-50 border border-[#ebebeb] rounded-full shadow-2xs active:scale-95 transition-all cursor-pointer"
                     >
                       <Download className="w-3 h-3" />
-                      <span>Ledger JSON</span>
+                      <span>Alignment JSON</span>
                     </button>
                   )}
                 </div>
@@ -2097,7 +2097,7 @@ export default function PreviewPage() {
                 </div>
               )}
 
-              {/* 3. Malleable 1-Line LARP Bullets (Collapsible) */}
+              {/* 3. Malleable 1-Line Bullets (Collapsible) */}
               {activeItem.larpRun.malleableBullets.length > 0 && (
                 <div className="space-y-2.5 pt-2 border-t border-[#ebebeb]">
                   <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -2107,7 +2107,7 @@ export default function PreviewPage() {
                       className="inline-flex items-center gap-1.5 text-left cursor-pointer group"
                     >
                       <span className="font-mono text-[10px] uppercase tracking-wider text-neutral-400 group-hover:text-neutral-700 transition-colors">
-                        Malleable 1-Line LARP Bullets ({activeItem.acceptedMalleableIds.length} of{" "}
+                        Malleable 1-Line Bullets ({activeItem.acceptedMalleableIds.length} of{" "}
                         {activeItem.larpRun.malleableBullets.length} selected)
                       </span>
                       {isMalleableSectionCollapsed ? (

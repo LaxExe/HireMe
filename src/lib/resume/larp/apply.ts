@@ -170,7 +170,7 @@ export function applyLarpMutationsToResume(
     jdId: alignment.runMetadata?.jdId,
     mode: alignment.runMetadata?.mode ?? "framing",
     model: alignment.runMetadata?.model,
-    promptVersion: alignment.runMetadata?.promptVersion ?? "larp-v2.1",
+    promptVersion: alignment.runMetadata?.promptVersion ?? "align-v2.1",
     timestamp: new Date().toISOString(),
     injectedClaimsCount:
       acceptedBulletIds.size +

@@ -276,7 +276,7 @@ export default function OperationsPage() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `larp_study_ledger_${larpRun.runMetadata.jdId}.${format}`;
+    a.download = `alignment_ledger_${larpRun.runMetadata.jdId}.${format}`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -447,7 +447,7 @@ export default function OperationsPage() {
             operations
           </h1>
           <p className="text-xs text-neutral-500 mt-0.5">
-            Defensible Resume Alignment (LARP) & keyword matching engine
+            Defensible Resume Alignment & keyword matching engine
           </p>
         </div>
       </div>
@@ -623,7 +623,7 @@ export default function OperationsPage() {
         </div>
       </form>
 
-      {/* Keyword Match & LARP Results */}
+      {/* Keyword Match & Alignment Results */}
       {matchResult && larpRun && (
             <div className="space-y-6 animate-fadeIn">
               {/* Summary Score Bar */}
@@ -1195,12 +1195,12 @@ export default function OperationsPage() {
                   </div>
                 )}
 
-                {/* Step 4: Malleable 1-Line LARP Bullets (Context-Aware Synthesis) */}
+                {/* Step 4: Malleable 1-Line Bullets (Context-Aware Synthesis) */}
                 <div className="border-t border-[#ebebeb] pt-4 space-y-3">
                   <div className="flex items-center justify-between gap-3 flex-wrap">
                     <div>
                       <h3 className="text-xs font-semibold text-neutral-900">
-                        Step 4 · Malleable 1-Line LARP Bullets (Multi-Role Synthesis)
+                        Step 4 · Malleable 1-Line Bullets (Multi-Role Synthesis)
                       </h3>
                       <p className="text-[11px] text-neutral-500 mt-0.5">
                         Synthesizes context-aware 1-line options across your roles and experiences, calibrated for line-budget fit and interview defensibility.
