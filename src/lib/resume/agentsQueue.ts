@@ -1,6 +1,11 @@
 import { rtdb, isFirebaseConfigured } from "@/lib/firebase";
 import { ref, get, set, push, onValue } from "firebase/database";
 import { isOnline, enqueueOfflineItem } from "@/lib/offlineSync";
+import {
+  applyLakshmanHeaderToResume,
+  isLakshmanAccount,
+  migrateAgentEntryFileName,
+} from "./headerMigration";
 import type { MasterResume } from "./types";
 import { uid } from "./utils";
 
@@ -68,19 +73,56 @@ function normalizeAgentEntries(parsed: unknown): AgentResumeEntry[] {
   });
 }
 
+function migrateAgentEntriesIfNeeded(
+  uidStr: string,
+  entries: AgentResumeEntry[]
+): { entries: AgentResumeEntry[]; changed: boolean } {
+  if (!isLakshmanAccount(uidStr)) {
+    return { entries, changed: false };
+  }
+  let changed = false;
+  const migrated = entries.map((entry) => {
+    if (!entry?.tailoredResume) return entry;
+    const res = applyLakshmanHeaderToResume(entry.tailoredResume);
+    const nextFileName = migrateAgentEntryFileName(entry.fileName);
+    const fileNameChanged = nextFileName !== entry.fileName;
+    if (res.changed || fileNameChanged) {
+      changed = true;
+      return {
+        ...entry,
+        tailoredResume: res.resume,
+        fileName: nextFileName,
+      };
+    }
+    return entry;
+  });
+  return { entries: migrated, changed };
+}
+
 export function loadAgentsQueue(uidStr: string): AgentResumeEntry[] {
   if (typeof window === "undefined") return [];
   try {
+    let items: AgentResumeEntry[] = [];
     const rawUser = uidStr ? localStorage.getItem(AGENTS_QUEUE_KEY(uidStr)) : null;
     if (rawUser) {
-      const items = normalizeAgentEntries(JSON.parse(rawUser));
-      if (items.length > 0) return items;
+      items = normalizeAgentEntries(JSON.parse(rawUser));
     }
-    const rawGlobal = localStorage.getItem(AGENTS_QUEUE_GLOBAL_KEY);
-    if (rawGlobal) {
-      return normalizeAgentEntries(JSON.parse(rawGlobal));
+    if (items.length === 0) {
+      const rawGlobal = localStorage.getItem(AGENTS_QUEUE_GLOBAL_KEY);
+      if (rawGlobal) {
+        items = normalizeAgentEntries(JSON.parse(rawGlobal));
+      }
     }
-    return [];
+    if (items.length === 0) return [];
+    const { entries: migrated, changed } = migrateAgentEntriesIfNeeded(uidStr, items);
+    if (changed && uidStr) {
+      try {
+        const serialized = JSON.stringify(migrated);
+        localStorage.setItem(AGENTS_QUEUE_KEY(uidStr), serialized);
+        localStorage.setItem(AGENTS_QUEUE_GLOBAL_KEY, serialized);
+      } catch {}
+    }
+    return migrated;
   } catch {
     return [];
   }
@@ -95,11 +137,15 @@ export async function loadAgentsQueueAsync(uidStr: string): Promise<AgentResumeE
         const data = val?.data;
         if (typeof data === "string") {
           const items = normalizeAgentEntries(JSON.parse(data));
-          if (typeof window !== "undefined") {
-            localStorage.setItem(AGENTS_QUEUE_KEY(uidStr), JSON.stringify(items));
-            localStorage.setItem(AGENTS_QUEUE_GLOBAL_KEY, JSON.stringify(items));
+          const { entries: migrated, changed } = migrateAgentEntriesIfNeeded(uidStr, items);
+          if (changed) {
+            saveAgentsQueue(uidStr, migrated);
+          } else if (typeof window !== "undefined") {
+            const serialized = JSON.stringify(migrated);
+            localStorage.setItem(AGENTS_QUEUE_KEY(uidStr), serialized);
+            localStorage.setItem(AGENTS_QUEUE_GLOBAL_KEY, serialized);
           }
-          return items;
+          return migrated;
         }
       }
     } catch (e) {
@@ -137,12 +183,19 @@ export function subscribeAgentsQueue(
             const data = val?.data;
             if (typeof data === "string") {
               const remoteItems = normalizeAgentEntries(JSON.parse(data));
-              memoryAgentsQueue[uidStr] = remoteItems;
-              if (typeof window !== "undefined") {
-                localStorage.setItem(AGENTS_QUEUE_KEY(uidStr), JSON.stringify(remoteItems));
-                localStorage.setItem(AGENTS_QUEUE_GLOBAL_KEY, JSON.stringify(remoteItems));
+              const { entries: migrated, changed } = migrateAgentEntriesIfNeeded(
+                uidStr,
+                remoteItems
+              );
+              memoryAgentsQueue[uidStr] = migrated;
+              if (changed) {
+                saveAgentsQueue(uidStr, migrated);
+              } else if (typeof window !== "undefined") {
+                const serialized = JSON.stringify(migrated);
+                localStorage.setItem(AGENTS_QUEUE_KEY(uidStr), serialized);
+                localStorage.setItem(AGENTS_QUEUE_GLOBAL_KEY, serialized);
               }
-              callback(remoteItems);
+              callback(migrated);
               return;
             }
           }

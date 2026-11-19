@@ -11,6 +11,7 @@ import {
 } from "firebase/auth";
 import { auth, isFirebaseConfigured } from "@/lib/firebase";
 import { initOfflineSyncListener } from "@/lib/offlineSync";
+import { migrateAllLakshmanApplicationsInFirebase } from "@/lib/resume/headerMigration";
 
 export interface AppUser {
   uid: string;
@@ -50,6 +51,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           };
           setUser(appUser);
           localStorage.setItem(LOCAL_STORAGE_USER_KEY, JSON.stringify(appUser));
+          void migrateAllLakshmanApplicationsInFirebase(fbUser.uid, fbUser.email);
         } else {
           setUser(null);
           localStorage.removeItem(LOCAL_STORAGE_USER_KEY);

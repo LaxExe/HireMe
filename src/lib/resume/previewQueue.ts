@@ -1,6 +1,7 @@
 import { rtdb, isFirebaseConfigured } from "@/lib/firebase";
-import { ref, get, set, onValue } from "firebase/database";
+import { ref, get, update, onValue } from "firebase/database";
 import { isOnline, enqueueOfflineItem } from "@/lib/offlineSync";
+import { applyLakshmanHeaderToResume, isLakshmanAccount } from "./headerMigration";
 import type { LarpAlignmentRun } from "./larpEngine";
 import type { MasterResume } from "./types";
 import { uid } from "./utils";
@@ -70,6 +71,26 @@ function normalizeQueueItems(parsed: unknown): PreviewQueueItem[] {
   });
 }
 
+function migratePreviewItemsIfNeeded(
+  uidStr: string,
+  items: PreviewQueueItem[]
+): { items: PreviewQueueItem[]; changed: boolean } {
+  if (!isLakshmanAccount(uidStr)) {
+    return { items, changed: false };
+  }
+  let changed = false;
+  const migrated = items.map((item) => {
+    if (!item?.baseResume) return item;
+    const res = applyLakshmanHeaderToResume(item.baseResume);
+    if (res.changed) {
+      changed = true;
+      return { ...item, baseResume: res.resume };
+    }
+    return item;
+  });
+  return { items: migrated, changed };
+}
+
 export function loadPreviewQueue(uidStr: string): PreviewQueueItem[] {
   if (typeof window === "undefined") return [];
   try {
@@ -95,12 +116,20 @@ export function loadPreviewQueue(uidStr: string): PreviewQueueItem[] {
       (item) => !item.pushedToAgentsAt && !pushedIds.has(item.id)
     );
 
+    const { items: migrated, changed } = migratePreviewItemsIfNeeded(uidStr, unpushed);
+
     // If pushed items were pruned, persist the cleaned queue
     if (unpushed.length !== items.length) {
-      savePreviewQueue(uidStr, unpushed);
+      savePreviewQueue(uidStr, migrated);
+    } else if (changed && uidStr) {
+      try {
+        const serialized = JSON.stringify(migrated);
+        localStorage.setItem(PREVIEW_QUEUE_KEY(uidStr), serialized);
+        localStorage.setItem(PREVIEW_QUEUE_GLOBAL_KEY, serialized);
+      } catch {}
     }
 
-    return unpushed;
+    return migrated;
   } catch {
     return [];
   }
@@ -123,11 +152,14 @@ export async function loadPreviewQueueAsync(uidStr: string): Promise<PreviewQueu
           const unpushed = items.filter(
             (item) => !item.pushedToAgentsAt && !pushedIds.has(item.id)
           );
-          if (typeof window !== "undefined") {
-            localStorage.setItem(PREVIEW_QUEUE_KEY(uidStr), JSON.stringify(unpushed));
-            localStorage.setItem(PREVIEW_QUEUE_GLOBAL_KEY, JSON.stringify(unpushed));
+          const { items: migrated, changed } = migratePreviewItemsIfNeeded(uidStr, unpushed);
+          if (changed) {
+            savePreviewQueue(uidStr, migrated);
+          } else if (typeof window !== "undefined") {
+            localStorage.setItem(PREVIEW_QUEUE_KEY(uidStr), JSON.stringify(migrated));
+            localStorage.setItem(PREVIEW_QUEUE_GLOBAL_KEY, JSON.stringify(migrated));
           }
-          return unpushed;
+          return migrated;
         }
       }
     } catch (e) {
@@ -172,12 +204,15 @@ export function subscribePreviewQueue(
               const unpushed = remoteItems.filter(
                 (item) => !item.pushedToAgentsAt && !pushedIds.has(item.id)
               );
-              memoryPreviewQueue[uidStr] = unpushed;
-              if (typeof window !== "undefined") {
-                localStorage.setItem(PREVIEW_QUEUE_KEY(uidStr), JSON.stringify(unpushed));
-                localStorage.setItem(PREVIEW_QUEUE_GLOBAL_KEY, JSON.stringify(unpushed));
+              const { items: migrated, changed } = migratePreviewItemsIfNeeded(uidStr, unpushed);
+              memoryPreviewQueue[uidStr] = migrated;
+              if (changed) {
+                savePreviewQueue(uidStr, migrated);
+              } else if (typeof window !== "undefined") {
+                localStorage.setItem(PREVIEW_QUEUE_KEY(uidStr), JSON.stringify(migrated));
+                localStorage.setItem(PREVIEW_QUEUE_GLOBAL_KEY, JSON.stringify(migrated));
               }
-              callback(unpushed);
+              callback(migrated);
               return;
             }
           }
@@ -220,9 +255,9 @@ export function savePreviewQueue(uidStr: string, items: PreviewQueueItem[]): voi
     console.warn("Failed to save preview queue to localStorage:", e);
   }
 
-  // If online and Firebase is configured, write directly
+  // If online and Firebase is configured, update only data/updatedAt so secretJobsStore is preserved
   if (isOnline() && isFirebaseConfigured) {
-    set(ref(rtdb, `previewQueues/${uidStr}`), {
+    update(ref(rtdb, `previewQueues/${uidStr}`), {
       data: serialized,
       updatedAt: now,
     }).catch((e) => {

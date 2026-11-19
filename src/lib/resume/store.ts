@@ -1,6 +1,7 @@
 import { rtdb, isFirebaseConfigured } from "@/lib/firebase";
 import { ref, get, set, onValue } from "firebase/database";
 import { isOnline, enqueueOfflineItem } from "@/lib/offlineSync";
+import { applyLakshmanHeaderToResume, isLakshmanAccount } from "./headerMigration";
 import type { MasterResume } from "./types";
 
 const localKey = (uid: string) => `hireme_master_resume_${uid}`;
@@ -12,6 +13,15 @@ function readLocal(uid: string): MasterResume | null {
     if (!raw) return null;
     const parsed = JSON.parse(raw) as MasterResume;
     if (!parsed.awards) parsed.awards = [];
+    if (isLakshmanAccount(uid)) {
+      const { resume, changed } = applyLakshmanHeaderToResume(parsed);
+      if (changed) {
+        try {
+          localStorage.setItem(localKey(uid), JSON.stringify(resume));
+        } catch {}
+      }
+      return resume;
+    }
     return parsed;
   } catch {
     return null;
@@ -29,6 +39,15 @@ export async function loadMasterResume(uid: string): Promise<MasterResume | null
         if (typeof data === "string") {
           const parsed = JSON.parse(data) as MasterResume;
           if (!parsed.awards) parsed.awards = [];
+          if (isLakshmanAccount(uid)) {
+            const { resume, changed } = applyLakshmanHeaderToResume(parsed);
+            if (changed) {
+              await saveMasterResume(uid, resume);
+            } else if (typeof window !== "undefined") {
+              localStorage.setItem(localKey(uid), data);
+            }
+            return resume;
+          }
           if (typeof window !== "undefined") {
             localStorage.setItem(localKey(uid), data);
           }
@@ -70,6 +89,14 @@ export function subscribeMasterResume(
             if (typeof data === "string") {
               const parsed = JSON.parse(data) as MasterResume;
               if (!parsed.awards) parsed.awards = [];
+              if (isLakshmanAccount(uid)) {
+                const { resume, changed } = applyLakshmanHeaderToResume(parsed);
+                if (changed) {
+                  void saveMasterResume(uid, resume);
+                  callback(resume);
+                  return;
+                }
+              }
               if (typeof window !== "undefined") {
                 localStorage.setItem(localKey(uid), data);
               }

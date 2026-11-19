@@ -477,11 +477,12 @@ export function generateResumePdfBytes(resume: MasterResume): Uint8Array {
     underline = false,
     linkUrl?: string,
     iconBefore?: VectorIconKind,
-    iconAfter?: VectorIconKind
+    iconAfter?: VectorIconKind,
+    forcePlainLinkColor = false
   ): number => {
     let curX = x;
     const startX = x;
-    const useLinkBlue = Boolean(linkUrl && hasLinkBlue);
+    const useLinkBlue = Boolean(linkUrl && hasLinkBlue && !forcePlainLinkColor);
     if (iconBefore) {
       curX += drawVectorIcon(curPage.ops, iconBefore, curX, y, sizePt, gray, useLinkBlue);
     }
@@ -623,6 +624,9 @@ export function generateResumePdfBytes(resume: MasterResume): Uint8Array {
           ? marginLeft + Math.max(0, (contentWidth - totalLineW) / 2)
           : marginLeft;
 
+      const headerPlainLinks = Boolean(
+        fmt.headerStyle.underlineLinks && !fmt.headerStyle.useResumeLinkMacro
+      );
       contactItems.forEach((item, idx) => {
         if (idx > 0) {
           cx += drawTextSpan(sepText, cx, cursorY, "regular", contactPt, mutedGray);
@@ -636,7 +640,9 @@ export function generateResumePdfBytes(resume: MasterResume): Uint8Array {
           item.gray,
           item.underline,
           item.linkUrl,
-          item.iconBefore
+          item.iconBefore,
+          undefined,
+          headerPlainLinks
         );
       });
       cursorY -= 4;

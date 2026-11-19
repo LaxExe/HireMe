@@ -1465,12 +1465,18 @@ export function reconstructLatexResume(resume: MasterResume): string {
   const renderLink = (
     url: string,
     label: string,
-    opts?: { iconLatex?: string; iconBeforeLatex?: string; underline?: boolean }
+    opts?: {
+      iconLatex?: string;
+      iconBeforeLatex?: string;
+      underline?: boolean;
+      forceHref?: boolean;
+    }
   ) => {
     const rawUrl = url.startsWith("http") || url.startsWith("mailto:") ? url : `https://${url}`;
     const escapedLabel = escapeLatexText(label);
     let display = escapedLabel;
-    if (opts?.underline && !useResumeLink && display) {
+    const useMacro = useResumeLink && !opts?.forceHref;
+    if (opts?.underline && !useMacro && display) {
       display = `\\underline{${display}}`;
     }
     if (opts?.iconBeforeLatex) {
@@ -1479,7 +1485,7 @@ export function reconstructLatexResume(resume: MasterResume): string {
     if (opts?.iconLatex) {
       display = display ? `${display} ${opts.iconLatex}` : opts.iconLatex;
     }
-    if (useResumeLink) {
+    if (useMacro) {
       return `\\resumeLink{${rawUrl}}{${display}}`;
     }
     return `\\href{${rawUrl}}{${display}}`;
@@ -1494,6 +1500,9 @@ export function reconstructLatexResume(resume: MasterResume): string {
   /* ------------------------------- 1. Header ------------------------------- */
   if (hasResumeSection(resume, "contact")) {
     const { contact } = resume;
+    if (isSubheadingMacro) {
+      lines.push("%----------HEADING----------");
+    }
     lines.push("\\begin{center}");
     if (contact.name) {
       const sizeCmd = `\\${fmt.headerStyle.nameSize || "Huge"}`;
@@ -1519,9 +1528,10 @@ export function reconstructLatexResume(resume: MasterResume): string {
           : escapeLatexText(contact.phone)
       );
     }
+    const headerUsesResumeLink = Boolean(fmt.headerStyle.useResumeLinkMacro);
     const hasLinkBlue = /\\definecolor\{linkblue\}/.test(preamble);
     if (contact.email) {
-      if (showHeaderIcons && hasLinkBlue) {
+      if (headerUsesResumeLink && showHeaderIcons && hasLinkBlue) {
         parts.push(
           renderLink(`mailto:${contact.email}`, contact.email, {
             iconBeforeLatex: "\\faEnvelope",
@@ -1531,6 +1541,7 @@ export function reconstructLatexResume(resume: MasterResume): string {
       } else {
         const emailHref = renderLink(`mailto:${contact.email}`, contact.email, {
           underline: fmt.headerStyle.underlineLinks,
+          forceHref: !headerUsesResumeLink,
         });
         parts.push(showHeaderIcons ? `\\faEnvelope~${emailHref}` : emailHref);
       }
@@ -1546,7 +1557,7 @@ export function reconstructLatexResume(resume: MasterResume): string {
               (/github\.com/i.test(link.url) && !/github\.io/i.test(link.url))
             ? "\\faGithub"
             : "\\faGlobe");
-        if (hasLinkBlue) {
+        if (headerUsesResumeLink && hasLinkBlue) {
           parts.push(
             renderLink(link.url, labelRaw, {
               iconBeforeLatex: icon,
@@ -1556,34 +1567,27 @@ export function reconstructLatexResume(resume: MasterResume): string {
         } else {
           const formattedLink = renderLink(link.url, labelRaw, {
             underline: fmt.headerStyle.underlineLinks,
+            forceHref: !headerUsesResumeLink,
           });
           parts.push(`${icon}~${formattedLink}`);
         }
       } else {
         const formattedLink = renderLink(link.url, labelRaw, {
           underline: fmt.headerStyle.underlineLinks,
+          forceHref: !headerUsesResumeLink,
         });
         parts.push(formattedLink);
       }
     }
 
     if (parts.length > 0) {
-      const usesSpaceCdot = resume.rawLatex
-        ? /\\\s+\$\\cdot\$\s+\\/.test(resume.rawLatex)
-        : false;
       const sep =
         fmt.headerStyle.separator === "bar"
           ? " $|$ "
           : showHeaderIcons
-          ? usesSpaceCdot
-            ? " \\ $\\cdot$ \\ "
-            : " ~$\\cdot$~ "
+          ? " ~$\\cdot$~ "
           : " $\\cdot$ ";
-      const prefix = isSubheadingMacro
-        ? /\\resumeBody/.test(preamble)
-          ? "    \\resumeBody "
-          : "    \\small "
-        : "    ";
+      const prefix = isSubheadingMacro ? "    \\small " : "    ";
       lines.push(prefix + parts.join(sep));
     }
     lines.push("\\end{center}");
