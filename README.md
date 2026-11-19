@@ -61,6 +61,8 @@ Modern hiring workflows suffer from high cognitive friction: candidates juggle d
 
 ## Repository & Links
 
+- **Live App**: [https://hireme-henna.vercel.app/](https://hireme-henna.vercel.app/)
+- **Author Website**: [https://lakshman-codes.github.io](https://lakshman-codes.github.io)
 - **GitHub Repository**: [https://github.com/LaxExe/HireMe](https://github.com/LaxExe/HireMe)
 - **Issue Tracker**: [https://github.com/LaxExe/HireMe/issues](https://github.com/LaxExe/HireMe/issues)
 - **Pull Requests**: [https://github.com/LaxExe/HireMe/pulls](https://github.com/LaxExe/HireMe/pulls)
@@ -353,3 +355,9 @@ Configure environment variables in your Vercel Project Settings or via the Verce
 ## License
 
 This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
+
+---
+
+## About the Author
+
+Built by Lakshman, a first-year Computer Engineering student at the University of Waterloo looking to build more experience. See more at [lakshman-codes.github.io](https://lakshman-codes.github.io) or on [GitHub](https://github.com/LaxExe).
