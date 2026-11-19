@@ -23,7 +23,7 @@ export default function Navbar() {
         <div className="max-w-5xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between">
           {/* Brand */}
           <Link
-            href={user ? "/experience" : "/"}
+            href="/"
             className="cursor-pointer select-none"
           >
             <span className="font-semibold text-base sm:text-lg tracking-tight text-neutral-900 lowercase hover:opacity-80 transition-opacity">
