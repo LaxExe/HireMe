@@ -57,7 +57,15 @@ import {
 } from "@/lib/resume/keywordMatch";
 import { pushResumeToAgents } from "@/lib/resume/agentsQueue";
 import { compileResumePdfBlobUrl, downloadResumePdf } from "@/lib/resume/exportPdf";
-import { parseMarkup } from "@/lib/resume/utils";
+import { knownTools, parseMarkup, plainText, uid } from "@/lib/resume/utils";
+import { hasResumeSection, type MasterResume, type Job, type Project } from "@/lib/resume/types";
+import CalibrationBar from "@/components/resume/CalibrationBar";
+import { CalibrationProvider } from "@/context/CalibrationContext";
+import { ContactSection, EducationSection } from "@/components/resume/ContactAndEducation";
+import SkillsSection from "@/components/resume/SkillsSection";
+import ExperienceSection from "@/components/resume/ExperienceSection";
+import ProjectsSection from "@/components/resume/ProjectsSection";
+import AwardsSection from "@/components/resume/AwardsSection";
 
 export default function PreviewPage() {
   const router = useRouter();
@@ -82,6 +90,9 @@ export default function PreviewPage() {
   } | null>(null);
   const [refreshModalStep, setRefreshModalStep] = useState<null | "step1" | "step2" | "refreshing">(null);
   const [refreshProgress, setRefreshProgress] = useState<{ current: number; total: number; roleName: string } | null>(null);
+  const [activeTab, setActiveTab] = useState<"alignment" | "editor">("alignment");
+  const [collapsedMalleableIds, setCollapsedMalleableIds] = useState<Record<string, boolean>>({});
+  const [isMalleableSectionCollapsed, setIsMalleableSectionCollapsed] = useState(false);
 
   useEffect(() => {
     if (!loading && !user) {
@@ -147,6 +158,228 @@ export default function PreviewPage() {
     if (!activeItem) return;
     const nextQueue = updatePreviewQueueItem(user.uid, activeItem.id, patch, queue);
     setQueue(nextQueue);
+  };
+
+  const known = useMemo(
+    () =>
+      activeItem?.baseResume
+        ? knownTools(
+            activeItem.baseResume.skills.flatMap((c) => c.skills.map((s) => s.name)),
+            activeItem.baseResume.projects.map((p) => p.techStack)
+          )
+        : [],
+    [activeItem?.baseResume]
+  );
+
+  const handleToggleSingleMalleable = (id: string) => {
+    setCollapsedMalleableIds((prev) => ({
+      ...prev,
+      [id]: !prev[id],
+    }));
+  };
+
+  const allMalleableCollapsed = useMemo(() => {
+    if (!activeItem || activeItem.larpRun.malleableBullets.length === 0) return false;
+    return activeItem.larpRun.malleableBullets.every(
+      (mb) => Boolean(collapsedMalleableIds[mb.id])
+    );
+  }, [activeItem, collapsedMalleableIds]);
+
+  const handleToggleAllMalleableBullets = () => {
+    if (!activeItem) return;
+    const nextVal = !allMalleableCollapsed;
+    const nextMap: Record<string, boolean> = {};
+    for (const mb of activeItem.larpRun.malleableBullets) {
+      nextMap[mb.id] = nextVal;
+    }
+    setCollapsedMalleableIds(nextMap);
+  };
+
+  const handleUpdateResume = (patch: Partial<MasterResume>) => {
+    if (!activeItem) return;
+    const updatedResume: MasterResume = {
+      ...activeItem.baseResume,
+      ...patch,
+      updatedAt: new Date().toISOString(),
+    };
+    updateActiveItem({ baseResume: updatedResume });
+    setVisualizedUrlBySlot((prev) => {
+      if (prev[activeItem.id]) {
+        URL.revokeObjectURL(prev[activeItem.id]);
+        const next = { ...prev };
+        delete next[activeItem.id];
+        return next;
+      }
+      return prev;
+    });
+  };
+
+  const handleExperienceChange = (newJobs: Job[]) => {
+    if (!activeItem) return;
+    const prevBulletsMap = new Map<string, string>();
+    for (const j of activeItem.baseResume.experience) {
+      for (const b of j.bullets) {
+        prevBulletsMap.set(b.id, b.text);
+      }
+    }
+
+    const nextAcceptedBulletIds = new Set(activeItem.acceptedBulletIds);
+    for (const j of newJobs) {
+      for (const b of j.bullets) {
+        if (prevBulletsMap.has(b.id) && prevBulletsMap.get(b.id) !== b.text) {
+          nextAcceptedBulletIds.delete(b.id);
+        }
+      }
+    }
+
+    const currentBulletIds = new Set(newJobs.flatMap((j) => j.bullets.map((b) => b.id)));
+    for (const id of Array.from(nextAcceptedBulletIds)) {
+      if (
+        activeItem.larpRun.bulletProposals.some(
+          (bp) => bp.bulletId === id && bp.containerKind === "experience"
+        ) &&
+        !currentBulletIds.has(id)
+      ) {
+        nextAcceptedBulletIds.delete(id);
+      }
+    }
+
+    const updatedResume: MasterResume = {
+      ...activeItem.baseResume,
+      experience: newJobs,
+      updatedAt: new Date().toISOString(),
+    };
+
+    updateActiveItem({
+      baseResume: updatedResume,
+      acceptedBulletIds: Array.from(nextAcceptedBulletIds),
+    });
+
+    setVisualizedUrlBySlot((prev) => {
+      if (prev[activeItem.id]) {
+        URL.revokeObjectURL(prev[activeItem.id]);
+        const next = { ...prev };
+        delete next[activeItem.id];
+        return next;
+      }
+      return prev;
+    });
+  };
+
+  const handleProjectsChange = (newProjects: Project[]) => {
+    if (!activeItem) return;
+    const prevBulletsMap = new Map<string, string>();
+    for (const p of activeItem.baseResume.projects) {
+      for (const b of p.bullets) {
+        prevBulletsMap.set(b.id, b.text);
+      }
+    }
+
+    const nextAcceptedBulletIds = new Set(activeItem.acceptedBulletIds);
+    for (const p of newProjects) {
+      for (const b of p.bullets) {
+        if (prevBulletsMap.has(b.id) && prevBulletsMap.get(b.id) !== b.text) {
+          nextAcceptedBulletIds.delete(b.id);
+        }
+      }
+    }
+
+    const currentBulletIds = new Set(newProjects.flatMap((p) => p.bullets.map((b) => b.id)));
+    for (const id of Array.from(nextAcceptedBulletIds)) {
+      if (
+        activeItem.larpRun.bulletProposals.some(
+          (bp) => bp.bulletId === id && bp.containerKind === "project"
+        ) &&
+        !currentBulletIds.has(id)
+      ) {
+        nextAcceptedBulletIds.delete(id);
+      }
+    }
+
+    const updatedResume: MasterResume = {
+      ...activeItem.baseResume,
+      projects: newProjects,
+      updatedAt: new Date().toISOString(),
+    };
+
+    updateActiveItem({
+      baseResume: updatedResume,
+      acceptedBulletIds: Array.from(nextAcceptedBulletIds),
+    });
+
+    setVisualizedUrlBySlot((prev) => {
+      if (prev[activeItem.id]) {
+        URL.revokeObjectURL(prev[activeItem.id]);
+        const next = { ...prev };
+        delete next[activeItem.id];
+        return next;
+      }
+      return prev;
+    });
+  };
+
+  const handleAddSection = (key: "awards" | "projects") => {
+    if (!activeItem) return;
+    if (key === "awards") {
+      const nextAwards = [
+        ...(activeItem.baseResume.awards ?? []),
+        {
+          id: uid("a"),
+          title: "Award Title",
+          organization: "Organization",
+          date: "",
+          description: "",
+        },
+      ];
+      handleUpdateResume({ awards: nextAwards });
+    } else if (key === "projects") {
+      const nextProjects: Project[] = [
+        ...activeItem.baseResume.projects,
+        {
+          id: uid("p"),
+          name: "New Project",
+          url: "",
+          meta: "",
+          techStack: [],
+          bullets: [],
+        },
+      ];
+      handleUpdateResume({ projects: nextProjects });
+    }
+  };
+
+  const handleResetSlotToMaster = async () => {
+    if (!user || !activeItem) return;
+    const master = await loadMasterResume(user.uid);
+    if (!master) {
+      alert("Could not load your latest master resume.");
+      return;
+    }
+    const confirmed = window.confirm(
+      "Reset this job application's resume to your master resume? Any fine custom edits made for this role will be discarded."
+    );
+    if (!confirmed) return;
+
+    updateActiveItem({
+      baseResume: structuredClone(master),
+    });
+
+    setVisualizedUrlBySlot((prev) => {
+      if (prev[activeItem.id]) {
+        URL.revokeObjectURL(prev[activeItem.id]);
+        const next = { ...prev };
+        delete next[activeItem.id];
+        return next;
+      }
+      return prev;
+    });
+  };
+
+  const scrollToSection = (id: string) => {
+    const el = document.getElementById(id);
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
   };
 
   const handleToggleBullet = (bulletId: string) => {
@@ -1073,6 +1306,55 @@ export default function PreviewPage() {
                 </div>
               </div>
 
+              {/* View Mode Toggle Pill Dock */}
+              <div className="flex items-center justify-between gap-3 flex-wrap border-b border-[#ebebeb] pb-3">
+                <div className="inline-flex items-center bg-[#ebebeb]/60 rounded-full border border-[#ebebeb] p-1 shadow-2xs">
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab("alignment")}
+                    className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs rounded-full transition-all active:scale-95 cursor-pointer ${
+                      activeTab === "alignment"
+                        ? "bg-white text-neutral-900 shadow-sm font-semibold"
+                        : "text-neutral-600 hover:text-neutral-900 font-medium"
+                    }`}
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>AI Alignment & Proposals</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab("editor")}
+                    className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs rounded-full transition-all active:scale-95 cursor-pointer ${
+                      activeTab === "editor"
+                        ? "bg-white text-neutral-900 shadow-sm font-semibold"
+                        : "text-neutral-600 hover:text-neutral-900 font-medium"
+                    }`}
+                  >
+                    <Pencil className="w-3.5 h-3.5" />
+                    <span>Customize Resume</span>
+                  </button>
+                </div>
+
+                {activeTab === "editor" && (
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-[10px] text-neutral-400 hidden sm:inline">
+                      Job-specific overrides · Master resume untouched
+                    </span>
+                    <button
+                      type="button"
+                      onClick={handleResetSlotToMaster}
+                      className="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-medium text-neutral-600 hover:text-neutral-900 bg-white hover:bg-neutral-50 border border-[#ebebeb] rounded-full shadow-2xs active:scale-95 transition-all cursor-pointer"
+                      title="Reset this job application's resume to your master resume"
+                    >
+                      <RotateCw className="w-3 h-3 text-neutral-500" />
+                      <span>Reset to Master</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {activeTab === "alignment" && (
+                <>
               {/* Summary Score Bar */}
               {matchResult && (
                 <div className="bg-[#fafafa] rounded-xl border border-[#ebebeb] p-4 sm:p-5 space-y-3">
@@ -1667,7 +1949,7 @@ export default function PreviewPage() {
                 <div className="space-y-2 pt-2 border-t border-[#ebebeb]">
                   <span className="block font-mono text-[10px] uppercase tracking-wider text-neutral-400">
                     Existing Bullet Edits ({activeItem.acceptedBulletIds.length} of{" "}
-                    {activeItem.larpRun.bulletProposals.length} selected · click text to edit)
+                    {activeItem.larpRun.bulletProposals.length} selected)
                   </span>
                   <div className="space-y-3">
                     {activeItem.larpRun.bulletProposals.map((prop) => {
@@ -1815,155 +2097,341 @@ export default function PreviewPage() {
                 </div>
               )}
 
-              {/* 3. Malleable 1-Line LARP Bullets & Multiple Phrasing Options */}
+              {/* 3. Malleable 1-Line LARP Bullets (Collapsible) */}
               {activeItem.larpRun.malleableBullets.length > 0 && (
                 <div className="space-y-2.5 pt-2 border-t border-[#ebebeb]">
-                  <span className="block font-mono text-[10px] uppercase tracking-wider text-neutral-400">
-                    Malleable 1-Line LARP Bullets ({activeItem.acceptedMalleableIds.length} of{" "}
-                    {activeItem.larpRun.malleableBullets.length} selected · click option text to edit)
-                  </span>
-                  <div className="space-y-2.5">
-                    {activeItem.larpRun.malleableBullets.map((mb) => {
-                      const checked = activeItem.acceptedMalleableIds.includes(mb.id);
-                      const chosenOptId =
-                        activeItem.selectedMalleableOptionBySlotId?.[mb.id] ||
-                        mb.options?.[0]?.id;
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <button
+                      type="button"
+                      onClick={() => setIsMalleableSectionCollapsed((prev) => !prev)}
+                      className="inline-flex items-center gap-1.5 text-left cursor-pointer group"
+                    >
+                      <span className="font-mono text-[10px] uppercase tracking-wider text-neutral-400 group-hover:text-neutral-700 transition-colors">
+                        Malleable 1-Line LARP Bullets ({activeItem.acceptedMalleableIds.length} of{" "}
+                        {activeItem.larpRun.malleableBullets.length} selected)
+                      </span>
+                      {isMalleableSectionCollapsed ? (
+                        <ChevronDown className="w-3.5 h-3.5 text-neutral-400 group-hover:text-neutral-700 transition-colors" />
+                      ) : (
+                        <ChevronUp className="w-3.5 h-3.5 text-neutral-400 group-hover:text-neutral-700 transition-colors" />
+                      )}
+                    </button>
 
-                      return (
-                        <div
-                          key={mb.id}
-                          className={`rounded-xl border p-3.5 space-y-2.5 transition-colors ${
-                            checked
-                              ? "border-neutral-900 bg-white"
-                              : "border-[#ebebeb] bg-[#fafafa] opacity-75"
-                          }`}
-                        >
-                          <div className="flex items-center justify-between gap-2 flex-wrap">
-                            <label className="inline-flex items-center gap-2 cursor-pointer select-none">
-                              <input
-                                type="checkbox"
-                                checked={checked}
-                                onChange={() => handleToggleMalleable(mb.id)}
-                                className="rounded border-neutral-300 text-neutral-900 focus:ring-0"
-                              />
-                              <span className="text-xs font-semibold text-neutral-900">
-                                New 1L Bullet in {mb.targetContainerTitle}
-                              </span>
-                            </label>
-                            <div className="flex items-center gap-1.5 flex-wrap">
-                              <span
-                                className="font-mono text-[10px] px-2 py-0.5 rounded-full bg-neutral-100 text-neutral-700 border border-neutral-200"
-                                title={
-                                  mb.scoreFeatures
-                                    ? formatScoreBreakdownSummary(mb.scoreFeatures)
-                                    : mb.believabilityCritique
-                                }
-                              >
-                                Score {mb.believabilityScore}
-                              </span>
-                              <span className="font-mono text-[10px] px-2 py-0.5 rounded-full bg-neutral-100 border border-[#ebebeb] text-neutral-600 uppercase">
-                                {mb.options?.[0]?.source ?? "template"}
-                              </span>
-                              {mb.injectedKeywords.map((kw) => (
-                                <span
-                                  key={kw}
-                                  className="font-mono text-[10px] px-2 py-0.5 rounded-full bg-blue-50 border border-blue-200 text-blue-700"
-                                >
-                                  +{kw}
-                                </span>
-                              ))}
-                            </div>
-                          </div>
-
-                          {mb.options && mb.options.length > 0 && (
-                            <div className="space-y-1.5 pl-5">
-                              {mb.options.map((opt, optIdx) => {
-                                const isOptSelected = opt.id === chosenOptId;
-                                const isEditingOpt = editingMalleableOptId === opt.id;
-                                return (
-                                  <div
-                                    key={opt.id}
-                                    onClick={() => handleSelectMalleableOption(mb.id, opt.id)}
-                                    className={`rounded-lg border p-2.5 cursor-pointer transition-colors ${
-                                      isOptSelected
-                                        ? "bg-emerald-50/40 border-emerald-300"
-                                        : "bg-[#fafafa] border-[#ebebeb] hover:bg-neutral-50"
-                                    }`}
-                                  >
-                                    <div className="flex items-center justify-between gap-2 mb-0.5">
-                                      <span className="font-mono text-[10px] font-semibold text-neutral-900">
-                                        Option {optIdx + 1} · {opt.styleLabel}
-                                      </span>
-                                      <div className="flex items-center gap-2">
-                                        <span className="font-mono text-[10px] text-neutral-500">
-                                          {opt.chars}/{opt.maxChars} chars · {opt.widthNcu} NCU · {opt.fit.badge}
-                                        </span>
-                                        <button
-                                          type="button"
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            handleSelectMalleableOption(mb.id, opt.id);
-                                            setEditingMalleableOptId(
-                                              isEditingOpt ? null : opt.id
-                                            );
-                                          }}
-                                          className="inline-flex items-center gap-1 font-mono text-[10px] text-neutral-600 hover:text-neutral-900 bg-white border border-[#ebebeb] px-1.5 py-0.5 rounded cursor-pointer"
-                                        >
-                                          <Pencil className="w-2.5 h-2.5" />
-                                          <span>{isEditingOpt ? "Done" : "Edit"}</span>
-                                        </button>
-                                      </div>
-                                    </div>
-
-                                    {opt.easyExplanation && (
-                                      <p className="font-mono text-[10px] text-neutral-500 mb-1">
-                                        Talking point: {opt.easyExplanation}
-                                      </p>
-                                    )}
-
-                                    {isEditingOpt ? (
-                                      <textarea
-                                        autoFocus
-                                        rows={2}
-                                        value={opt.markup}
-                                        onClick={(e) => e.stopPropagation()}
-                                        onChange={(e) =>
-                                          handleEditMalleableOptionInPreview(
-                                            mb.id,
-                                            opt.id,
-                                            e.target.value
-                                          )
-                                        }
-                                        onKeyDown={(e) => {
-                                          if (e.key === "Escape") setEditingMalleableOptId(null);
-                                        }}
-                                        className="w-full mt-1 text-xs font-mono text-neutral-900 bg-white border border-emerald-400 rounded-md p-2 focus:outline-none resize-none"
-                                      />
-                                    ) : (
-                                      <p className="text-xs text-neutral-900 leading-relaxed">
-                                        {parseMarkup(opt.markup).map((seg, idx) =>
-                                          seg.bold ? (
-                                            <strong
-                                              key={idx}
-                                              className="font-semibold text-neutral-900"
-                                            >
-                                              {seg.text}
-                                            </strong>
-                                          ) : (
-                                            <span key={idx}>{seg.text}</span>
-                                          )
-                                        )}
-                                      </p>
-                                    )}
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
+                    {!isMalleableSectionCollapsed && activeItem.larpRun.malleableBullets.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={handleToggleAllMalleableBullets}
+                        className="inline-flex items-center gap-1 font-mono text-[10px] text-neutral-500 hover:text-neutral-800 bg-[#fafafa] border border-[#ebebeb] px-2.5 py-0.5 rounded-full transition-colors cursor-pointer active:scale-95 shadow-2xs"
+                      >
+                        <span>{allMalleableCollapsed ? "Expand All" : "Collapse All"}</span>
+                        {allMalleableCollapsed ? (
+                          <ChevronDown className="w-3 h-3 text-neutral-400" />
+                        ) : (
+                          <ChevronUp className="w-3 h-3 text-neutral-400" />
+                        )}
+                      </button>
+                    )}
                   </div>
+
+                  {!isMalleableSectionCollapsed && (
+                    <div className="space-y-2.5 animate-fadeIn">
+                      {activeItem.larpRun.malleableBullets.map((mb) => {
+                        const checked = activeItem.acceptedMalleableIds.includes(mb.id);
+                        const chosenOptId =
+                          activeItem.selectedMalleableOptionBySlotId?.[mb.id] ||
+                          mb.options?.[0]?.id;
+                        const chosenOpt =
+                          mb.options?.find((o) => o.id === chosenOptId) || mb.options?.[0];
+                        const isCollapsed = Boolean(collapsedMalleableIds[mb.id]);
+
+                        return (
+                          <div
+                            key={mb.id}
+                            className={`rounded-xl border p-3.5 space-y-2.5 transition-colors ${
+                              checked
+                                ? "border-neutral-900 bg-white"
+                                : "border-[#ebebeb] bg-[#fafafa] opacity-75"
+                            }`}
+                          >
+                            <div className="flex items-center justify-between gap-2 flex-wrap">
+                              <label className="inline-flex items-center gap-2 cursor-pointer select-none">
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={() => handleToggleMalleable(mb.id)}
+                                  className="rounded border-neutral-300 text-neutral-900 focus:ring-0"
+                                />
+                                <span className="text-xs font-semibold text-neutral-900">
+                                  New 1L Bullet in {mb.targetContainerTitle}
+                                </span>
+                              </label>
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span
+                                  className="font-mono text-[10px] px-2 py-0.5 rounded-full bg-neutral-100 text-neutral-700 border border-neutral-200"
+                                  title={
+                                    mb.scoreFeatures
+                                      ? formatScoreBreakdownSummary(mb.scoreFeatures)
+                                      : mb.believabilityCritique
+                                  }
+                                >
+                                  Score {mb.believabilityScore}
+                                </span>
+                                <span className="font-mono text-[10px] px-2 py-0.5 rounded-full bg-neutral-100 border border-[#ebebeb] text-neutral-600 uppercase">
+                                  {mb.options?.[0]?.source ?? "template"}
+                                </span>
+                                {mb.injectedKeywords.map((kw) => (
+                                  <span
+                                    key={kw}
+                                    className="font-mono text-[10px] px-2 py-0.5 rounded-full bg-blue-50 border border-blue-200 text-blue-700"
+                                  >
+                                    +{kw}
+                                  </span>
+                                ))}
+                                <button
+                                  type="button"
+                                  onClick={() => handleToggleSingleMalleable(mb.id)}
+                                  aria-label={isCollapsed ? "Expand bullet options" : "Collapse bullet options"}
+                                  className="p-1 rounded text-neutral-400 hover:text-neutral-700 hover:bg-neutral-100 transition-colors cursor-pointer ml-1 active:scale-95"
+                                >
+                                  {isCollapsed ? (
+                                    <ChevronDown className="w-3.5 h-3.5" />
+                                  ) : (
+                                    <ChevronUp className="w-3.5 h-3.5" />
+                                  )}
+                                </button>
+                              </div>
+                            </div>
+
+                            {isCollapsed ? (
+                              <div
+                                onClick={() => handleToggleSingleMalleable(mb.id)}
+                                className="pl-5 pt-0.5 text-xs text-neutral-600 flex items-center justify-between gap-2 cursor-pointer hover:text-neutral-900 transition-colors group/summary"
+                              >
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <span className="font-mono text-[10px] text-neutral-400 shrink-0">
+                                    Active ({chosenOpt?.styleLabel ?? "Option"}):
+                                  </span>
+                                  <span className="truncate text-neutral-800 font-mono text-[11px] group-hover/summary:text-neutral-900">
+                                    {chosenOpt ? plainText(chosenOpt.markup) : plainText(mb.markup)}
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-1.5 shrink-0">
+                                  <span className="font-mono text-[10px] text-neutral-400">
+                                    {chosenOpt?.chars ?? 0} chars
+                                  </span>
+                                  <span className="font-mono text-[10px] text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded">
+                                    {chosenOpt?.fit.badge ?? "1L"}
+                                  </span>
+                                </div>
+                              </div>
+                            ) : (
+                              mb.options && mb.options.length > 0 && (
+                                <div className="space-y-1.5 pl-5 animate-fadeIn">
+                                  {mb.options.map((opt, optIdx) => {
+                                    const isOptSelected = opt.id === chosenOptId;
+                                    const isEditingOpt = editingMalleableOptId === opt.id;
+                                    return (
+                                      <div
+                                        key={opt.id}
+                                        onClick={() => handleSelectMalleableOption(mb.id, opt.id)}
+                                        className={`rounded-lg border p-2.5 cursor-pointer transition-colors ${
+                                          isOptSelected
+                                            ? "bg-emerald-50/40 border-emerald-300"
+                                            : "bg-[#fafafa] border-[#ebebeb] hover:bg-neutral-50"
+                                        }`}
+                                      >
+                                        <div className="flex items-center justify-between gap-2 mb-0.5">
+                                          <span className="font-mono text-[10px] font-semibold text-neutral-900">
+                                            Option {optIdx + 1} · {opt.styleLabel}
+                                          </span>
+                                          <div className="flex items-center gap-2">
+                                            <span className="font-mono text-[10px] text-neutral-500">
+                                              {opt.chars}/{opt.maxChars} chars · {opt.widthNcu} NCU · {opt.fit.badge}
+                                            </span>
+                                            <button
+                                              type="button"
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                handleSelectMalleableOption(mb.id, opt.id);
+                                                setEditingMalleableOptId(
+                                                  isEditingOpt ? null : opt.id
+                                                );
+                                              }}
+                                              className="inline-flex items-center gap-1 font-mono text-[10px] text-neutral-600 hover:text-neutral-900 bg-white border border-[#ebebeb] px-1.5 py-0.5 rounded cursor-pointer"
+                                            >
+                                              <Pencil className="w-2.5 h-2.5" />
+                                              <span>{isEditingOpt ? "Done" : "Edit"}</span>
+                                            </button>
+                                          </div>
+                                        </div>
+
+                                        {opt.easyExplanation && (
+                                          <p className="font-mono text-[10px] text-neutral-500 mb-1">
+                                            Talking point: {opt.easyExplanation}
+                                          </p>
+                                        )}
+
+                                        {isEditingOpt ? (
+                                          <textarea
+                                            autoFocus
+                                            rows={2}
+                                            value={opt.markup}
+                                            onClick={(e) => e.stopPropagation()}
+                                            onChange={(e) =>
+                                              handleEditMalleableOptionInPreview(
+                                                mb.id,
+                                                opt.id,
+                                                e.target.value
+                                              )
+                                            }
+                                            onKeyDown={(e) => {
+                                              if (e.key === "Escape") setEditingMalleableOptId(null);
+                                            }}
+                                            className="w-full mt-1 text-xs font-mono text-neutral-900 bg-white border border-emerald-400 rounded-md p-2 focus:outline-none resize-none"
+                                          />
+                                        ) : (
+                                          <p className="text-xs text-neutral-900 leading-relaxed">
+                                            {parseMarkup(opt.markup).map((seg, idx) =>
+                                              seg.bold ? (
+                                                <strong
+                                                  key={idx}
+                                                  className="font-semibold text-neutral-900"
+                                                >
+                                                  {seg.text}
+                                                </strong>
+                                              ) : (
+                                                <span key={idx}>{seg.text}</span>
+                                              )
+                                            )}
+                                          </p>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              )
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+                </>
+              )}
+
+              {/* View 2: Fine Resume Customizer for this Job Application */}
+              {activeTab === "editor" && (
+                <div className="space-y-6 animate-fadeIn pt-1">
+                  {/* Jump To Navigation Bar */}
+                  <div className="flex items-center gap-1.5 flex-wrap pb-2 border-b border-[#ebebeb]">
+                    <span className="font-mono text-[10px] uppercase tracking-wider text-neutral-400 mr-1">
+                      Jump to:
+                    </span>
+                    {[
+                      { id: "sec-calibration", label: "Calibration" },
+                      { id: "sec-contact", label: "Contact" },
+                      { id: "sec-education", label: "Education" },
+                      { id: "sec-skills", label: "Skills" },
+                      { id: "sec-experience", label: "Experience" },
+                      { id: "sec-projects", label: "Projects" },
+                      { id: "sec-awards", label: "Awards" },
+                    ].map((s) => (
+                      <button
+                        key={s.id}
+                        type="button"
+                        onClick={() => scrollToSection(s.id)}
+                        className="font-mono text-[11px] px-2.5 py-1 rounded-full bg-[#fafafa] hover:bg-neutral-100 text-neutral-700 border border-[#ebebeb] active:scale-95 transition-all cursor-pointer shadow-2xs"
+                      >
+                        {s.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  <CalibrationProvider
+                    key={activeItem.id}
+                    initialCalibration={activeItem.baseResume.calibration}
+                    onCalibrationChange={(cal) => handleUpdateResume({ calibration: cal })}
+                  >
+                    <div className="space-y-8 min-w-0">
+                      <div id="sec-calibration" className="scroll-mt-20">
+                        <CalibrationBar />
+                      </div>
+
+                      {hasResumeSection(activeItem.baseResume, "contact") && (
+                        <ContactSection
+                          contact={activeItem.baseResume.contact}
+                          onChange={(contact) => handleUpdateResume({ contact })}
+                        />
+                      )}
+
+                      {hasResumeSection(activeItem.baseResume, "education") && (
+                        <EducationSection
+                          items={activeItem.baseResume.education}
+                          onChange={(education) => handleUpdateResume({ education })}
+                        />
+                      )}
+
+                      {hasResumeSection(activeItem.baseResume, "skills") && (
+                        <SkillsSection
+                          categories={activeItem.baseResume.skills}
+                          onChange={(skills) => handleUpdateResume({ skills })}
+                        />
+                      )}
+
+                      {hasResumeSection(activeItem.baseResume, "experience") && (
+                        <ExperienceSection
+                          jobs={activeItem.baseResume.experience}
+                          known={known}
+                          onChange={handleExperienceChange}
+                        />
+                      )}
+
+                      {hasResumeSection(activeItem.baseResume, "projects") ? (
+                        <ProjectsSection
+                          projects={activeItem.baseResume.projects}
+                          known={known}
+                          onChange={handleProjectsChange}
+                        />
+                      ) : (
+                        <div className="rounded-xl border border-dashed border-[#ebebeb] bg-[#fafafa] p-4 flex items-center justify-between gap-3">
+                          <span className="text-xs text-neutral-500 font-mono">
+                            No Projects section in this resume
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleAddSection("projects")}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-neutral-700 bg-white hover:bg-neutral-50 border border-[#ebebeb] rounded-full shadow-2xs active:scale-95 transition-all cursor-pointer"
+                          >
+                            <Plus className="w-3.5 h-3.5" />
+                            <span>Add Projects</span>
+                          </button>
+                        </div>
+                      )}
+
+                      {hasResumeSection(activeItem.baseResume, "awards") ? (
+                        <AwardsSection
+                          awards={activeItem.baseResume.awards ?? []}
+                          onChange={(awards) => handleUpdateResume({ awards })}
+                        />
+                      ) : (
+                        <div className="rounded-xl border border-dashed border-[#ebebeb] bg-[#fafafa] p-4 flex items-center justify-between gap-3">
+                          <span className="text-xs text-neutral-500 font-mono">
+                            No Awards section in this resume
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleAddSection("awards")}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-neutral-700 bg-white hover:bg-neutral-50 border border-[#ebebeb] rounded-full shadow-2xs active:scale-95 transition-all cursor-pointer"
+                          >
+                            <Plus className="w-3.5 h-3.5" />
+                            <span>Add Awards</span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </CalibrationProvider>
                 </div>
               )}
             </div>

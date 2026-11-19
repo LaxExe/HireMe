@@ -14,6 +14,8 @@ import {
   X,
   RotateCw,
   Download,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { loadMasterResume, subscribeMasterResume } from "@/lib/resume/store";
@@ -45,7 +47,7 @@ import {
   subscribePreviewQueue,
   type PreviewQueueItem,
 } from "@/lib/resume/previewQueue";
-import { parseMarkup } from "@/lib/resume/utils";
+import { parseMarkup, plainText } from "@/lib/resume/utils";
 import type { MasterResume } from "@/lib/resume/types";
 
 export default function OperationsPage() {
@@ -82,6 +84,7 @@ export default function OperationsPage() {
   const [useAiProposer, setUseAiProposer] = useState(true);
   const [aiProposing, setAiProposing] = useState(false);
   const [llmTelemetry, setLlmTelemetry] = useState<LlmTelemetry | null>(null);
+  const [collapsedMalleableIds, setCollapsedMalleableIds] = useState<Record<string, boolean>>({});
 
   const fetchJobDescriptionFromUrl = async (urlToFetch: string) => {
     if (!urlToFetch || !urlToFetch.trim()) return;
@@ -1285,11 +1288,51 @@ export default function OperationsPage() {
                                   {activeOpt?.chars ?? mb.chars}/{mb.maxChars} chars ·{" "}
                                   {activeOpt?.widthNcu ?? mb.widthNcu} NCU)
                                 </span>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setCollapsedMalleableIds((prev) => ({
+                                      ...prev,
+                                      [mb.id]: !prev[mb.id],
+                                    }))
+                                  }
+                                  aria-label={collapsedMalleableIds[mb.id] ? "Expand options" : "Collapse options"}
+                                  className="p-1 rounded text-neutral-400 hover:text-neutral-700 hover:bg-neutral-100 transition-colors cursor-pointer active:scale-95 ml-1"
+                                >
+                                  {collapsedMalleableIds[mb.id] ? (
+                                    <ChevronDown className="w-3.5 h-3.5" />
+                                  ) : (
+                                    <ChevronUp className="w-3.5 h-3.5" />
+                                  )}
+                                </button>
                               </div>
                             </div>
 
                             {/* Multiple Good, Low-Stretch Resume Point Options */}
-                            {mb.options && mb.options.length > 0 && (
+                            {collapsedMalleableIds[mb.id] ? (
+                              <div
+                                onClick={() =>
+                                  setCollapsedMalleableIds((prev) => ({
+                                    ...prev,
+                                    [mb.id]: false,
+                                  }))
+                                }
+                                className="pl-5 pt-0.5 text-xs text-neutral-600 flex items-center justify-between gap-2 cursor-pointer hover:text-neutral-900 transition-colors group/summary"
+                              >
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <span className="font-mono text-[10px] text-neutral-400 shrink-0">
+                                    Active ({activeOpt?.styleLabel ?? "Option"}):
+                                  </span>
+                                  <span className="truncate text-neutral-800 font-mono text-[11px] group-hover/summary:text-neutral-900">
+                                    {activeOpt ? plainText(activeOpt.markup) : plainText(mb.markup)}
+                                  </span>
+                                </div>
+                                <span className="font-mono text-[10px] text-neutral-400 shrink-0">
+                                  {activeOpt?.chars ?? mb.chars} chars
+                                </span>
+                              </div>
+                            ) : (
+                              mb.options && mb.options.length > 0 && (
                               <div className="space-y-2">
                                 <span className="block font-mono text-[10px] text-neutral-400 uppercase">
                                   Choose Phrasing Option ({mb.options.length} low-stretch 1-line options for{" "}
@@ -1420,7 +1463,7 @@ export default function OperationsPage() {
                                   })}
                                 </div>
                               </div>
-                            )}
+                            ))}
 
                             <p className="text-[11px] text-neutral-500 font-mono">
                               Why it belongs here: {mb.believabilityCritique}
