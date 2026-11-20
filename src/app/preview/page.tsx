@@ -20,6 +20,8 @@ import {
   ChevronUp,
   CheckCircle2,
   AlertTriangle,
+  Code,
+  Copy,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import {
@@ -55,7 +57,12 @@ import {
   type MinimumQualificationsResult,
 } from "@/lib/resume/keywordMatch";
 import { pushResumeToAgents } from "@/lib/resume/agentsQueue";
-import { compileResumePdfBlobUrl, downloadResumePdf } from "@/lib/resume/exportPdf";
+import {
+  compileResumePdfBlobUrl,
+  downloadResumePdf,
+  downloadResumeTex,
+} from "@/lib/resume/exportPdf";
+import { reconstructLatexResume } from "@/lib/resume/latex";
 import { knownTools, parseMarkup, plainText, uid } from "@/lib/resume/utils";
 import { hasResumeSection, type MasterResume, type Job, type Project } from "@/lib/resume/types";
 import CalibrationBar from "@/components/resume/CalibrationBar";
@@ -100,6 +107,8 @@ export default function PreviewPage() {
   const [activeTab, setActiveTab] = useState<"alignment" | "editor">("alignment");
   const [collapsedMalleableIds, setCollapsedMalleableIds] = useState<Record<string, boolean>>({});
   const [isMalleableSectionCollapsed, setIsMalleableSectionCollapsed] = useState(false);
+  const [showLatexModal, setShowLatexModal] = useState(false);
+  const [copiedLatex, setCopiedLatex] = useState(false);
 
   useEffect(() => {
     if (!loading && !user) {
@@ -853,29 +862,55 @@ export default function PreviewPage() {
     }
   };
 
+  const getDownloadBaseName = (item: PreviewQueueItem, tailored: MasterResume): string => {
+    const contactName = tailored.contact?.name?.trim();
+    const rolePart = (item.roleName || item.title || "")
+      .replace(/\.pdf$/i, "")
+      .replace(/_SYNTHETIC_LARP/gi, "")
+      .replace(/_SYNTHETIC/gi, "")
+      .replace(/SYNTHETIC/gi, "")
+      .replace(/_LARP/gi, "")
+      .replace(/\bLARP\b/gi, "")
+      .replace(/Tailored_Resume/gi, "")
+      .replace(/Tailored/gi, "")
+      .trim();
+    return contactName
+      ? `${contactName}${rolePart ? `_${rolePart}` : "_Resume"}`
+      : rolePart || "Resume";
+  };
+
   const handleOptionalDownload = async (item: PreviewQueueItem) => {
     if (downloadingId) return;
     setDownloadingId(item.id);
     try {
       const tailored = buildTailoredResumeForSlot(item);
-      const contactName = tailored.contact?.name?.trim();
-      const rolePart = (item.roleName || item.title || "")
-        .replace(/\.pdf$/i, "")
-        .replace(/_SYNTHETIC_LARP/gi, "")
-        .replace(/_SYNTHETIC/gi, "")
-        .replace(/SYNTHETIC/gi, "")
-        .replace(/_LARP/gi, "")
-        .replace(/\bLARP\b/gi, "")
-        .replace(/Tailored_Resume/gi, "")
-        .replace(/Tailored/gi, "")
-        .trim();
-      const downloadName = contactName
-        ? `${contactName}${rolePart ? `_${rolePart}` : "_Resume"}`
-        : rolePart || "Resume";
-      await downloadResumePdf(tailored, downloadName);
+      await downloadResumePdf(tailored, getDownloadBaseName(item, tailored));
     } finally {
       setDownloadingId(null);
     }
+  };
+
+  const handleCopyLatex = async (item: PreviewQueueItem) => {
+    const tailored = buildTailoredResumeForSlot(item);
+    const latex = reconstructLatexResume(tailored);
+    try {
+      await navigator.clipboard?.writeText(latex);
+      setCopiedLatex(true);
+      setTimeout(() => setCopiedLatex(false), 2000);
+    } catch {}
+  };
+
+  const handleGetLatex = async (item: PreviewQueueItem) => {
+    const opening = !showLatexModal;
+    setShowLatexModal(opening);
+    if (opening) {
+      await handleCopyLatex(item);
+    }
+  };
+
+  const handleDownloadTex = (item: PreviewQueueItem) => {
+    const tailored = buildTailoredResumeForSlot(item);
+    downloadResumeTex(tailored, getDownloadBaseName(item, tailored));
   };
 
   return (
@@ -1301,6 +1336,20 @@ export default function PreviewPage() {
                     <span>Download</span>
                   </button>
 
+                  <button
+                    type="button"
+                    onClick={() => handleGetLatex(activeItem)}
+                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-full border shadow-2xs active:scale-95 transition-all cursor-pointer ${
+                      showLatexModal
+                        ? "bg-neutral-900 text-white border-neutral-900"
+                        : "text-neutral-700 bg-white hover:bg-neutral-50 border-[#ebebeb]"
+                    }`}
+                    title="View and copy tailored LaTeX (.tex) source"
+                  >
+                    <Code className="w-3.5 h-3.5" />
+                    <span>{showLatexModal ? "Hide LaTeX" : "Get LaTeX"}</span>
+                  </button>
+
                   {activeItem.larpRun.ledger && (
                     <button
                       type="button"
@@ -1329,6 +1378,75 @@ export default function PreviewPage() {
                   )}
                 </div>
               </div>
+
+              {showLatexModal &&
+                (() => {
+                  const tailoredResume = buildTailoredResumeForSlot(activeItem);
+                  const latexSource = reconstructLatexResume(tailoredResume);
+                  const lineCount = latexSource.split("\n").length;
+
+                  return (
+                    <div className="bg-[#fafafa] rounded-xl border border-[#ebebeb] shadow-subtle p-4 space-y-3 animate-fadeIn">
+                      <div className="flex items-center justify-between gap-3 flex-wrap">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-mono text-[10px] uppercase tracking-wider text-neutral-700 font-semibold">
+                            LaTeX Source (.tex)
+                          </span>
+                          <span className="font-mono text-[10px] px-2 py-0.5 rounded-full bg-white border border-[#ebebeb] text-neutral-500">
+                            {lineCount} lines · {latexSource.length} chars
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <button
+                            type="button"
+                            onClick={() => handleCopyLatex(activeItem)}
+                            className="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-medium text-neutral-900 bg-white hover:bg-neutral-50 border border-[#ebebeb] rounded-full shadow-2xs active:scale-95 transition-all cursor-pointer"
+                          >
+                            {copiedLatex ? (
+                              <>
+                                <Check className="w-3.5 h-3.5 text-emerald-600" />
+                                <span className="text-emerald-700">Copied LaTeX</span>
+                              </>
+                            ) : (
+                              <>
+                                <Copy className="w-3.5 h-3.5 text-neutral-500" />
+                                <span>Copy LaTeX</span>
+                              </>
+                            )}
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => handleDownloadTex(activeItem)}
+                            className="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-medium text-neutral-900 bg-white hover:bg-neutral-50 border border-[#ebebeb] rounded-full shadow-2xs active:scale-95 transition-all cursor-pointer"
+                          >
+                            <Download className="w-3.5 h-3.5 text-neutral-500" />
+                            <span>Download .tex</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => setShowLatexModal(false)}
+                            className="p-1.5 text-neutral-400 hover:text-neutral-900 bg-white hover:bg-neutral-50 border border-[#ebebeb] rounded-full active:scale-95 transition-all cursor-pointer"
+                            title="Close LaTeX viewer"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+
+                      <textarea
+                        readOnly
+                        aria-label="Tailored Resume LaTeX Source"
+                        value={latexSource}
+                        rows={16}
+                        onClick={(e) => (e.target as HTMLTextAreaElement).select()}
+                        className="w-full font-mono text-[11px] leading-relaxed text-neutral-800 bg-white border border-[#ebebeb] rounded-lg p-3 focus:outline-none selection:bg-neutral-200 resize-y"
+                      />
+                    </div>
+                  );
+                })()}
 
               {/* View Mode Toggle Pill Dock */}
               <div className="flex items-center justify-between gap-3 flex-wrap border-b border-[#ebebeb] pb-3">
