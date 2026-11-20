@@ -111,12 +111,31 @@ function migratePreviewItemsIfNeeded(
 
       const validBulletSet = new Set(freshRun.bulletProposals.map((p) => p.bulletId));
       const keptBullets = item.acceptedBulletIds.filter((id) => validBulletSet.has(id));
-      const nextAcceptedBulletIds =
-        item.acceptedBulletIds.length === 0
-          ? []
-          : keptBullets.length > 0
-          ? keptBullets
-          : freshRun.bulletProposals.map((p) => p.bulletId);
+      const prevProposalIds = new Set(
+        (item.larpRun?.bulletProposals ?? []).map((p) => p.bulletId)
+      );
+      const newlyDiscoveredBullets = freshRun.bulletProposals
+        .filter((p) => !prevProposalIds.has(p.bulletId))
+        .map((p) => p.bulletId);
+      const nextAcceptedBulletIds = Array.from(
+        new Set(
+          keptBullets.length > 0
+            ? [...keptBullets, ...newlyDiscoveredBullets]
+            : freshRun.bulletProposals.map((p) => p.bulletId)
+        )
+      );
+
+      const recommendedSkillAdds = freshRun.skillSwaps.flatMap((s) => s.added);
+      const existingSkillKeys = new Set(
+        (item.selectedSkillNames ?? []).map((s) => s.toLowerCase())
+      );
+      const nextSelectedSkillNames =
+        item.applySkillsSwap === false
+          ? item.selectedSkillNames
+          : [
+              ...(item.selectedSkillNames ?? []),
+              ...recommendedSkillAdds.filter((s) => !existingSkillKeys.has(s.toLowerCase())),
+            ];
 
       const recommendedMalleableIds = freshRun.malleableBullets
         .filter((m, idx) => idx === 0 || m.recommended)
@@ -150,6 +169,7 @@ function migratePreviewItemsIfNeeded(
         baseResume: nextBase,
         larpRun: freshRun,
         acceptedBulletIds: nextAcceptedBulletIds,
+        selectedSkillNames: nextSelectedSkillNames,
         acceptedMalleableIds: nextAcceptedMalleableIds,
         selectedMalleableOptionBySlotId: nextSelectedOpts,
       };

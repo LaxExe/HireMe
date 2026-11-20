@@ -18,6 +18,7 @@ export interface SynthesizeMalleableOptions {
   jobDescription?: string;
   keywordWeights?: Map<string, number>;
   defaultPicksByCompanyKey?: Record<string, string>;
+  extraBulletTargets?: string[];
 }
 
 function primaryContextFromTags(tags: Context[]): Context {
@@ -163,48 +164,75 @@ interface FocusedBulletCandidate {
   keywords: string[];
 }
 
+const SYSTEMS_ALLOWED_KWS_RE =
+  /^(?:linux|c\+\+|c|cmake|bash|ros\s*2|gazebo|python|docker|ci\/cd|git|unit\s*testing|jira|linear|agile|end-to-end)$/i;
+
 function buildFocusedJdCandidatesForTarget(
   target: ContainerCandidate,
   tiers: LarpTierClassification,
   keywordWeights?: Map<string, number>,
-  jdText = ""
+  jdText = "",
+  extraBulletTargets: string[] = []
 ): FocusedBulletCandidate[] {
   const combinedExisting = `${target.techSignals.join(" ")} ${target.existingBullets.join(" ")}`;
   const signalsLower = combinedExisting.toLowerCase();
   const jdLower = jdText.toLowerCase();
   const isSystemsTarget = target.tags.includes("systems");
   const hasFrontendSignals =
-    target.tags.includes("frontend") || /\b(?:react|next\.js|typescript|css|ui|dashboard)\b/i.test(signalsLower);
+    target.tags.includes("frontend") ||
+    /\b(?:react|next\.js|typescript|css|ui|dashboard)\b/i.test(signalsLower);
   const hasMlSignals =
-    target.tags.includes("ml") || /\b(?:pytorch|python|model|evaluation|vision|training)\b/i.test(signalsLower);
+    target.tags.includes("ml") ||
+    /\b(?:pytorch|python|model|evaluation|vision|training)\b/i.test(signalsLower);
+  const hasTypeScriptSignal =
+    /\btypescript\b/i.test(signalsLower) ||
+    tiers.matched.some((k) => /^typescript$/i.test(k));
+  const hasPythonSignal =
+    /\bpython\b/i.test(signalsLower) ||
+    tiers.matched.some((k) => /^python$/i.test(k));
   const isFastApi = /\bfastapi\b/i.test(signalsLower);
-  const isFlask = /\bflask\b/i.test(signalsLower);
 
-  const pmTool =
-    tiers.tier_0_workflow.find((k) => /^(?:Jira|Linear|Agile)$/i.test(k)) || "";
+  const byWeightDesc = (a: string, b: string) =>
+    (keywordWeights?.get(b.toLowerCase()) ?? 0.8) -
+    (keywordWeights?.get(a.toLowerCase()) ?? 0.8);
 
-  // Collect framing + workflow terms sorted by JD importance weight
-  const framingAndWorkflow = Array.from(
-    new Set([...tiers.tier_1_framing, ...tiers.tier_0_workflow])
-  ).sort(
-    (a, b) =>
-      (keywordWeights?.get(b.toLowerCase()) ?? 1) -
-      (keywordWeights?.get(a.toLowerCase()) ?? 1)
-  );
+  const orderedJdKeywords: string[] = [];
+  const seenJdKeys = new Set<string>();
+  const pushJdKw = (kw: string) => {
+    const clean = kw.trim();
+    if (!clean) return;
+    const key = clean.toLowerCase();
+    if (seenJdKeys.has(key)) return;
+    seenJdKeys.add(key);
+    orderedJdKeywords.push(clean);
+  };
+
+  // Priority: 1. Missing JD tech -> 2. Underrepresented bullet targets (e.g. Linux) -> 3. Workflow -> 4. Matched not yet in this container's bullets -> 5. Remaining matched JD terms
+  for (const kw of [...tiers.tier_1_framing].sort(byWeightDesc)) pushJdKw(kw);
+  for (const kw of extraBulletTargets) pushJdKw(kw);
+  for (const kw of [...tiers.tier_0_workflow].sort(byWeightDesc)) pushJdKw(kw);
+  const matchedNotInTarget = tiers.matched
+    .filter((k) => !containsPhrase(combinedExisting, k))
+    .sort(byWeightDesc);
+  for (const kw of matchedNotInTarget) pushJdKw(kw);
+  for (const kw of [...tiers.matched].sort(byWeightDesc)) pushJdKw(kw);
+
+  const allJdKeywordsLower = seenJdKeys;
 
   // Filter out keywords implausible for this specific container
-  const plausibleTargets = framingAndWorkflow.filter((kw) => {
+  const plausibleTargets = orderedJdKeywords.filter((kw) => {
     const kLower = kw.toLowerCase();
     const entry = findCatalogEntry(kw);
-    if (isSystemsTarget && !/^(?:docker|ci\/cd|jira|linear|agile|end-to-end)$/i.test(kLower)) {
+    if (isSystemsTarget && !SYSTEMS_ALLOWED_KWS_RE.test(kLower)) {
       return false;
     }
     if (entry?.contexts && !entry.contexts.some((c) => target.tags.includes(c))) {
-      // Allow pairsWith overlap even if tag wasn't explicitly set
       const pairsHit = (entry.pairsWith ?? []).some((pw) =>
         containsPhrase(combinedExisting, pw)
       );
-      if (!pairsHit) return false;
+      const isSystemsCompat = isSystemsTarget && SYSTEMS_ALLOWED_KWS_RE.test(kLower);
+      const isWorkflow = entry.tier === "tier_0_workflow";
+      if (!pairsHit && !isSystemsCompat && !isWorkflow) return false;
     }
     if (/tailwind/i.test(kLower) && !hasFrontendSignals) return false;
     return true;
@@ -214,170 +242,296 @@ function buildFocusedJdCandidatesForTarget(
 
   for (const kw of plausibleTargets) {
     const kLower = kw.toLowerCase();
-    if (kLower === "redis") {
+    if (kLower === "linux") {
+      if (isSystemsTarget) {
+        if (allJdKeywordsLower.has("c++") || /\bc\+\+\b/i.test(signalsLower)) {
+          candidates.push({
+            markup:
+              "Configured **Linux** toolchain scripts and **C++** regression tests across builds.",
+            explanation: `Directly highlights Linux systems workflows paired with C++ for ${target.companyOrProjectName}.`,
+            keywords: ["Linux", "C++"],
+          });
+        }
+        candidates.push({
+          markup:
+            "Automated **Linux** build checks and runtime health monitoring across test suites.",
+          explanation: `Adds concrete Linux runtime and build verification requested by this JD.`,
+          keywords: ["Linux"],
+        });
+      } else if (hasMlSignals && !hasFrontendSignals) {
+        candidates.push({
+          markup:
+            "Automated **Linux** training job scripts and environment checks across benchmark runs.",
+          explanation: `Highlights Linux compute environment experience requested by this JD.`,
+          keywords: ["Linux"],
+        });
+      } else {
+        candidates.push({
+          markup:
+            "Configured **Linux** runtime environments and health scripts across backend services.",
+          explanation: `Highlights Linux deployment and runtime experience directly sought by this JD.`,
+          keywords: ["Linux"],
+        });
+        candidates.push({
+          markup:
+            "Automated **Linux** service checks and request timeout monitoring on backend hosts.",
+          explanation: `Adds Linux host automation aligned with your ${target.companyOrProjectName} work.`,
+          keywords: ["Linux"],
+        });
+      }
+    } else if (kLower === "c++") {
+      if (allJdKeywordsLower.has("linux") || /\blinux\b/i.test(signalsLower)) {
+        candidates.push({
+          markup:
+            "Engineered **Linux** runtime tests and **C++** state checks across builds.",
+          explanation: `Pairs C++ engineering directly with Linux workflows from the JD.`,
+          keywords: ["C++", "Linux"],
+        });
+      }
+      candidates.push({
+        markup:
+          "Engineered modular **C++** regression tests to verify module stability per build.",
+        explanation: `Reinforces C++ systems reliability directly matched in this JD.`,
+        keywords: ["C++"],
+      });
+    } else if (kLower === "c") {
+      candidates.push({
+        markup:
+          "Implemented low-level **C** test harnesses to verify hardware and driver paths.",
+        explanation: `Targets C systems programming highlighted in this job description.`,
+        keywords: ["C"],
+      });
+    } else if (kLower === "bash") {
+      candidates.push({
+        markup:
+          allJdKeywordsLower.has("linux") || /\blinux\b/i.test(signalsLower)
+            ? "Automated **Bash** build validation and setup scripts across **Linux** hosts."
+            : "Automated **Bash** build validation and environment setup scripts across test runs.",
+        explanation: `Directly incorporates Bash scripting automation requested by this JD.`,
+        keywords: ["Bash"],
+      });
+    } else if (kLower === "cmake") {
+      candidates.push({
+        markup:
+          "Standardized **CMake** build targets and automated compiler checks across repos.",
+        explanation: `Targets CMake C++ build configuration requested by this job description.`,
+        keywords: ["CMake"],
+      });
+    } else if (kLower === "unit testing") {
+      candidates.push({
+        markup: isSystemsTarget
+          ? "Added automated **Unit Testing** suites to verify module behavior per commit."
+          : "Authored **Unit Testing** suites and schema validation checks across core routes.",
+        explanation: `Directly reinforces Unit Testing practices sought by this JD.`,
+        keywords: ["Unit Testing"],
+      });
+    } else if (kLower === "jest") {
+      candidates.push({
+        markup:
+          "Built **Jest** test suites covering component state changes and API payloads.",
+        explanation: `Directly incorporates Jest automated testing requested by this JD.`,
+        keywords: ["Jest"],
+      });
+    } else if (kLower === "microservices") {
+      candidates.push({
+        markup:
+          "Structured **Microservices** API contracts and health checks across internal services.",
+        explanation: `Highlights Microservices architecture alignment directly from the JD.`,
+        keywords: ["Microservices"],
+      });
+    } else if (kLower === "distributed systems") {
+      candidates.push({
+        markup:
+          "Added **Distributed Systems** retry guards and timeout limits across backend calls.",
+        explanation: `Targets Distributed Systems reliability concepts highlighted by this JD.`,
+        keywords: ["Distributed Systems"],
+      });
+    } else if (kLower === "github actions") {
+      candidates.push({
+        markup:
+          "Configured **GitHub Actions** CI test workflows on pull requests prior to merge.",
+        explanation: `Targets GitHub Actions CI automation requested by this job description.`,
+        keywords: ["GitHub Actions"],
+      });
+    } else if (kLower === "redis") {
       candidates.push({
         markup:
           "Added **Redis** read-through caching for repeat backend queries to lower database read load.",
-        explanation: `Directly targets **Redis** from the JD alongside your ${target.companyOrProjectName} backend stack.`,
+        explanation: `Directly targets Redis from the JD alongside your ${target.companyOrProjectName} backend stack.`,
         keywords: ["Redis"],
       });
     } else if (kLower === "graphql") {
       candidates.push({
         markup:
           "Exposed **GraphQL** resolvers alongside existing API routes to fetch nested payloads cleanly.",
-        explanation: `Targets **GraphQL** from the JD in a realistic 1-line addition for ${target.companyOrProjectName}.`,
+        explanation: `Targets GraphQL from the JD in a realistic 1-line addition for ${target.companyOrProjectName}.`,
         keywords: ["GraphQL"],
       });
     } else if (kLower === "docker") {
       if (isSystemsTarget) {
         candidates.push({
           markup:
-            "Containerized **C++** simulation test suites in **Docker** for repeatable environment builds.",
-          explanation: `Aligns **Docker** from the JD cleanly with your **C++** systems workflow.`,
-          keywords: ["Docker", "C++"],
+            "Containerized simulation test suites in **Docker** for repeatable environment builds.",
+          explanation: `Aligns Docker from the JD cleanly with your systems workflow.`,
+          keywords: ["Docker"],
         });
-      } else if (hasMlSignals && !hasFrontendSignals) {
+      } else if (hasMlSignals && !hasFrontendSignals && hasPythonSignal) {
         candidates.push({
           markup:
-            "Packaged **Python** evaluation runs in **Docker** containers for reproducible benchmark checks.",
-          explanation: `Aligns **Docker** from the JD cleanly with your **Python** ML pipeline.`,
+            "Packaged **Python** evaluation runs in **Docker** containers for reproducible checks.",
+          explanation: `Aligns Docker from the JD cleanly with your Python ML pipeline.`,
           keywords: ["Docker", "Python"],
         });
       } else {
         candidates.push({
           markup:
             "Containerized local backend services in **Docker** to standardize API test and dev setups.",
-          explanation: `Targets **Docker** from the JD for reproducible service workflows at ${target.companyOrProjectName}.`,
+          explanation: `Targets Docker from the JD for reproducible service workflows at ${target.companyOrProjectName}.`,
           keywords: ["Docker"],
         });
       }
-    } else if (kLower === "aws") {
+    } else if (kLower === "aws" || kLower === "gcp" || kLower === "azure" || kLower === "vercel" || kLower === "cloudflare") {
       candidates.push({
-        markup:
-          "Configured **AWS** storage and deployment scripts to automate asset delivery across builds.",
-        explanation: `Directly incorporates **AWS** cloud workflows requested by this job description.`,
-        keywords: ["AWS"],
+        markup: `Configured **${kw}** deployment scripts and automated runtime checks across service builds.`,
+        explanation: `Directly incorporates ${kw} cloud workflows requested by this job description.`,
+        keywords: [kw],
       });
     } else if (kLower === "webhooks") {
       candidates.push({
         markup:
           "Handled incoming **Webhooks** events with signature verification to sync workflow status.",
-        explanation: `Targets **Webhooks** integration required in the JD using your existing API experience.`,
+        explanation: `Targets Webhooks integration required in the JD using your existing API experience.`,
         keywords: ["Webhooks"],
+      });
+    } else if (/^(?:postgresql|sql|nosql|mysql|sqlite|mongodb|dynamodb|supabase|firebase)$/i.test(kLower)) {
+      candidates.push({
+        markup: `Added indexed **${kw}** schema queries and validation checks across backend routes.`,
+        explanation: `Directly incorporates ${kw} database workflows requested by this JD.`,
+        keywords: [kw],
+      });
+    } else if (/^(?:rest apis|grpc|websockets|oauth)$/i.test(kLower)) {
+      candidates.push({
+        markup: `Implemented **${kw}** endpoint handlers and validation checks across backend services.`,
+        explanation: `Targets ${kw} API and service skills requested by this job description.`,
+        keywords: [kw],
+      });
+    } else if (/^(?:terraform|kafka|airflow|prometheus)$/i.test(kLower)) {
+      candidates.push({
+        markup: `Configured **${kw}** workflows and automated health checks across service pipelines.`,
+        explanation: `Directly targets ${kw} infrastructure tooling from the job description.`,
+        keywords: [kw],
       });
     } else if (/tailwind/i.test(kLower)) {
       candidates.push({
         markup:
-          "Styled responsive dashboard panels in **Tailwind CSS** and **TypeScript** for faster iteration.",
-        explanation: `Matches **Tailwind CSS** frontend styling requirements in the job description.`,
-        keywords: ["Tailwind CSS", "TypeScript"],
+          hasTypeScriptSignal
+            ? "Styled responsive dashboard panels in **Tailwind CSS** and **TypeScript** cleanly."
+            : "Styled responsive dashboard panels in **Tailwind CSS** for faster UI iteration.",
+        explanation: `Matches Tailwind CSS frontend styling requirements in the job description.`,
+        keywords: ["Tailwind CSS"],
       });
     } else if (kLower === "ci/cd") {
       candidates.push({
         markup:
-          "Configured automated **CI/CD** integration test checks on pull requests prior to merge.",
-        explanation: `Matches **CI/CD** engineering workflow emphasis in the job description.`,
+          "Configured automated **CI/CD** build checks and test suites on pull requests pre-merge.",
+        explanation: `Matches CI/CD engineering workflow emphasis in the job description.`,
         keywords: ["CI/CD"],
       });
     } else if (/^(?:jira|linear|agile)$/i.test(kLower)) {
       candidates.push({
-        markup: `Coordinated bug triage and incremental API fixes across bi-weekly **${kw}** team sprints.`,
-        explanation: `Connects everyday **${kw}** delivery collaboration directly to your role.`,
+        markup: isSystemsTarget
+          ? `Coordinated module integration and regression triage across **${kw}** team sprints.`
+          : `Coordinated bug triage and incremental service fixes across bi-weekly **${kw}** sprints.`,
+        explanation: `Connects everyday ${kw} delivery collaboration directly to your role.`,
         keywords: [kw],
       });
     } else if (kLower === "end-to-end") {
       candidates.push({
         markup:
-          "Owned **end-to-end** automated integration tests and error monitoring across API endpoints.",
-        explanation: `Highlights **end-to-end** ownership sought by the job description.`,
+          "Owned **end-to-end** automated test checks and error monitoring across core endpoints.",
+        explanation: `Highlights end-to-end ownership sought by the job description.`,
         keywords: ["end-to-end"],
       });
     } else {
-      // Custom or catalog tier_1 term
-      if (hasFrontendSignals && !isFastApi) {
+      if (hasFrontendSignals && hasTypeScriptSignal && !isFastApi) {
         candidates.push({
-          markup: `Integrated **${kw}** handlers with existing **TypeScript** views and automated API tests.`,
-          explanation: `Directly incorporates JD target **${kw}** alongside your existing **TypeScript** stack.`,
+          markup: `Integrated **${kw}** handlers with existing **TypeScript** views and route checks.`,
+          explanation: `Directly incorporates JD target ${kw} alongside your TypeScript stack.`,
           keywords: [kw],
         });
-      } else if (hasMlSignals && !hasFrontendSignals) {
+      } else if (hasMlSignals && hasPythonSignal && !hasFrontendSignals) {
         candidates.push({
-          markup: `Integrated **${kw}** checks into **Python** evaluation scripts for reproducible model runs.`,
-          explanation: `Directly incorporates JD target **${kw}** alongside your **Python** workflow.`,
+          markup: `Integrated **${kw}** checks into **Python** evaluation scripts across pipeline runs.`,
+          explanation: `Directly incorporates JD target ${kw} alongside your Python workflow.`,
           keywords: [kw],
         });
       } else {
         candidates.push({
-          markup: `Integrated **${kw}** request handlers and automated validation tests across backend routes.`,
-          explanation: `Directly incorporates JD target **${kw}** into a defensible 1-line engineering task.`,
+          markup: `Integrated **${kw}** workflows and automated validation checks across core modules.`,
+          explanation: `Directly incorporates JD target ${kw} into a defensible 1-line task.`,
           keywords: [kw],
         });
       }
     }
   }
 
-  // Backup JD-matched options if fewer than 2 framing candidates fit
+  // Backup JD-matched options STRICTLY for keywords that actually appear in this JD
   if (candidates.length < 2) {
-    const matchedWeb =
-      hasFrontendSignals || tiers.matched.some((k) => /^(?:TypeScript|React|Next\.js)$/i.test(k));
-    const wantsTesting =
-      /\b(?:test|testing|pytest|jest|reliability|quality|observability|monitoring|latency|scale)\b/i.test(
-        jdLower
-      );
-    const wantsPerf = /\b(?:cache|caching|performance|latency|throughput|database|sql|api)\b/i.test(
-      jdLower
-    );
-
-    if (isFastApi) {
+    if (allJdKeywordsLower.has("linux")) {
+      candidates.push({
+        markup:
+          "Maintained **Linux** environment scripts and automated health checks across builds.",
+        explanation: `Reinforces Linux workflows directly requested by this job description.`,
+        keywords: ["Linux"],
+      });
+    }
+    if (allJdKeywordsLower.has("agile")) {
+      candidates.push({
+        markup:
+          "Delivered incremental module fixes and code reviews across weekly **Agile** sprints.",
+        explanation: `Reinforces Agile delivery workflows requested in this job description.`,
+        keywords: ["Agile"],
+      });
+    }
+    if (allJdKeywordsLower.has("fastapi") && isFastApi) {
       candidates.push({
         markup:
           "Authored automated **FastAPI** integration tests and schema guards to catch regressions.",
-        explanation: `Reinforces **FastAPI** API quality matching this JD's backend expectations.`,
+        explanation: `Reinforces FastAPI quality matching this JD's backend expectations.`,
         keywords: ["FastAPI"],
       });
-    } else if (isFlask || /\bpython\b/i.test(signalsLower)) {
-      if (hasMlSignals && !hasFrontendSignals) {
-        candidates.push({
-          markup:
-            "Authored reproducible **Python** validation scripts to audit prediction consistency per build.",
-          explanation: `Tailored to **Python** data/ML validation workflows in the job description.`,
-          keywords: ["Python"],
-        });
-      } else {
-        candidates.push({
-          markup:
-            "Added automated **Python** API integration tests and request timeout alerts on backend routes.",
-          explanation: `Reinforces **Python** backend reliability and testing highlighted by this JD.`,
-          keywords: ["Python"],
-        });
-      }
-    } else if (matchedWeb) {
-      if (wantsPerf || !wantsTesting) {
-        candidates.push({
-          markup:
-            "Built typed **TypeScript** API validation schemas and error guards across interactive UI flows.",
-          explanation: `Tailored to **TypeScript** full-stack quality signals in this job description.`,
-          keywords: ["TypeScript"],
-        });
-      }
+    }
+    if (allJdKeywordsLower.has("python") && hasPythonSignal) {
+      candidates.push({
+        markup: hasMlSignals && !hasFrontendSignals
+          ? "Authored reproducible **Python** validation scripts to audit predictions per build."
+          : "Added automated **Python** API test suites and timeout alerts on backend routes.",
+        explanation: `Tailored directly to Python workflows requested by this job description.`,
+        keywords: ["Python"],
+      });
+    }
+    if (allJdKeywordsLower.has("typescript") && hasTypeScriptSignal) {
       candidates.push({
         markup:
-          "Authored automated **TypeScript** endpoint tests and structured logging for client requests.",
-        explanation: `Highlights **TypeScript** test coverage and observability aligned with this JD.`,
+          "Built typed **TypeScript** API validation schemas and error guards across UI flows.",
+        explanation: `Tailored to TypeScript full-stack quality signals in this job description.`,
         keywords: ["TypeScript"],
       });
-    } else if (isSystemsTarget) {
+    }
+    if (allJdKeywordsLower.has("c++") && isSystemsTarget) {
       candidates.push({
         markup:
-          "Added automated **C++** regression tests to verify state transitions under simulation load.",
-        explanation: `Tailored directly to **C++** systems reliability requested in this JD.`,
+          "Added automated **C++** regression tests to verify state transitions under simulation.",
+        explanation: `Tailored directly to C++ systems reliability requested in this JD.`,
         keywords: ["C++"],
       });
-    } else if (pmTool) {
+    }
+    if (allJdKeywordsLower.has("ci/cd")) {
       candidates.push({
-        markup: `Coordinated incremental service fixes and PR reviews across team **${pmTool}** milestones.`,
-        explanation: `Reinforces **${pmTool}** engineering collaboration aligned with this role.`,
-        keywords: [pmTool],
+        markup:
+          "Standardized **CI/CD** regression checks and automated build validation pre-merge.",
+        explanation: `Reinforces CI/CD engineering practices highlighted by this JD.`,
+        keywords: ["CI/CD"],
       });
     }
   }
@@ -495,6 +649,7 @@ export function synthesizeMalleableOneLineBullets(
     const bannedLower = tiers.tier_2_banned.map((b) => b.toLowerCase());
 
     const results: MalleableSynthesizedBullet[] = [];
+    const globalSeenMalleableTexts = new Set<string>();
 
     chosenContainers.forEach((target, containerIdx) => {
       const combinedExisting = target.existingBullets.join(" ");
@@ -502,22 +657,23 @@ export function synthesizeMalleableOneLineBullets(
         target,
         tiers,
         options.keywordWeights,
-        options.jobDescription || ""
+        options.jobDescription || "",
+        options.extraBulletTargets
       );
 
-      // Deduplicate, fit within 1L, and reject anything leaking banned or pure Tier-1.5 skills
+      // Deduplicate across all cards, fit within 1L, and reject anything leaking banned or pure Tier-1.5 skills
       const jdMatchOptions: MalleableBulletOption[] = [];
       const seenTexts = new Set<string>();
       const usedKeywords = new Set<string>();
 
       for (let i = 0; i < rawCandidates.length; i++) {
-        const spec = rawCandidates[(variantOffset + i) % rawCandidates.length];
+        const spec = rawCandidates[(variantOffset + containerIdx + i) % rawCandidates.length];
         const fitted = fitBulletToCalibratedLineArea(spec.markup, cal);
         const plain = plainText(fitted).trim();
         const plainLower = plain.toLowerCase();
 
         if (!plain || plain.length > oneLineMax) continue;
-        if (seenTexts.has(plainLower)) continue;
+        if (seenTexts.has(plainLower) || globalSeenMalleableTexts.has(plainLower)) continue;
         if (bannedLower.some((b) => containsPhrase(plain, b))) continue;
         if (pureSkillsOnlyLower.some((s) => containsPhrase(plain, s))) continue;
         if (target.existingBullets.some((eb) => jaccardSimilarity(eb, plain) >= 0.55)) {
@@ -525,6 +681,7 @@ export function synthesizeMalleableOneLineBullets(
         }
 
         seenTexts.add(plainLower);
+        globalSeenMalleableTexts.add(plainLower);
         const presentKeywords = spec.keywords.filter((kw) => containsPhrase(plain, kw));
         for (const kw of presentKeywords) usedKeywords.add(kw);
 

@@ -1,5 +1,5 @@
 import { plainText } from "../utils";
-import { findCatalogEntry } from "./catalog";
+import { findCatalogEntry, getFocusedInjectionSpecForEntry } from "./catalog";
 import { inferDomainTags } from "./config";
 import { containsPhrase } from "./text";
 import type { BulletDomainContext, CandidateBulletSlot, Context } from "./types";
@@ -20,14 +20,24 @@ export interface PlausibilityCheckResult {
 
 /**
  * Hard plausibility gate evaluated BEFORE generating candidates for a `(bulletSlot, keyword)` pair.
- * - Never injects into `systems-cpp-robotics` bullets.
+ * - Never injects into `systems-cpp-robotics` bullets unless the keyword is systems-compatible.
  * - `ok = tier_0 OR bullet/container already uses a tech in entry.pairsWith OR entry.contexts overlaps the bullet's tags`
  */
 export function checkSlotPlausibility(
   slot: Pick<CandidateBulletSlot, "bullet" | "context" | "tags" | "containerStack">,
-  keywordOrId: string
+  keywordOrId: string,
+  allowExtendedFallback = false
 ): PlausibilityCheckResult {
-  if (slot.context === "systems-cpp-robotics" || slot.tags.includes("systems")) {
+  const entry = findCatalogEntry(keywordOrId);
+  const spec =
+    entry && allowExtendedFallback ? getFocusedInjectionSpecForEntry(entry) : entry;
+  const effectiveContexts = spec?.contexts;
+  const effectivePairsWith = spec?.pairsWith;
+
+  if (
+    (slot.context === "systems-cpp-robotics" || slot.tags.includes("systems")) &&
+    !effectiveContexts?.includes("systems")
+  ) {
     return {
       ok: false,
       pairsWithHit: false,
@@ -36,7 +46,6 @@ export function checkSlotPlausibility(
     };
   }
 
-  const entry = findCatalogEntry(keywordOrId);
   if (!entry) {
     return {
       ok: false,
@@ -50,10 +59,13 @@ export function checkSlotPlausibility(
     slot.containerStack ?? []
   ).join(" ")}`;
 
-  const pairsWithHit = (entry.pairsWith ?? []).some((pw) =>
+  const pairsWithHit = (effectivePairsWith ?? []).some((pw) =>
     containsPhrase(bulletAndStackText, pw)
   );
-  const contextOverlap = (entry.contexts ?? []).some((ctx) => slot.tags.includes(ctx));
+  const slotContextTag = bulletDomainContextToTag(slot.context);
+  const contextOverlap = (effectiveContexts ?? []).some(
+    (ctx) => slot.tags.includes(ctx) || ctx === slotContextTag
+  );
   const isTier0 = entry.tier === "tier_0_workflow";
 
   const ok = isTier0 || pairsWithHit || contextOverlap;
@@ -105,19 +117,25 @@ export function tryMinimalKeywordInjection(
   origMarkup: string,
   context: BulletDomainContext,
   keyword: string,
-  allowGenericSuffixFallback = true
+  allowGenericSuffixFallback = true,
+  allowExtendedFallbackRules = false
 ): MinimalInjectionAttempt | null {
-  if (context === "systems-cpp-robotics") return null;
   if (containsPhrase(plainText(origMarkup), keyword)) return null;
 
   const trimmed = origMarkup.trim();
   const entry = findCatalogEntry(keyword);
   if (!entry) return null;
+  const spec = allowExtendedFallbackRules ? getFocusedInjectionSpecForEntry(entry) : entry;
+  if (context === "systems-cpp-robotics" && !spec.contexts?.includes("systems")) {
+    return null;
+  }
 
   const contextTag = bulletDomainContextToTag(context);
+  const rulesToTry = spec.rules ?? [];
+  const suffixesToTry = spec.suffixes ?? [];
 
-  if (entry.rules && entry.rules.length > 0) {
-    for (const rule of entry.rules) {
+  if (rulesToTry.length > 0) {
+    for (const rule of rulesToTry) {
       if (rule.contexts && !rule.contexts.includes(contextTag)) {
         continue;
       }
@@ -139,8 +157,8 @@ export function tryMinimalKeywordInjection(
     }
   }
 
-  if (allowGenericSuffixFallback && entry.suffixes && entry.suffixes.length > 0 && /\.$/.test(trimmed)) {
-    for (const suf of entry.suffixes) {
+  if (allowGenericSuffixFallback && suffixesToTry.length > 0 && /\.$/.test(trimmed)) {
+    for (const suf of suffixesToTry) {
       if (suf.contexts && !suf.contexts.includes(contextTag)) {
         continue;
       }
@@ -171,21 +189,27 @@ export function generateAllRuleCandidatesForSlot(
   origMarkup: string,
   context: BulletDomainContext,
   keyword: string,
-  includeGenericSuffixes = true
+  includeGenericSuffixes = true,
+  allowExtendedFallbackRules = false
 ): MinimalInjectionAttempt[] {
-  if (context === "systems-cpp-robotics") return [];
   if (containsPhrase(plainText(origMarkup), keyword)) return [];
 
   const trimmed = origMarkup.trim();
   const entry = findCatalogEntry(keyword);
   if (!entry) return [];
+  const spec = allowExtendedFallbackRules ? getFocusedInjectionSpecForEntry(entry) : entry;
+  if (context === "systems-cpp-robotics" && !spec.contexts?.includes("systems")) {
+    return [];
+  }
 
   const contextTag = bulletDomainContextToTag(context);
   const results: MinimalInjectionAttempt[] = [];
   const seenMarkups = new Set<string>();
+  const rulesToTry = spec.rules ?? [];
+  const suffixesToTry = spec.suffixes ?? [];
 
-  if (entry.rules) {
-    for (const rule of entry.rules) {
+  if (rulesToTry.length > 0) {
+    for (const rule of rulesToTry) {
       if (rule.contexts && !rule.contexts.includes(contextTag)) continue;
       if (rule.find.test(trimmed)) {
         const replacement = expandRuleTemplate(rule.replace, entry.label);
@@ -206,8 +230,8 @@ export function generateAllRuleCandidatesForSlot(
     }
   }
 
-  if (includeGenericSuffixes && entry.suffixes && /\.$/.test(trimmed)) {
-    for (const suf of entry.suffixes) {
+  if (includeGenericSuffixes && suffixesToTry.length > 0 && /\.$/.test(trimmed)) {
+    for (const suf of suffixesToTry) {
       if (suf.contexts && !suf.contexts.includes(contextTag)) continue;
       if (suf.requiresVerb && !suf.requiresVerb.test(trimmed)) continue;
       const expandedSuffix = expandRuleTemplate(suf.suffix, entry.label);

@@ -1,6 +1,8 @@
-import { plainText } from "../utils";
+import { matchJobDescriptionWithResume, type KeywordMatchItem } from "../keywordMatch";
+import { plainText, splitItems } from "../utils";
 import { applyLarpMutationsToResume } from "./apply";
 import { classifyBulletContext } from "./candidates";
+import { findCatalogEntry } from "./catalog";
 import { DEFAULT_CALIBRATION, inferDomainTags, SINGLE_LINE_NCU } from "./config";
 import { createGuardContext, verifyRunGuardrailZeroBanned } from "./guardrails";
 import {
@@ -23,16 +25,18 @@ import {
 import { selectBulletMutations, type KeywordCandidateStats } from "./optimizer";
 import { getCentralizedTargetKeywords } from "./policy";
 import { smartSwapSkillsSection } from "./skills";
+import { containsPhrase } from "./text";
 import type {
   CandidateBulletSlot,
   LarpAlignmentRun,
+  LarpTierClassification,
   MasterResume,
   PolicyMode,
   ViolationCode,
 } from "./types";
 import { buildKeywordDiagnostics, evaluateBelievabilityAndRecommend } from "./verify";
 
-export const FOCUSED_ALIGNMENT_PROMPT_VERSION = "align-v2.2-focused";
+export const FOCUSED_ALIGNMENT_PROMPT_VERSION = "align-v2.3-focused-missing-tech";
 
 export interface LarpPipelineOptions {
   jdId?: string;
@@ -142,6 +146,287 @@ function buildSlotsFromResume(
   return slots;
 }
 
+const HARD_BANNED_LANGUAGES = new Set([
+  "golang",
+  "go",
+  "rust",
+  "java",
+  "c#",
+  "kotlin",
+  "swift",
+  "scala",
+  "ruby",
+  "php",
+  "r",
+  "matlab",
+  "dart",
+  "cuda",
+  "verilog",
+  "assembly",
+  "elixir",
+  "python",
+  "c++",
+]);
+
+const HARD_BANNED_HEAVY_FRAMEWORKS = new Set([
+  "kubernetes",
+  "ruby on rails",
+  "spring boot",
+  ".net",
+  "angular",
+  "vue.js",
+  "svelte",
+  "flutter",
+  "react native",
+  "react",
+  "pytorch",
+]);
+
+const WORKFLOW_KEYWORDS_LOWER = new Set([
+  "agile",
+  "jira",
+  "linear",
+  "ci/cd",
+  "end-to-end",
+]);
+
+const NO_SKILLS_SECTION_KEYWORDS_LOWER = new Set([
+  "agile",
+  "end-to-end",
+  "unit testing",
+]);
+
+function isHardBannedMissingTech(
+  item: KeywordMatchItem | string,
+  presentLower: Set<string>
+): boolean {
+  const rawName = typeof item === "string" ? item : item.name;
+  const entry = findCatalogEntry(rawName);
+  const labelLower = (entry?.label ?? rawName).toLowerCase();
+
+  if (presentLower.has(labelLower) || presentLower.has(rawName.toLowerCase())) {
+    return false;
+  }
+
+  if (labelLower === "c") {
+    return !(presentLower.has("c++") || presentLower.has("c"));
+  }
+  if (
+    labelLower === "javascript" ||
+    labelLower === "html" ||
+    labelLower === "css" ||
+    labelLower === "typescript"
+  ) {
+    return !(
+      presentLower.has("typescript") ||
+      presentLower.has("javascript") ||
+      presentLower.has("react") ||
+      presentLower.has("next.js") ||
+      presentLower.has("html") ||
+      presentLower.has("css")
+    );
+  }
+  if (labelLower === "bash") {
+    return !(
+      presentLower.has("linux") ||
+      presentLower.has("unix") ||
+      presentLower.has("python") ||
+      presentLower.has("c++") ||
+      presentLower.has("docker") ||
+      presentLower.has("git")
+    );
+  }
+  if (labelLower === "sql" || labelLower === "nosql") {
+    return !(
+      presentLower.has("sql") ||
+      presentLower.has("postgresql") ||
+      presentLower.has("sqlite") ||
+      presentLower.has("sqlite3") ||
+      presentLower.has("mysql") ||
+      presentLower.has("supabase") ||
+      presentLower.has("firebase") ||
+      presentLower.has("mongodb")
+    );
+  }
+
+  if (HARD_BANNED_LANGUAGES.has(labelLower)) return true;
+  if (HARD_BANNED_HEAVY_FRAMEWORKS.has(labelLower)) return true;
+  if (entry?.tier === "tier_2_banned") return true;
+  return false;
+}
+
+function buildFocusedTiersAndTargets(
+  jobDescription: string,
+  resume: MasterResume,
+  baseTiers: LarpTierClassification,
+  keywordWeights: Map<string, number>
+): { tiers: LarpTierClassification; bulletTargets: string[] } {
+  const matchRes = matchJobDescriptionWithResume(jobDescription, resume);
+
+  // Merge exact TECH_DICTIONARY section/title weights into keywordWeights
+  for (const item of [...matchRes.matched, ...matchRes.missing]) {
+    if (item.weight === undefined) continue;
+    const lower = item.name.toLowerCase();
+    const catalogLabel = findCatalogEntry(item.name)?.label.toLowerCase();
+    if (!keywordWeights.has(lower)) keywordWeights.set(lower, item.weight);
+    if (catalogLabel && !keywordWeights.has(catalogLabel)) {
+      keywordWeights.set(catalogLabel, item.weight);
+    }
+  }
+
+  const presentLower = new Set<string>();
+  for (const m of matchRes.matched) presentLower.add(m.name.toLowerCase());
+  for (const cat of resume.skills) {
+    for (const s of cat.skills) {
+      presentLower.add(s.name.toLowerCase());
+      for (const part of splitItems(s.name)) {
+        presentLower.add(part.trim().toLowerCase());
+      }
+    }
+  }
+  for (const job of resume.experience) {
+    for (const b of job.bullets) {
+      for (const t of b.tools) presentLower.add(t.toLowerCase());
+    }
+  }
+  for (const proj of resume.projects) {
+    for (const t of proj.techStack) presentLower.add(t.toLowerCase());
+    for (const b of proj.bullets) {
+      for (const t of b.tools) presentLower.add(t.toLowerCase());
+    }
+  }
+
+  const missingNamesLower = new Set(matchRes.missing.map((m) => m.name.toLowerCase()));
+  const matchedList: string[] = [];
+  const matchedSeen = new Set<string>();
+
+  for (const m of matchRes.matched) {
+    const label = findCatalogEntry(m.name)?.label ?? m.name;
+    const key = label.toLowerCase();
+    if (!matchedSeen.has(key)) {
+      matchedSeen.add(key);
+      matchedList.push(label);
+    }
+  }
+  for (const mName of baseTiers.matched) {
+    const label = findCatalogEntry(mName)?.label ?? mName;
+    const key = label.toLowerCase();
+    if (!missingNamesLower.has(key) && !missingNamesLower.has(mName.toLowerCase()) && !matchedSeen.has(key)) {
+      matchedSeen.add(key);
+      matchedList.push(label);
+    }
+  }
+
+  const tier0List: string[] = [];
+  const tier1List: string[] = [];
+  const tier15List: string[] = [];
+  const tier2List: string[] = [];
+  const seenMissing = new Set<string>();
+
+  const classifyMissingCandidate = (rawItem: KeywordMatchItem | string) => {
+    const rawName = typeof rawItem === "string" ? rawItem : rawItem.name;
+    const entry = findCatalogEntry(rawName);
+    const label = entry?.label ?? rawName;
+    const key = label.toLowerCase();
+    if (seenMissing.has(key) || matchedSeen.has(key)) return;
+    seenMissing.add(key);
+
+    if (isHardBannedMissingTech(rawItem, presentLower)) {
+      tier2List.push(label);
+      return;
+    }
+
+    if (WORKFLOW_KEYWORDS_LOWER.has(key) || WORKFLOW_KEYWORDS_LOWER.has(rawName.toLowerCase())) {
+      tier0List.push(label);
+    } else {
+      tier1List.push(label);
+    }
+
+    if (!NO_SKILLS_SECTION_KEYWORDS_LOWER.has(key)) {
+      tier15List.push(label);
+    }
+  };
+
+  const sortedMissing = [...matchRes.missing].sort(
+    (a, b) => (b.weight ?? 0.7) - (a.weight ?? 0.7)
+  );
+  for (const item of sortedMissing) {
+    classifyMissingCandidate(item);
+  }
+  for (const k of [
+    ...baseTiers.tier_1_framing,
+    ...baseTiers.tier_0_workflow,
+    ...baseTiers.tier_1_5_skills_only,
+    ...baseTiers.tier_2_banned,
+  ]) {
+    classifyMissingCandidate(k);
+  }
+
+  // Count how many Experience bullet texts actually mention each matched JD keyword
+  const expBullets = resume.experience.flatMap((j) => j.bullets);
+  const countExpBulletMentions = (itemName: string): number => {
+    const entry = findCatalogEntry(itemName);
+    const terms = Array.from(new Set([itemName, ...(entry?.aliases ?? [])]));
+    let hits = 0;
+    for (const b of expBullets) {
+      const plain = plainText(b.text);
+      const matchedInBullet = terms.some((t) =>
+        t.length >= 2
+          ? containsPhrase(plain, t)
+          : new RegExp(`(?<![A-Za-z0-9+#.])${t}(?![A-Za-z0-9+#])`).test(plain)
+      );
+      if (matchedInBullet) hits++;
+    }
+    return hits;
+  };
+
+  const sortedMatched = [...matchRes.matched].sort(
+    (a, b) => (b.weight ?? 0.7) - (a.weight ?? 0.7)
+  );
+  const zeroExpMatched: string[] = [];
+  const lowExpMatched: string[] = [];
+  const addedTargetKeys = new Set<string>();
+
+  for (const item of sortedMatched) {
+    const label = findCatalogEntry(item.name)?.label ?? item.name;
+    const key = label.toLowerCase();
+    const expMentions = item.foundIn.includes("experience")
+      ? countExpBulletMentions(item.name)
+      : 0;
+    if (expMentions === 0) {
+      zeroExpMatched.push(label);
+    } else if (expMentions <= 1) {
+      lowExpMatched.push(label);
+    }
+  }
+
+  const bulletTargets: string[] = [];
+  const pushTarget = (kw: string) => {
+    const key = kw.toLowerCase();
+    if (addedTargetKeys.has(key)) return;
+    addedTargetKeys.add(key);
+    bulletTargets.push(kw);
+  };
+
+  for (const kw of tier1List) pushTarget(kw);
+  for (const kw of zeroExpMatched) pushTarget(kw);
+  for (const kw of tier0List) pushTarget(kw);
+  if (bulletTargets.length < 3) {
+    for (const kw of lowExpMatched) pushTarget(kw);
+  }
+
+  return {
+    tiers: {
+      matched: matchedList,
+      tier_0_workflow: tier0List,
+      tier_1_framing: tier1List,
+      tier_1_5_skills_only: tier15List,
+      tier_2_banned: tier2List,
+    },
+    bulletTargets,
+  };
+}
+
 export function runLarpAlignmentPipeline(
   jobDescription: string,
   resume: MasterResume,
@@ -153,17 +438,23 @@ export function runLarpAlignmentPipeline(
       : variantOffsetOrOptions;
   const variantOffset = options.variantOffset ?? 0;
 
-  const tiers = classifyJobDescriptionTiers(jobDescription, resume);
+  const baseTiers = classifyJobDescriptionTiers(jobDescription, resume);
   const weightedMap = extractWeightedJdKeywords(jobDescription);
   const keywordWeights = new Map<string, number>();
   for (const [k, v] of weightedMap.entries()) {
     keywordWeights.set(k, v.weight);
   }
 
+  const focusedResolved = options.focusedRecommendations
+    ? buildFocusedTiersAndTargets(jobDescription, resume, baseTiers, keywordWeights)
+    : null;
+  const tiers = focusedResolved ? focusedResolved.tiers : baseTiers;
+
   const { updatedCategories, changes: skillSwaps } = smartSwapSkillsSection(
     resume.skills,
     tiers,
-    SINGLE_LINE_NCU
+    SINGLE_LINE_NCU,
+    Boolean(options.focusedRecommendations)
   );
 
   const cal = resume.calibration ?? DEFAULT_CALIBRATION;
@@ -172,10 +463,9 @@ export function runLarpAlignmentPipeline(
 
   const slots = buildSlotsFromResume(resume, oneLineMaxChars, twoLineMaxChars);
   const bannedLower = tiers.tier_2_banned.map((b) => b.toLowerCase());
-  const centralizedTargetKeywords = getCentralizedTargetKeywords(
-    tiers.tier_1_framing,
-    tiers.tier_0_workflow
-  );
+  const centralizedTargetKeywords = focusedResolved
+    ? focusedResolved.bulletTargets
+    : getCentralizedTargetKeywords(tiers.tier_1_framing, tiers.tier_0_workflow);
 
   const statsOut = new Map<string, KeywordCandidateStats>();
   const bulletProposals = selectBulletMutations(
@@ -206,6 +496,7 @@ export function runLarpAlignmentPipeline(
           jobDescription,
           keywordWeights,
           defaultPicksByCompanyKey: options.defaultPicksByCompanyKey,
+          extraBulletTargets: focusedResolved?.bulletTargets,
         }
       : undefined
   );
@@ -306,17 +597,23 @@ export async function runLarpAlignmentPipelineAsync(
     return runLarpAlignmentPipeline(jobDescription, resume, options);
   }
 
-  const tiers = classifyJobDescriptionTiers(jobDescription, resume);
+  const baseTiers = classifyJobDescriptionTiers(jobDescription, resume);
   const weightedMap = extractWeightedJdKeywords(jobDescription);
   const keywordWeights = new Map<string, number>();
   for (const [k, v] of weightedMap.entries()) {
     keywordWeights.set(k, v.weight);
   }
 
+  const focusedResolved = options.focusedRecommendations
+    ? buildFocusedTiersAndTargets(jobDescription, resume, baseTiers, keywordWeights)
+    : null;
+  const tiers = focusedResolved ? focusedResolved.tiers : baseTiers;
+
   const { updatedCategories, changes: skillSwaps } = smartSwapSkillsSection(
     resume.skills,
     tiers,
-    SINGLE_LINE_NCU
+    SINGLE_LINE_NCU,
+    Boolean(options.focusedRecommendations)
   );
 
   const cal = resume.calibration ?? DEFAULT_CALIBRATION;
@@ -325,10 +622,9 @@ export async function runLarpAlignmentPipelineAsync(
 
   const slots = buildSlotsFromResume(resume, oneLineMaxChars, twoLineMaxChars);
   const bannedLower = tiers.tier_2_banned.map((b) => b.toLowerCase());
-  const centralizedTargetKeywords = getCentralizedTargetKeywords(
-    tiers.tier_1_framing,
-    tiers.tier_0_workflow
-  );
+  const centralizedTargetKeywords = focusedResolved
+    ? focusedResolved.bulletTargets
+    : getCentralizedTargetKeywords(tiers.tier_1_framing, tiers.tier_0_workflow);
 
   const guardCtx = createGuardContext(tiers, cal, undefined, 7, SINGLE_LINE_NCU);
   const rejectionCountsByKeyword = new Map<string, Partial<Record<ViolationCode, number>>>();
@@ -387,6 +683,7 @@ export async function runLarpAlignmentPipelineAsync(
           jobDescription,
           keywordWeights,
           defaultPicksByCompanyKey: options.defaultPicksByCompanyKey,
+          extraBulletTargets: focusedResolved?.bulletTargets,
         }
       : undefined
   );

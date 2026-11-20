@@ -1067,7 +1067,7 @@ Requirements:
         },
       });
 
-      assert.strictEqual(run.runMetadata.promptVersion, "align-v2.2-focused");
+      assert.strictEqual(run.runMetadata.promptVersion, "align-v2.3-focused-missing-tech");
       assert.ok(
         run.malleableBullets.length >= 1 && run.malleableBullets.length <= 2,
         `Focused mode must return 1 or 2 cards (got ${run.malleableBullets.length})`
@@ -1111,6 +1111,106 @@ Requirements:
         "Awkward generic suffix on Firebase deployment bullet should be filtered in focused mode"
       );
 
+      assert.strictEqual(run.aiRecommendation?.verified, true);
+    });
+
+    it("injects Linux and Agile into bullets/malleable cards for C++/Linux/Agile JDs without unrelated +Python recommendations", () => {
+      // Model resume where WATonomous is an Experience role and Linux is only in Technical Skills (0 Experience bullets mention Linux)
+      const resumeWithWatoInExp: MasterResume = {
+        ...structuredClone(masterResume),
+        experience: [
+          {
+            id: "job_wato",
+            title: "Autonomy Engineer – Perception & Navigation Team",
+            company: "WATonomous",
+            companyUrl: "",
+            location: "Waterloo, ON",
+            dates: "2025",
+            tags: ["systems"],
+            bullets: structuredClone(masterResume.projects[0].bullets),
+          },
+          ...structuredClone(masterResume.experience),
+        ],
+        projects: structuredClone(masterResume.projects.slice(1)),
+      };
+
+      const gdJd = `General Dynamics — Student, Software Developer
+Minimum Qualifications:
+- Strong proficiency in C++ and developing on Linux environments.
+Preferred Qualifications:
+- Familiarity with Agile development sprints.`;
+
+      const run = runLarpAlignmentPipeline(gdJd, resumeWithWatoInExp, {
+        focusedRecommendations: true,
+      });
+
+      assert.ok(
+        run.tiers.tier_0_workflow.includes("Agile"),
+        `Agile should be detected as missing workflow (got matched=${JSON.stringify(
+          run.tiers.matched
+        )}, tier0=${JSON.stringify(run.tiers.tier_0_workflow)})`
+      );
+
+      const injectedBulletKeywords = run.bulletProposals.flatMap((bp) => bp.injectedKeywords);
+      assert.ok(
+        injectedBulletKeywords.includes("Linux"),
+        `Linux should be injected into an Experience bullet when absent from Experience bullets (got ${JSON.stringify(
+          injectedBulletKeywords
+        )})`
+      );
+      assert.ok(
+        injectedBulletKeywords.includes("Agile"),
+        `Agile should be injected into a bullet (got ${JSON.stringify(injectedBulletKeywords)})`
+      );
+
+      const malleableText = run.malleableBullets
+        .flatMap((mb) => [mb.markup, ...mb.options.filter((o) => !o.isDefaultPick).map((o) => o.markup)])
+        .join(" \n ");
+      assert.ok(
+        containsPhrase(malleableText, "Linux"),
+        `Malleable 1-Line Bullets should recommend Linux (got: ${malleableText})`
+      );
+      assert.strictEqual(
+        containsPhrase(malleableText, "Python"),
+        false,
+        `Malleable bullets must NOT recommend unrelated Python when JD only asks for C++/Linux/Agile (got: ${malleableText})`
+      );
+
+      assert.strictEqual(run.aiRecommendation?.verified, true);
+      assert.ok(
+        (run.coverage?.afterPercent ?? 0) > (run.coverage?.beforePercent ?? 0),
+        `Coverage should improve from ${run.coverage?.beforePercent}% -> ${run.coverage?.afterPercent}%`
+      );
+    });
+
+    it("detects and injects missing TECH_DICTIONARY technologies (CMake, Bash, Unit Testing, Microservices, GCP)", () => {
+      const richJd = `Platform Software Engineer
+Required Qualifications:
+- Experience writing C++ with CMake and Bash automation on Linux.
+- Building backend Microservices with Python and deploying workloads on GCP.
+- Writing automated Unit Testing suites.`;
+
+      const run = runLarpAlignmentPipeline(richJd, masterResume, {
+        focusedRecommendations: true,
+      });
+
+      for (const expectedTech of ["CMake", "Bash", "Unit Testing", "Microservices", "GCP"]) {
+        assert.ok(
+          run.tiers.tier_1_framing.includes(expectedTech),
+          `Missing TECH_DICTIONARY term ${expectedTech} should be promoted into tier_1_framing`
+        );
+      }
+
+      const injectedAll = new Set([
+        ...run.skillSwaps.flatMap((s) => s.added),
+        ...run.bulletProposals.flatMap((bp) => bp.injectedKeywords),
+        ...run.malleableBullets.flatMap((mb) => mb.injectedKeywords),
+      ]);
+      assert.ok(
+        run.bulletProposals.length >= 2,
+        `Expected >= 2 missing TECH_DICTIONARY bullet injections, got ${run.bulletProposals.length}`
+      );
+      assert.ok(injectedAll.has("CMake") || injectedAll.has("Bash") || injectedAll.has("Microservices") || injectedAll.has("GCP"));
       assert.strictEqual(run.aiRecommendation?.verified, true);
     });
   });

@@ -190,7 +190,8 @@ export function applySelectedSkillsToResumeCategories(
 export function smartSwapSkillsSection(
   categories: SkillCategory[],
   tiers: LarpTierClassification,
-  singleLineNcu = SINGLE_LINE_NCU
+  singleLineNcu = SINGLE_LINE_NCU,
+  allowAdjacentLanguages = false
 ): { updatedCategories: SkillCategory[]; changes: SkillSwapChange[] } {
   const cloned: SkillCategory[] = structuredClone(categories);
   const changes: SkillSwapChange[] = [];
@@ -200,7 +201,7 @@ export function smartSwapSkillsSection(
 
   for (const cat of cloned) {
     const bucket = matchCategoryBucket(cat.name);
-    if (bucket === "Languages") continue;
+    if (bucket === "Languages" && !allowAdjacentLanguages) continue;
 
     const origNames = cat.skills.map((s) => s.name);
     const origNcu = computeVisualWidth(formatCategoryLatexLine(cat.name, origNames));

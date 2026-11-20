@@ -321,7 +321,84 @@ const V1_OVERRIDES_AND_RULES: CatalogOverride[] = [
   { id: "vercel", label: "Vercel", aliases: ["vercel"], tier: "tier_1_5_skills_only", skillsCategory: "Databases & Cloud", adjacentTo: ["next_js", "react"] },
   { id: "cloudflare", label: "Cloudflare", aliases: ["cloudflare"], tier: "tier_1_5_skills_only", skillsCategory: "Databases & Cloud" },
   { id: "git", label: "Git", aliases: ["git", "github"], weakAliases: ["github"], tier: "tier_1_5_skills_only", skillsCategory: "Developer Tools & DevOps" },
-  { id: "linux", label: "Linux", aliases: ["linux", "unix"], tier: "tier_1_5_skills_only", skillsCategory: "Developer Tools & DevOps" },
+  {
+    id: "linux",
+    label: "Linux",
+    aliases: ["linux", "unix", "ubuntu", "debian", "posix"],
+    tier: "tier_1_5_skills_only",
+    skillsCategory: "Developer Tools & DevOps",
+    contexts: ["systems", "infra", "backend"],
+    pairsWith: [
+      "C++",
+      "C",
+      "ROS 2",
+      "Gazebo",
+      "Python",
+      "Docker",
+      "FastAPI",
+      "Flask",
+      "PostgreSQL",
+      "Git",
+      "Slurm",
+      "PyTorch",
+      "REST APIs",
+      "Firebase",
+      "Supabase",
+      "Twilio",
+    ],
+    rules: [
+      {
+        find: /\bin \*\*Gazebo\*\* simulation\b/i,
+        replace: "in **Gazebo** on {kw}",
+        score: 97,
+        reason: "Paired Linux environment context directly with Gazebo simulation",
+        contexts: ["systems"],
+      },
+      {
+        find: /\bdeployed on \*\*Firebase Cloud Functions\*\*/i,
+        replace: "deployed on {kw} and **Firebase**",
+        score: 95,
+        reason: "Added Linux host context alongside serverless deployment",
+        contexts: ["backend", "infra"],
+      },
+      {
+        find: /\bacross (\*\*\d+\*\*|\d+) internal services\.$/i,
+        replace: "across $1 {kw} services.",
+        score: 95,
+        reason: "Specified Linux runtime environment across internal backend services",
+        contexts: ["backend", "infra"],
+      },
+      {
+        find: /\bacross \*\*Slurm\*\* compute clusters\b/i,
+        replace: "across {kw} **Slurm** clusters",
+        score: 95,
+        reason: "Specified Linux OS environment on Slurm compute clusters",
+        contexts: ["backend", "infra", "systems"],
+      },
+      {
+        find: /\bto \*\*Supabase\*\*\.$/i,
+        replace: "to **Supabase** on {kw}.",
+        score: 93,
+        reason: "Added Linux runtime environment to backend service bullet",
+        contexts: ["backend", "infra"],
+      },
+      {
+        find: /(\b(?:C\+\+|ROS\s*2|Gazebo|Python|FastAPI|Flask|PostgreSQL|PyTorch|APIs?|services?|pipeline|simulation|clusters?|servers?|nodes?|mapping|planning)\b[\s\S]*)\.$/i,
+        replace: "$1 on {kw}.",
+        score: 92,
+        reason: "Added Linux environment context to technical workflow",
+        contexts: ["systems", "infra", "backend"],
+      },
+    ],
+    suffixes: [
+      {
+        suffix: " on {kw}",
+        score: 88,
+        reason: "Added Linux runtime environment context",
+        contexts: ["systems", "infra", "backend"],
+      },
+    ],
+  },
   { id: "rest_apis", label: "REST APIs", aliases: ["rest", "rest api", "rest apis", "restful"], caseSensitive: true, tier: "tier_1_5_skills_only", skillsCategory: "Developer Tools & DevOps" },
 
   // TIER 0: Workflow & Agile
@@ -429,6 +506,530 @@ const V1_OVERRIDES_AND_RULES: CatalogOverride[] = [
   },
 ];
 
+function buildDefaultInjectionSpecForTech(
+  id: string,
+  label: string,
+  skillsCategory?: SkillsCategoryBucket
+): Pick<CatalogEntry, "contexts" | "pairsWith" | "rules" | "suffixes"> {
+  if (id === "c") {
+    return {
+      contexts: ["systems", "backend"],
+      pairsWith: ["C++", "Linux", "ROS 2", "Gazebo", "Python", "CMake", "Bash"],
+      rules: [
+        {
+          find: /\*\*C\+\+\*\*/i,
+          replace: "**C/C++**",
+          score: 97,
+          reason: "Paired C alongside C++ in existing systems workflow",
+          contexts: ["systems", "backend"],
+        },
+        {
+          find: /(\b(?:Linux|ROS\s*2|Gazebo|simulation|planning|embedded|sensors?|nodes?)\b[\s\S]*)\.$/i,
+          replace: "$1 in {kw}.",
+          score: 91,
+          reason: "Added C systems implementation context",
+          contexts: ["systems", "backend"],
+        },
+      ],
+      suffixes: [
+        {
+          suffix: " in {kw}",
+          score: 86,
+          reason: "Added C implementation context",
+          contexts: ["systems", "backend"],
+        },
+      ],
+    };
+  }
+
+  if (id === "cmake") {
+    return {
+      contexts: ["systems", "infra"],
+      pairsWith: ["C++", "C", "Linux", "ROS 2", "Gazebo", "Git"],
+      rules: [
+        {
+          find: /\bin \*\*Gazebo\*\* simulation\b/i,
+          replace: "with {kw} in **Gazebo**",
+          score: 96,
+          reason: "Added CMake build tooling directly to C++/ROS 2 simulation workflow",
+          contexts: ["systems", "infra"],
+        },
+        {
+          find: /(\b(?:C\+\+|C|ROS\s*2|Gazebo|Linux|builds?|simulation|pipelines?)\b[\s\S]*)\.$/i,
+          replace: "$1 with {kw} builds.",
+          score: 93,
+          reason: "Paired CMake build automation with existing systems/C++ workflow",
+          contexts: ["systems", "infra"],
+        },
+      ],
+      suffixes: [
+        {
+          suffix: " with {kw} builds",
+          score: 88,
+          reason: "Added CMake build workflow context",
+          contexts: ["systems", "infra"],
+        },
+      ],
+    };
+  }
+
+  if (id === "bash") {
+    return {
+      contexts: ["systems", "infra", "backend"],
+      pairsWith: ["Linux", "Python", "C++", "C", "Docker", "Git", "Slurm", "PyTorch", "Firebase"],
+      rules: [
+        {
+          find: /\bacross \*\*Slurm\*\* compute clusters\b/i,
+          replace: "via {kw} on **Slurm** clusters",
+          score: 96,
+          reason: "Paired Bash scripting directly with Slurm cluster automation",
+          contexts: ["systems", "infra", "backend"],
+        },
+        {
+          find: /(\b(?:Linux|C\+\+|Python|Slurm|Docker|ROS\s*2|Gazebo|Firebase|pipeline|clusters?|services?|workflows?)\b[\s\S]*)\.$/i,
+          replace: "$1 via {kw} scripts.",
+          score: 92,
+          reason: "Added Bash scripting automation to existing technical workflow",
+          contexts: ["systems", "infra", "backend"],
+        },
+      ],
+      suffixes: [
+        {
+          suffix: " via {kw} scripts",
+          score: 87,
+          reason: "Added Bash scripting automation context",
+          contexts: ["systems", "infra", "backend"],
+        },
+      ],
+    };
+  }
+
+  if (id === "unit_testing" || id === "jest") {
+    return {
+      contexts: ["backend", "frontend", "systems"],
+      pairsWith: [
+        "Python",
+        "TypeScript",
+        "JavaScript",
+        "FastAPI",
+        "Flask",
+        "React",
+        "Next.js",
+        "REST APIs",
+        "C++",
+        "PostgreSQL",
+      ],
+      rules: [
+        {
+          find: /\brouted automated status alerts\b/i,
+          replace: "verified flows with {kw} and alerts",
+          score: 94,
+          reason: "Paired automated testing with backend alert delivery",
+          contexts: ["backend", "frontend", "systems"],
+        },
+        {
+          find: /(\b(?:APIs?|services?|endpoints?|routes?|workflows?|dashboards?|schemas?|pipelines?|mapping|planning|portals?|agents?)\b[\s\S]*)\.$/i,
+          replace: "$1 with {kw}.",
+          score: 92,
+          reason: "Added test verification context to existing engineering bullet",
+          contexts: ["backend", "frontend", "systems"],
+        },
+      ],
+      suffixes: [
+        {
+          suffix: " with {kw}",
+          score: 88,
+          reason: "Added automated testing verification context",
+          contexts: ["backend", "frontend", "systems"],
+        },
+      ],
+    };
+  }
+
+  if (id === "microservices" || id === "distributed_systems") {
+    return {
+      contexts: ["backend", "infra"],
+      pairsWith: ["PostgreSQL", "REST APIs", "FastAPI", "Flask", "Node.js", "Python", "Docker", "Slurm", "Firebase"],
+      rules: [
+        {
+          find: /\bacross (\*\*\d+\*\*|\d+) internal services\.$/i,
+          replace: "across $1 {kw}.",
+          score: 97,
+          reason: "Framed internal service architecture directly as microservices/distributed systems",
+          contexts: ["backend", "infra"],
+        },
+        {
+          find: /(\b(?:services?|APIs?|endpoints?|clusters?|pipelines?|event streams|webhooks)\b[\s\S]*)\.$/i,
+          replace: "$1 across {kw}.",
+          score: 92,
+          reason: "Added service architecture framing to backend bullet",
+          contexts: ["backend", "infra"],
+        },
+      ],
+      suffixes: [
+        {
+          suffix: " across {kw}",
+          score: 88,
+          reason: "Added service architecture context",
+          contexts: ["backend", "infra"],
+        },
+      ],
+    };
+  }
+
+  if (id === "github_actions" || id === "ci_cd" || id === "terraform" || id === "prometheus" || id === "kafka" || id === "airflow") {
+    const verb =
+      id === "prometheus"
+        ? "monitored via"
+        : id === "terraform"
+        ? "provisioned with"
+        : id === "kafka"
+        ? "streamed via"
+        : "automated via";
+    return {
+      contexts: ["infra", "backend"],
+      pairsWith: ["Git", "Python", "TypeScript", "FastAPI", "Flask", "Next.js", "PostgreSQL", "Supabase", "Firebase", "Docker", "Linux", "Twilio"],
+      rules: [
+        {
+          find: /(\b(?:APIs?|services?|endpoints?|pipelines?|workflows?|event streams|alerts?|transcripts|deployments?|builds?)\b[\s\S]*)\.$/i,
+          replace: `$1 ${verb} {kw}.`,
+          score: 92,
+          reason: `Integrated ${label} workflow context into existing backend/infra bullet`,
+          contexts: ["infra", "backend"],
+        },
+      ],
+      suffixes: [
+        {
+          suffix: ` ${verb} {kw}`,
+          score: 88,
+          reason: `Paired ${label} with existing delivery pipeline`,
+          contexts: ["infra", "backend"],
+        },
+      ],
+    };
+  }
+
+  if (id === "gcp" || id === "azure" || id === "vercel" || id === "cloudflare") {
+    return {
+      contexts: ["infra", "backend", "frontend"],
+      pairsWith: ["Firebase", "Supabase", "Next.js", "React", "FastAPI", "Flask", "PostgreSQL", "Docker", "REST APIs"],
+      rules: [
+        {
+          find: /\bdeployed on \*\*Firebase Cloud Functions\*\*/i,
+          replace: "deployed on {kw} and **Firebase**",
+          score: 96,
+          reason: `Added ${label} cloud context alongside serverless deployment`,
+        },
+        {
+          find: /\bto \*\*Supabase\*\*\.$/i,
+          replace: "to **Supabase** on {kw}.",
+          score: 95,
+          reason: `Added ${label} cloud hosting context to persistence layer`,
+        },
+        {
+          find: /\bacross (\*\*\d+\*\*|\d+) internal services\.$/i,
+          replace: "across $1 internal services on {kw}.",
+          score: 93,
+          reason: `Added ${label} cloud hosting context across services`,
+        },
+        {
+          find: /(\b(?:APIs?|services?|dashboards?|portals?|pipelines?|agents?)\b[\s\S]*)\.$/i,
+          replace: "$1 hosted on {kw}.",
+          score: 90,
+          reason: `Added ${label} hosting context to cloud/web bullet`,
+        },
+      ],
+      suffixes: [
+        {
+          suffix: " on {kw}",
+          score: 86,
+          reason: `Added ${label} hosting context`,
+          contexts: ["infra", "backend", "frontend"],
+        },
+      ],
+    };
+  }
+
+  if (
+    id === "sql" ||
+    id === "nosql" ||
+    id === "postgresql" ||
+    id === "mysql" ||
+    id === "sqlite" ||
+    id === "mongodb" ||
+    id === "dynamodb" ||
+    id === "cassandra" ||
+    id === "elasticsearch" ||
+    id === "supabase" ||
+    id === "firebase" ||
+    id === "snowflake" ||
+    id === "bigquery"
+  ) {
+    return {
+      contexts: ["backend", "infra"],
+      pairsWith: ["PostgreSQL", "Supabase", "Firebase", "SQLite3", "SQL", "Python", "FastAPI", "Flask", "REST APIs", "Next.js", "TypeScript"],
+      rules: [
+        {
+          find: /\brelational \*\*PostgreSQL\*\* schemas\b/i,
+          replace:
+            id === "sql"
+              ? "**{label} PostgreSQL** schemas"
+              : "**PostgreSQL** and {kw} schemas",
+          score: 96,
+          reason: `Integrated ${label} alongside existing database schemas`,
+          contexts: ["backend", "infra"],
+        },
+        {
+          find: /\bto \*\*Supabase\*\*\.$/i,
+          replace: "to **Supabase** and {kw}.",
+          score: 95,
+          reason: `Paired ${label} with existing data persistence layer`,
+          contexts: ["backend", "infra"],
+        },
+        {
+          find: /(\b(?:schemas?|records|transcripts|queries|data|APIs?|services?|pipelines?|backend)\b[\s\S]*)\.$/i,
+          replace: "$1 backed by {kw}.",
+          score: 92,
+          reason: `Added ${label} persistence context to data/backend bullet`,
+          contexts: ["backend", "infra"],
+        },
+      ],
+      suffixes: [
+        {
+          suffix: " backed by {kw}",
+          score: 88,
+          reason: `Added ${label} persistence context`,
+          contexts: ["backend", "infra"],
+        },
+      ],
+    };
+  }
+
+  if (id === "oauth" || id === "websockets" || id === "grpc" || id === "rest_apis") {
+    const prep = id === "oauth" ? "with" : "over";
+    return {
+      contexts: ["backend", "frontend", "infra"],
+      pairsWith: ["FastAPI", "Flask", "Node.js", "Next.js", "React", "TypeScript", "REST APIs", "Twilio", "Supabase", "Firebase"],
+      rules: [
+        {
+          find: /(\b(?:real-time|voice|APIs?|routes?|endpoints?|dashboards?|portals?|streams?|workflows?|clients?)\b[\s\S]*)\.$/i,
+          replace: `$1 ${prep} {kw}.`,
+          score: 92,
+          reason: `Integrated ${label} protocol/security context into existing web/API workflow`,
+        },
+      ],
+      suffixes: [
+        {
+          suffix: ` ${prep} {kw}`,
+          score: 88,
+          reason: `Paired ${label} with existing service bullet`,
+          contexts: ["backend", "frontend", "infra"],
+        },
+      ],
+    };
+  }
+
+  if (
+    id === "html" ||
+    id === "css" ||
+    id === "javascript" ||
+    id === "typescript" ||
+    id === "next_js" ||
+    id === "redux" ||
+    id === "react"
+  ) {
+    return {
+      contexts: ["frontend", "backend"],
+      pairsWith: ["React", "Next.js", "TypeScript", "JavaScript", "Tailwind CSS", "REST APIs", "HTML", "CSS"],
+      rules: [
+        {
+          find: /\b\*\*TypeScript, Next\.js, React\*\*/i,
+          replace: "**TypeScript, Next.js, React**, and {kw}",
+          score: 96,
+          reason: `Appended ${label} directly to existing frontend stack list`,
+          contexts: ["frontend"],
+        },
+        {
+          find: /(\b(?:dashboards?|portals?|views?|UI|React|Next\.js|TypeScript|REST APIs)\b[\s\S]*)\.$/i,
+          replace: "$1 using {kw}.",
+          score: 92,
+          reason: `Paired ${label} with existing web application work`,
+          contexts: ["frontend", "backend"],
+        },
+      ],
+      suffixes: [
+        {
+          suffix: " using {kw}",
+          score: 88,
+          reason: `Paired ${label} with existing web stack`,
+          contexts: ["frontend", "backend"],
+        },
+      ],
+    };
+  }
+
+  if (id === "fastapi" || id === "flask" || id === "node_js" || id === "express" || id === "git" || id === "postman") {
+    return {
+      contexts: ["backend", "infra", "frontend"],
+      pairsWith: ["Python", "FastAPI", "Flask", "TypeScript", "JavaScript", "REST APIs", "PostgreSQL", "Supabase", "Firebase"],
+      rules: [
+        {
+          find: /(\b(?:APIs?|services?|endpoints?|routes?|dashboards?|pipelines?|agents?|backend)\b[\s\S]*)\.$/i,
+          replace: "$1 using {kw}.",
+          score: 92,
+          reason: `Paired ${label} with existing backend/service bullet`,
+          contexts: ["backend", "infra", "frontend"],
+        },
+      ],
+      suffixes: [
+        {
+          suffix: " using {kw}",
+          score: 88,
+          reason: `Paired ${label} with existing engineering workflow`,
+          contexts: ["backend", "infra", "frontend"],
+        },
+      ],
+    };
+  }
+
+  if (
+    id === "opencv" ||
+    id === "pandas" ||
+    id === "numpy" ||
+    id === "scikit_learn" ||
+    id === "tensorflow" ||
+    id === "langchain" ||
+    id === "hugging_face" ||
+    id === "llama_cpp" ||
+    id === "llm" ||
+    id === "machine_learning" ||
+    id === "computer_vision" ||
+    id === "ros_2" ||
+    id === "gazebo"
+  ) {
+    const isRobotics = id === "ros_2" || id === "gazebo" || id === "opencv" || id === "computer_vision";
+    const contexts: Context[] = isRobotics ? ["systems", "ml"] : ["ml", "backend"];
+    return {
+      contexts,
+      pairsWith: ["Python", "PyTorch", "SAM 2", "VLM", "LLM", "Optuna", "C++", "ROS 2", "Gazebo", "LiDAR", "FastAPI"],
+      rules: [
+        {
+          find: /(\b(?:models?|detectors?|annotation|images|pipeline|LLM|PyTorch|Python|VLM|SAM\s*2|mapping|planning|LiDAR|accuracy)\b[\s\S]*)\.$/i,
+          replace: "$1 with {kw}.",
+          score: 92,
+          reason: `Integrated ${label} directly into existing ML/vision/autonomy pipeline`,
+          contexts,
+        },
+      ],
+      suffixes: [
+        {
+          suffix: " with {kw}",
+          score: 88,
+          reason: `Paired ${label} with existing ML/systems workflow`,
+          contexts,
+        },
+      ],
+    };
+  }
+
+  const defaultContexts: Context[] =
+    skillsCategory === "Frameworks & Libraries"
+      ? ["frontend", "backend", "ml"]
+      : skillsCategory === "Databases & Cloud"
+      ? ["backend", "infra"]
+      : skillsCategory === "Languages"
+      ? ["backend", "systems", "frontend"]
+      : ["infra", "backend", "systems"];
+
+  return {
+    contexts: defaultContexts,
+    pairsWith: ["Python", "TypeScript", "C++", "PostgreSQL", "REST APIs", "FastAPI", "Flask", "Linux", "Docker"],
+    rules: [
+      {
+        find: /(\b(?:APIs?|services?|endpoints?|pipelines?|workflows?|systems?|models?|dashboards?|portals?)\b[\s\S]*)\.$/i,
+        replace: "$1 with {kw}.",
+        score: 91,
+        reason: `Added ${label} context to matched engineering bullet`,
+        contexts: defaultContexts,
+      },
+    ],
+    suffixes: [
+      {
+        suffix: " with {kw}",
+        score: 87,
+        reason: `Paired ${label} with existing workflow`,
+        contexts: defaultContexts,
+      },
+    ],
+  };
+}
+
+/**
+ * Returns additional natural rewrite rules used only in focused recommendation mode
+ * (so legacy v1 golden snapshots remain 100% unchanged).
+ */
+export function getFocusedFallbackRulesForEntry(entry: CatalogEntry): RewriteRuleSpec[] {
+  const idLower = entry.id.toLowerCase();
+  if (idLower === "agile") {
+    return [
+      {
+        find: /(\b(?:Implemented|Engineered|Built|Developed|Shipped|Automated|Designed|Trained|Handled|Gave|Processed|Created|Architected|Configured|Added)\b[\s\S]*)\.$/i,
+        replace: "$1 in {kw} sprints.",
+        score: 94,
+        reason: "Added Agile sprint delivery framing to existing engineering work",
+        contexts: ["frontend", "backend", "infra", "systems", "ml"],
+      },
+    ];
+  }
+  if (idLower === "ci_cd") {
+    return [
+      {
+        find: /(\b(?:services?|APIs?|pipelines?|workflows?|builds?|clusters?|planning|simulation)\b[\s\S]*)\.$/i,
+        replace: "$1 with automated {kw}.",
+        score: 94,
+        reason: "Added automated CI/CD verification context to existing engineering bullet",
+        contexts: ["infra", "backend", "systems"],
+      },
+    ];
+  }
+  if (idLower === "jira" || idLower === "linear") {
+    return [
+      {
+        find: /(\b(?:Implemented|Engineered|Built|Developed|Shipped|Automated|Designed|Trained|Handled|Gave|Processed|Created|Architected|Configured|Added)\b[\s\S]*)\.$/i,
+        replace: "$1, tracked in {kw}.",
+        score: 91,
+        reason: `Added ${entry.label} sprint/issue tracking context`,
+        contexts: ["frontend", "backend", "infra", "systems"],
+      },
+    ];
+  }
+  return [];
+}
+
+/**
+ * Returns focused-mode injection metadata (contexts, pairsWith, rules, suffixes) for any
+ * entry that did not define explicit v1 rewrite rules, keeping legacy v1 snapshots 100% unchanged.
+ */
+export function getFocusedInjectionSpecForEntry(
+  entry: CatalogEntry
+): Pick<CatalogEntry, "contexts" | "pairsWith" | "rules" | "suffixes"> {
+  const defaultSpec = buildDefaultInjectionSpecForTech(
+    entry.id,
+    entry.label,
+    entry.skillsCategory
+  );
+  const extraRules = getFocusedFallbackRulesForEntry(entry);
+  return {
+    contexts: entry.contexts ?? defaultSpec.contexts,
+    pairsWith: entry.pairsWith ?? defaultSpec.pairsWith,
+    rules:
+      extraRules.length > 0
+        ? [...extraRules, ...(entry.rules ?? [])]
+        : entry.rules ?? defaultSpec.rules,
+    suffixes: entry.suffixes ?? defaultSpec.suffixes,
+  };
+}
+
 function toCatalogEntry(override: CatalogOverride): CatalogEntry {
   return {
     id: override.id,
@@ -476,6 +1077,7 @@ export function catalogFromDictionary(
 
     const tier = defaultTierForDictCategory(dictEntry.category);
     const skillsCategory = mapDictCategoryToSkillsBucket(dictEntry.category);
+    const injectionSpec = buildDefaultInjectionSpecForTech(id, dictEntry.name, skillsCategory);
 
     seenIds.add(id);
     extended.push({
@@ -483,10 +1085,15 @@ export function catalogFromDictionary(
       label: dictEntry.name,
       name: dictEntry.name,
       aliases: dictEntry.aliases,
+      weakAliases: dictEntry.weakAliases,
       tier,
       defaultTierIfMissing: tier,
       skillsCategory,
       targetSkillCategory: skillsCategory,
+      contexts: injectionSpec.contexts,
+      pairsWith: injectionSpec.pairsWith,
+      rules: injectionSpec.rules,
+      suffixes: injectionSpec.suffixes,
     });
   }
 

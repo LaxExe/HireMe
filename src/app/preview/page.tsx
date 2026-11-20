@@ -18,7 +18,6 @@ import {
   RotateCw,
   ChevronDown,
   ChevronUp,
-  ShieldAlert,
   CheckCircle2,
   AlertTriangle,
 } from "lucide-react";
@@ -528,22 +527,6 @@ export default function PreviewPage() {
       ),
     };
     updateActiveItem({ larpRun: nextLarpRun });
-  };
-
-  const handleSelectOnlyTopRecommended = () => {
-    if (!activeItem?.larpRun.aiRecommendation) return;
-    const top = activeItem.larpRun.aiRecommendation;
-    if (top.topPickKind === "malleable-new-line") {
-      updateActiveItem({
-        acceptedMalleableIds: [top.topPickId],
-        acceptedBulletIds: [],
-      });
-    } else {
-      updateActiveItem({
-        acceptedMalleableIds: [],
-        acceptedBulletIds: [top.topPickId],
-      });
-    }
   };
 
   const handleRegenerateOptions = async () => {
@@ -1265,17 +1248,6 @@ export default function PreviewPage() {
                 </div>
 
                 <div className="flex items-center gap-2 flex-wrap">
-                  {activeItem.larpRun.aiRecommendation && (
-                    <button
-                      type="button"
-                      onClick={handleSelectOnlyTopRecommended}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-neutral-700 bg-[#fafafa] hover:bg-neutral-100 border border-[#ebebeb] rounded-full active:scale-95 transition-all cursor-pointer"
-                    >
-                      <Sparkles className="w-3.5 h-3.5" />
-                      <span>Use AI Top Pick Only</span>
-                    </button>
-                  )}
-
                   <button
                     type="button"
                     disabled={regeneratingId === activeItem.id}
@@ -1462,355 +1434,95 @@ export default function PreviewPage() {
                 </div>
               )}
 
-              {/* 4-Tier Defensibility Classification Spec */}
-              <div className="bg-white rounded-xl border border-[#ebebeb] shadow-subtle p-4 sm:p-5 space-y-3.5">
-                <div className="flex items-center justify-between border-b border-[#ebebeb] pb-2.5">
-                  <div>
-                    <h2 className="text-xs font-semibold text-neutral-900 uppercase tracking-wide">
-                      4-Tier Defensibility Classification
-                    </h2>
-                    <p className="text-[11px] text-neutral-500 mt-0.5">
-                      Extracted JD keywords bucketed by live-interview defensibility
-                    </p>
-                  </div>
-                  <span className="font-mono text-[10px] text-neutral-500 bg-[#fafafa] border border-[#ebebeb] px-2 py-0.5 rounded">
-                    Cap: ≤ Tier 1 in Bullets
-                  </span>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2.5">
-                  {/* MATCHED */}
-                  <div className="rounded-lg border border-[#ebebeb] bg-[#fafafa] p-3 space-y-2">
-                    <div className="flex items-center justify-between">
-                      <span className="font-mono text-[10px] font-semibold text-emerald-700 uppercase">
-                        Matched
-                      </span>
-                      <span className="font-mono text-[10px] text-neutral-400">
-                        {activeItem.larpRun.tiers.matched.length}
-                      </span>
-                    </div>
-                    <div className="flex flex-wrap gap-1">
-                      {activeItem.larpRun.tiers.matched.map((k) => (
-                        <span
-                          key={k}
-                          className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-800 font-medium"
-                        >
-                          {k}
-                        </span>
-                      ))}
-                      {activeItem.larpRun.tiers.matched.length === 0 && (
-                        <span className="text-[11px] font-mono text-neutral-400">none</span>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* TIER 0: WORKFLOW */}
-                  <div className="rounded-lg border border-[#ebebeb] bg-[#fafafa] p-3 space-y-2">
-                    <div className="flex items-center justify-between">
-                      <span className="font-mono text-[10px] font-semibold text-blue-700 uppercase">
-                        Tier 0 · Workflow
-                      </span>
-                      <span className="font-mono text-[10px] text-neutral-400">
-                        {activeItem.larpRun.tiers.tier_0_workflow.length}
-                      </span>
-                    </div>
-                    <div className="flex flex-wrap gap-1">
-                      {activeItem.larpRun.tiers.tier_0_workflow.map((k) => (
-                        <span
-                          key={k}
-                          className="text-[11px] px-2 py-0.5 rounded-full bg-blue-50 border border-blue-200 text-blue-800 font-medium"
-                        >
-                          {k}
-                        </span>
-                      ))}
-                      {activeItem.larpRun.tiers.tier_0_workflow.length === 0 && (
-                        <span className="text-[11px] font-mono text-neutral-400">none</span>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* TIER 1: FRAMING */}
-                  <div className="rounded-lg border border-[#ebebeb] bg-[#fafafa] p-3 space-y-2">
-                    <div className="flex items-center justify-between">
-                      <span className="font-mono text-[10px] font-semibold text-indigo-700 uppercase">
-                        Tier 1 · Framing
-                      </span>
-                      <span className="font-mono text-[10px] text-neutral-400">
-                        {activeItem.larpRun.tiers.tier_1_framing.length}
-                      </span>
-                    </div>
-                    <div className="flex flex-wrap gap-1">
-                      {activeItem.larpRun.tiers.tier_1_framing.map((k) => (
-                        <span
-                          key={k}
-                          className="text-[11px] px-2 py-0.5 rounded-full bg-indigo-50 border border-indigo-200 text-indigo-800 font-medium"
-                        >
-                          {k}
-                        </span>
-                      ))}
-                      {activeItem.larpRun.tiers.tier_1_framing.length === 0 && (
-                        <span className="text-[11px] font-mono text-neutral-400">none</span>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* TIER 1.5: SKILLS ONLY */}
-                  <div className="rounded-lg border border-[#ebebeb] bg-[#fafafa] p-3 space-y-2">
-                    <div className="flex items-center justify-between">
-                      <span className="font-mono text-[10px] font-semibold text-violet-700 uppercase">
-                        Tier 1.5 · Skills Only
-                      </span>
-                      <span className="font-mono text-[10px] text-neutral-400">
-                        {activeItem.larpRun.tiers.tier_1_5_skills_only.length}
-                      </span>
-                    </div>
-                    <div className="flex flex-wrap gap-1">
-                      {activeItem.larpRun.tiers.tier_1_5_skills_only.map((k) => (
-                        <span
-                          key={k}
-                          className="text-[11px] px-2 py-0.5 rounded-full bg-violet-50 border border-violet-200 text-violet-800 font-medium"
-                        >
-                          {k}
-                        </span>
-                      ))}
-                      {activeItem.larpRun.tiers.tier_1_5_skills_only.length === 0 && (
-                        <span className="text-[11px] font-mono text-neutral-400">none</span>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* TIER 2: BANNED */}
-                  <div className="rounded-lg border border-red-200/70 bg-red-50/30 p-3 space-y-2">
-                    <div className="flex items-center justify-between">
-                      <span className="inline-flex items-center gap-1 font-mono text-[10px] font-semibold text-red-700 uppercase">
-                        <ShieldAlert className="w-3 h-3" />
-                        <span>Tier 2 · Banned</span>
-                      </span>
-                      <span className="font-mono text-[10px] text-red-500">
-                        {activeItem.larpRun.tiers.tier_2_banned.length}
-                      </span>
-                    </div>
-                    <div className="flex flex-wrap gap-1">
-                      {activeItem.larpRun.tiers.tier_2_banned.map((k) => (
-                        <span
-                          key={k}
-                          className="text-[11px] px-2 py-0.5 rounded-full bg-red-100/80 border border-red-200 text-red-800 font-medium line-through"
-                        >
-                          {k}
-                        </span>
-                      ))}
-                      {activeItem.larpRun.tiers.tier_2_banned.length === 0 && (
-                        <span className="text-[11px] font-mono text-neutral-400">none</span>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* AI Believability Reviewer & Top Recommendation */}
-              {activeItem.larpRun.aiRecommendation && (
-                <div className="rounded-xl border border-neutral-900 bg-[#fafafa] p-4 sm:p-5 space-y-3">
-                  <div className="flex items-start justify-between gap-3 flex-wrap">
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="inline-flex items-center gap-1 font-mono text-[10px] uppercase tracking-wider px-2 py-0.5 rounded bg-neutral-900 text-white">
-                          <Sparkles className="w-3 h-3" />
-                          AI Believability Recommendation
-                        </span>
-                        <span className="font-mono text-[11px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded">
-                          {activeItem.larpRun.aiRecommendation.believabilityScore}% Believability Score
-                        </span>
-                      </div>
-                      <h3 className="text-xs font-semibold text-neutral-900 pt-0.5">
-                        {activeItem.larpRun.aiRecommendation.verdictSummary}
-                      </h3>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={handleSelectOnlyTopRecommended}
-                      className="px-3 py-1.5 text-xs font-medium text-neutral-900 bg-white hover:bg-neutral-100 border border-[#ebebeb] rounded-full shadow-2xs active:scale-95 transition-all cursor-pointer"
-                    >
-                      Select Only Most Believable Pick
-                    </button>
-                  </div>
-
-                  <p className="text-xs text-neutral-600 leading-relaxed">
-                    {activeItem.larpRun.aiRecommendation.whyMostBelievable}
-                  </p>
-
-                  {activeItem.larpRun.aiRecommendation.interviewTalkingPoint && (
-                    <div className="rounded-lg bg-white border border-[#ebebeb] p-3 text-xs text-neutral-700 font-mono">
-                      <span className="block font-sans text-[10px] uppercase tracking-wider text-neutral-400 font-semibold mb-1">
-                        Interview Talking Point
-                      </span>
-                      {activeItem.larpRun.aiRecommendation.interviewTalkingPoint}
-                    </div>
-                  )}
-
-                  {activeItem.larpRun.aiRecommendation.verificationPasses &&
-                    activeItem.larpRun.aiRecommendation.verificationPasses.length > 0 && (
-                      <div className="space-y-1.5 pt-1">
-                        <span className="block font-mono text-[10px] text-neutral-400 uppercase">
-                          Real Guardrail & Coverage Verification ({activeItem.larpRun.aiRecommendation.iterationsRun}{" "}
-                          checks · {activeItem.larpRun.aiRecommendation.verified ? "All Passed" : "Issues Detected"})
-                        </span>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                          {activeItem.larpRun.aiRecommendation.verificationPasses.map((vp) => (
-                            <div
-                              key={vp.passNumber}
-                              className="rounded-lg bg-white border border-[#ebebeb] p-2.5 text-xs space-y-1"
-                            >
-                              <div className="flex items-center justify-between font-mono text-[10px]">
-                                <span className="font-semibold text-neutral-900">{vp.name}</span>
-                                <span
-                                  className={`px-1.5 py-0.5 rounded uppercase ${
-                                    vp.status === "failed"
-                                      ? "text-red-700 bg-red-50"
-                                      : "text-emerald-700 bg-emerald-50"
-                                  }`}
-                                >
-                                  {vp.status}
-                                </span>
-                              </div>
-                              <p className="text-[11px] text-neutral-500">{vp.detail}</p>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                </div>
-              )}
-
-              {/* Per-Keyword Diagnostics Panel in Preview */}
-              {activeItem.larpRun.diagnostics && activeItem.larpRun.diagnostics.length > 0 && (
-                <div className="bg-white rounded-xl border border-[#ebebeb] shadow-subtle p-4 space-y-2.5">
-                  <div className="flex items-center justify-between border-b border-[#ebebeb] pb-2">
-                    <span className="font-mono text-[10px] uppercase tracking-wider text-neutral-500 font-semibold">
-                      Keyword Diagnostics ({activeItem.larpRun.diagnostics.length} JD keywords tracked)
-                    </span>
-                    <span className="font-mono text-[10px] text-neutral-400">
-                      Zero Silent Failures
-                    </span>
-                  </div>
-                  <div className="divide-y divide-[#ebebeb] max-h-48 overflow-y-auto">
-                    {activeItem.larpRun.diagnostics.map((diag) => (
-                      <div
-                        key={diag.keyword}
-                        className="py-1.5 flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 text-xs"
-                      >
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="font-semibold text-neutral-900">{diag.keyword}</span>
-                          <span
-                            className={`font-mono text-[10px] px-1.5 py-0.5 rounded-full border ${
-                              diag.status === "applied"
-                                ? "bg-emerald-50 border-emerald-200 text-emerald-700"
-                                : diag.status === "already_covered"
-                                ? "bg-neutral-100 border-neutral-200 text-neutral-700"
-                                : diag.status === "skills_only"
-                                ? "bg-violet-50 border-violet-200 text-violet-700"
-                                : diag.status === "blocked"
-                                ? "bg-red-50 border-red-200 text-red-700"
-                                : "bg-amber-50 border-amber-200 text-amber-800"
-                            }`}
-                          >
-                            {diag.status}
-                          </span>
-                        </div>
-                        <span className="font-mono text-[11px] text-neutral-600">
-                          {diag.reason}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
               {/* Job Description & Extracted Main Skills Banner */}
               <div className="rounded-xl border border-[#ebebeb] bg-[#fafafa] p-4 space-y-3">
-                <div className="flex items-center justify-between gap-3 flex-wrap">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-mono text-[10px] uppercase tracking-wider text-neutral-500 font-semibold">
-                      Extracted Job Skills
-                    </span>
-                    <span className="font-mono text-[10px] px-2 py-0.5 rounded-full bg-white border border-[#ebebeb] text-neutral-600">
-                      {activeItem.larpRun.tiers.tier_1_framing.length +
-                        activeItem.larpRun.tiers.tier_0_workflow.length +
-                        activeItem.larpRun.tiers.matched.length}{" "}
-                      signals
-                    </span>
-                  </div>
+                {(() => {
+                  const matchedKeys = new Set(
+                    activeItem.larpRun.tiers.matched.map((m) => m.toLowerCase())
+                  );
+                  const missingTargetTech: string[] = [];
+                  const seenMissingKeys = new Set<string>();
+                  const pushMissing = (label: string) => {
+                    const key = label.toLowerCase();
+                    if (matchedKeys.has(key) || seenMissingKeys.has(key)) return;
+                    seenMissingKeys.add(key);
+                    missingTargetTech.push(label);
+                  };
+                  for (const s of activeItem.larpRun.tiers.tier_1_framing) pushMissing(s);
+                  for (const s of activeItem.larpRun.tiers.tier_0_workflow) pushMissing(s);
+                  for (const s of activeItem.larpRun.tiers.tier_1_5_skills_only) pushMissing(s);
+                  for (const m of matchResult?.missing ?? []) pushMissing(m.name);
 
-                  <button
-                    type="button"
-                    onClick={() => setShowJdDrawer((prev) => !prev)}
-                    className="inline-flex items-center gap-1.5 font-mono text-[11px] text-neutral-700 hover:text-neutral-900 bg-white hover:bg-neutral-50 border border-[#ebebeb] px-2.5 py-1 rounded-md cursor-pointer transition-colors shadow-2xs"
-                  >
-                    <FileText className="w-3.5 h-3.5 text-neutral-500" />
-                    <span>{showJdDrawer ? "Hide Job Description" : "View Job Description"}</span>
-                    {showJdDrawer ? (
-                      <ChevronUp className="w-3 h-3 text-neutral-400" />
-                    ) : (
-                      <ChevronDown className="w-3 h-3 text-neutral-400" />
-                    )}
-                  </button>
-                </div>
+                  return (
+                    <>
+                      <div className="flex items-center justify-between gap-3 flex-wrap">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-mono text-[10px] uppercase tracking-wider text-neutral-500 font-semibold">
+                            Extracted Job Skills
+                          </span>
+                          <span className="font-mono text-[10px] px-2 py-0.5 rounded-full bg-white border border-[#ebebeb] text-neutral-600">
+                            {missingTargetTech.length + activeItem.larpRun.tiers.matched.length}{" "}
+                            signals
+                          </span>
+                        </div>
 
-                {/* Badges for Framing Tech, Workflow Tools, and Matched Stack */}
-                <div className="flex flex-wrap gap-2.5 items-center">
-                  {activeItem.larpRun.tiers.tier_1_framing.length > 0 && (
-                    <div className="flex items-center gap-1 flex-wrap">
-                      <span className="font-mono text-[10px] text-neutral-400 mr-0.5">
-                        Target Tech:
-                      </span>
-                      {activeItem.larpRun.tiers.tier_1_framing.map((skill) => (
-                        <span
-                          key={skill}
-                          className="font-mono text-[11px] px-2 py-0.5 rounded-md bg-blue-50 border border-blue-200 text-blue-700 font-medium"
+                        <button
+                          type="button"
+                          onClick={() => setShowJdDrawer((prev) => !prev)}
+                          className="inline-flex items-center gap-1.5 font-mono text-[11px] text-neutral-700 hover:text-neutral-900 bg-white hover:bg-neutral-50 border border-[#ebebeb] px-2.5 py-1 rounded-md cursor-pointer transition-colors shadow-2xs"
                         >
-                          {skill}
-                        </span>
-                      ))}
-                    </div>
-                  )}
+                          <FileText className="w-3.5 h-3.5 text-neutral-500" />
+                          <span>{showJdDrawer ? "Hide Job Description" : "View Job Description"}</span>
+                          {showJdDrawer ? (
+                            <ChevronUp className="w-3 h-3 text-neutral-400" />
+                          ) : (
+                            <ChevronDown className="w-3 h-3 text-neutral-400" />
+                          )}
+                        </button>
+                      </div>
 
-                  {activeItem.larpRun.tiers.tier_0_workflow.length > 0 && (
-                    <div className="flex items-center gap-1 flex-wrap">
-                      <span className="font-mono text-[10px] text-neutral-400 mr-0.5">
-                        Workflow & PM:
-                      </span>
-                      {activeItem.larpRun.tiers.tier_0_workflow.map((tool) => (
-                        <span
-                          key={tool}
-                          className="font-mono text-[11px] px-2 py-0.5 rounded-md bg-purple-50 border border-purple-200 text-purple-700 font-medium"
-                        >
-                          {tool}
-                        </span>
-                      ))}
-                    </div>
-                  )}
+                      {/* Badges for Missing / Target Tech and Matched Stack */}
+                      <div className="flex flex-wrap gap-2.5 items-center">
+                        {missingTargetTech.length > 0 && (
+                          <div className="flex items-center gap-1 flex-wrap">
+                            <span className="font-mono text-[10px] text-neutral-400 mr-0.5">
+                              Missing / Target Tech:
+                            </span>
+                            {missingTargetTech.map((skill) => (
+                              <span
+                                key={skill}
+                                className="font-mono text-[11px] px-2 py-0.5 rounded-md bg-blue-50 border border-blue-200 text-blue-700 font-medium"
+                              >
+                                {skill}
+                              </span>
+                            ))}
+                          </div>
+                        )}
 
-                  {activeItem.larpRun.tiers.matched.length > 0 && (
-                    <div className="flex items-center gap-1 flex-wrap">
-                      <span className="font-mono text-[10px] text-neutral-400 mr-0.5">
-                        Matched Stack:
-                      </span>
-                      {activeItem.larpRun.tiers.matched.slice(0, 6).map((skill) => (
-                        <span
-                          key={skill}
-                          className="font-mono text-[11px] px-2 py-0.5 rounded-md bg-emerald-50 border border-emerald-200 text-emerald-700"
-                        >
-                          {skill}
-                        </span>
-                      ))}
-                      {activeItem.larpRun.tiers.matched.length > 6 && (
-                        <span className="font-mono text-[10px] text-neutral-400">
-                          +{activeItem.larpRun.tiers.matched.length - 6} more
-                        </span>
-                      )}
-                    </div>
-                  )}
-                </div>
+                        {activeItem.larpRun.tiers.matched.length > 0 && (
+                          <div className="flex items-center gap-1 flex-wrap">
+                            <span className="font-mono text-[10px] text-neutral-400 mr-0.5">
+                              Matched Stack:
+                            </span>
+                            {activeItem.larpRun.tiers.matched.slice(0, 8).map((skill) => (
+                              <span
+                                key={skill}
+                                className="font-mono text-[11px] px-2 py-0.5 rounded-md bg-emerald-50 border border-emerald-200 text-emerald-700"
+                              >
+                                {skill}
+                              </span>
+                            ))}
+                            {activeItem.larpRun.tiers.matched.length > 8 && (
+                              <span className="font-mono text-[10px] text-neutral-400">
+                                +{activeItem.larpRun.tiers.matched.length - 8} more
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  );
+                })()}
 
                 {/* Minimum Qualifications (if present in the job description) */}
                 {minimumQualifications && minimumQualifications.items.length > 0 && (

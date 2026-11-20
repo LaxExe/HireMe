@@ -183,7 +183,7 @@ export function selectBulletMutations(
         continue;
       }
 
-      const plausibility = checkSlotPlausibility(slot, keyword);
+      const plausibility = checkSlotPlausibility(slot, keyword, focusedRecommendations);
       if (!plausibility.ok) {
         kwStats.implausibleSlotsCount++;
         continue;
@@ -195,7 +195,8 @@ export function selectBulletMutations(
         slot.bullet.text,
         slot.context,
         keyword,
-        !focusedRecommendations || plausibility.pairsWithHit
+        !focusedRecommendations || plausibility.pairsWithHit,
+        focusedRecommendations
       );
       if (!attempt) {
         kwStats.noRuleMatchSlotsCount++;
@@ -235,10 +236,11 @@ export function selectBulletMutations(
             isOlderRole: slot.defensibilityBonus > 0 && slot.containerKind === "experience",
           });
 
+          const minRuleThreshold = attempt.source === "generic" ? 75 : 50;
           const lowFocusedFit =
             focusedRecommendations &&
             ((!plausibility.contextOverlap && !plausibility.pairsWithHit) ||
-              features.total < 75);
+              features.total < minRuleThreshold);
 
           if (awkwardSuffix || awkwardDeployedClause || lowFocusedFit) {
             kwStats.noRuleMatchSlotsCount++;
