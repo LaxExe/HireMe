@@ -16,7 +16,7 @@ export interface LedgerEntry {
   where: string;
   before?: string;
   after: string;
-  source: "rule" | "generic" | "llm" | "template";
+  source: "rule" | "generic" | "llm" | "template" | "default";
   confidence?: number;
   wordsChanged?: number;
 }
@@ -131,6 +131,7 @@ export function buildRunMetadata(params?: {
   jobDescription?: string;
   mode?: PolicyMode;
   model?: string;
+  promptVersion?: string;
   timestamp?: string;
 }): LarpRunMetadata {
   const firstLine = params?.jobDescription?.trim().split(/\r?\n/)[0]?.slice(0, 48) || "jd";
@@ -143,7 +144,7 @@ export function buildRunMetadata(params?: {
     jdId: params?.jdId || slug || "jd_run",
     mode: params?.mode ?? "framing",
     model: params?.model ?? DEFAULT_LLM_MODEL,
-    promptVersion: PROMPT_VERSION,
+    promptVersion: params?.promptVersion ?? PROMPT_VERSION,
     timestamp: params?.timestamp ?? new Date().toISOString(),
     synthetic: true,
   };

@@ -1055,4 +1055,63 @@ Requirements:
       );
     });
   });
+
+  describe("Phase 13: Focused JD Recommendations (1-2 Malleable Cards) & Global Default Picks", () => {
+    it("emits strictly 1-2 JD-relevant malleable cards with <= 2 JD Match options plus saved company Default Pick", () => {
+      const customDefault =
+        "Built automated **PostgreSQL** migration checks and smoke tests for customer deployments.";
+      const run = runLarpAlignmentPipeline(jds.pylon_fullstack.text, masterResume, {
+        focusedRecommendations: true,
+        defaultPicksByCompanyKey: {
+          allyvoiceai: customDefault,
+        },
+      });
+
+      assert.strictEqual(run.runMetadata.promptVersion, "align-v2.2-focused");
+      assert.ok(
+        run.malleableBullets.length >= 1 && run.malleableBullets.length <= 2,
+        `Focused mode must return 1 or 2 cards (got ${run.malleableBullets.length})`
+      );
+
+      // Should NOT surface unrelated C++ robotics project on a full-stack SaaS web JD
+      assert.ok(
+        !run.malleableBullets.some((m) => m.targetContainerId === "proj_wato"),
+        "Unrelated C++ rover project must be excluded from Full-Stack web JD recommendations"
+      );
+
+      // Full-Stack JD should prioritize the backend/frontend web role (Ally Voice AI)
+      const allyCard = run.malleableBullets.find(
+        (m) => m.targetContainerId === "job_ally"
+      );
+      assert.ok(allyCard, "Full-stack web role should be included in top 1-2 recommendations");
+
+      const jdMatchOpts = allyCard.options.filter(
+        (o) => !o.isDefaultPick && o.source !== "default"
+      );
+      const defaultOpts = allyCard.options.filter(
+        (o) => o.isDefaultPick || o.source === "default"
+      );
+
+      assert.ok(
+        jdMatchOpts.length >= 1 && jdMatchOpts.length <= 2,
+        `Each focused card must offer 1 or 2 JD Match options (got ${jdMatchOpts.length})`
+      );
+      assert.strictEqual(defaultOpts.length, 1, "Should include saved Default Pick option");
+      assert.strictEqual(defaultOpts[0].styleLabel, "Default Pick");
+      assert.ok(
+        plainText(defaultOpts[0].markup).includes("migration checks"),
+        "Saved custom Default Pick should propagate into synthesized card options"
+      );
+
+      // Focused bullet edits should filter out awkward 'deployed on Firebase Cloud Functions using Docker' suffix
+      assert.ok(
+        !run.bulletProposals.some((bp) =>
+          /\bdeployed\s+on\b[\s\S]*\busing\s+\*\*docker\*\*/i.test(bp.mutatedMarkup)
+        ),
+        "Awkward generic suffix on Firebase deployment bullet should be filtered in focused mode"
+      );
+
+      assert.strictEqual(run.aiRecommendation?.verified, true);
+    });
+  });
 });

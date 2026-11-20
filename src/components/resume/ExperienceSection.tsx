@@ -1,9 +1,14 @@
 "use client";
 
 import React, { useState } from "react";
-import { ExternalLink, GripVertical, Pencil, Plus, Trash2 } from "lucide-react";
+import { Bookmark, ExternalLink, GripVertical, Pencil, Plus, Trash2 } from "lucide-react";
+import { useAuth } from "@/context/AuthContext";
+import {
+  inferDefaultPickForRole,
+  saveGlobalRoleDefaultPick,
+} from "@/lib/resume/defaultMalleablePicks";
 import type { Job } from "@/lib/resume/types";
-import { uid } from "@/lib/resume/utils";
+import { parseMarkup, plainText, uid } from "@/lib/resume/utils";
 import { useCalibration } from "@/context/CalibrationContext";
 import BulletList from "./BulletList";
 import FieldEditor from "./FieldEditor";
@@ -39,7 +44,13 @@ function JobCard({
   onChange: (j: Job) => void;
   onDelete: () => void;
 }) {
+  const { user } = useAuth();
+  const { calibration } = useCalibration();
   const [editing, setEditing] = useState(false);
+  const [editingDefaultPick, setEditingDefaultPick] = useState(false);
+  const resolvedDefaultPick =
+    job.defaultMalleableBullet?.trim() || inferDefaultPickForRole(job, calibration);
+  const [defaultDraft, setDefaultDraft] = useState(resolvedDefaultPick);
 
   if (editing) {
     return (
@@ -124,6 +135,99 @@ function JobCard({
           known={known}
           onChange={(bullets) => onChange({ ...job, bullets })}
         />
+      </div>
+
+      {/* Global Default 1-Line Malleable Pick (shared across all applications for this company) */}
+      <div className="border-t border-[#ebebeb] bg-white px-4 py-2.5">
+        {editingDefaultPick ? (
+          <div className="space-y-2 animate-fadeIn">
+            <div className="flex items-center justify-between gap-2">
+              <span className="inline-flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-wider text-neutral-500 font-semibold">
+                <Bookmark className="w-3 h-3 text-neutral-700" />
+                <span>Default 1L Pick · All Jobs</span>
+              </span>
+              <span
+                className={`font-mono text-[10px] ${
+                  plainText(defaultDraft).trim().length > calibration.oneLineMax
+                    ? "text-red-600"
+                    : "text-neutral-400"
+                }`}
+              >
+                {plainText(defaultDraft).trim().length}/{calibration.oneLineMax} chars
+              </span>
+            </div>
+            <textarea
+              autoFocus
+              rows={2}
+              value={defaultDraft}
+              onChange={(e) => setDefaultDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") setEditingDefaultPick(false);
+              }}
+              className="w-full text-xs font-mono text-neutral-900 bg-[#fafafa] border border-[#ebebeb] focus:border-neutral-900 rounded-md p-2 focus:outline-none resize-none"
+            />
+            <div className="flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setEditingDefaultPick(false)}
+                className="px-2.5 py-1 text-xs font-medium text-neutral-600 hover:text-neutral-900 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const clean = defaultDraft.trim();
+                  if (!clean) return;
+                  onChange({ ...job, defaultMalleableBullet: clean });
+                  if (user?.uid) {
+                    void saveGlobalRoleDefaultPick(user.uid, job.id, job.company, clean);
+                  }
+                  setEditingDefaultPick(false);
+                }}
+                className="px-3 py-1 text-xs font-medium text-white bg-neutral-900 hover:bg-neutral-800 rounded-full shadow-2xs active:scale-95 transition-all cursor-pointer"
+              >
+                Save Default
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2 min-w-0">
+              <Bookmark className="w-3 h-3 text-neutral-400 shrink-0" />
+              <span className="font-mono text-[10px] uppercase tracking-wider text-neutral-400 shrink-0">
+                Default 1L Pick
+              </span>
+              <p className="text-xs text-neutral-700 truncate">
+                {parseMarkup(resolvedDefaultPick).map((seg, idx) =>
+                  seg.bold ? (
+                    <strong key={idx} className="font-semibold text-neutral-900">
+                      {seg.text}
+                    </strong>
+                  ) : (
+                    <span key={idx}>{seg.text}</span>
+                  )
+                )}
+              </p>
+            </div>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <span className="font-mono text-[10px] text-neutral-400">
+                {plainText(resolvedDefaultPick).trim().length}/{calibration.oneLineMax}
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  setDefaultDraft(resolvedDefaultPick);
+                  setEditingDefaultPick(true);
+                }}
+                aria-label={`Edit default pick for ${job.company}`}
+                className="p-1 text-neutral-400 hover:text-neutral-900 hover:bg-neutral-100 rounded transition-colors active:scale-95 cursor-pointer"
+              >
+                <Pencil className="w-3 h-3" />
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </article>
   );

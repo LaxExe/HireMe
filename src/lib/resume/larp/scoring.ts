@@ -176,7 +176,9 @@ export function calculateDynamicBelievabilityScore(params: {
     !entry.contexts.includes("systems");
 
   const ruleScore =
-    actionStyle === "Testing & Quality" || actionStyle === "Simple Integration"
+    actionStyle === "JD Match"
+      ? 95
+      : actionStyle === "Testing & Quality" || actionStyle === "Simple Integration"
       ? 92
       : actionStyle === "Workflow & Ops"
       ? 90

@@ -185,6 +185,8 @@ export interface BulletMutationProposal {
 export interface MalleableBulletOption {
   id: string;
   styleLabel:
+    | "JD Match"
+    | "Default Pick"
     | "Casual & Direct"
     | "Simple Integration"
     | "Workflow & Ops"
@@ -198,7 +200,8 @@ export interface MalleableBulletOption {
   fit: BulletFitResult;
   easyExplanation: string;
   isNewClaim?: boolean;
-  source?: "template" | "llm";
+  isDefaultPick?: boolean;
+  source?: "template" | "llm" | "default";
 }
 
 export interface MalleableSynthesizedBullet {

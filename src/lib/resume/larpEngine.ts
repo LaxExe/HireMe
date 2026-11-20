@@ -89,6 +89,7 @@ export {
   autoTagResumeContainers,
   selectEligibleContainersForMalleableLines,
   synthesizeMalleableOneLineBullets,
+  type SynthesizeMalleableOptions,
 } from "./larp/malleable";
 
 export {
@@ -146,6 +147,7 @@ export {
 } from "./larp/ledger";
 
 export {
+  FOCUSED_ALIGNMENT_PROMPT_VERSION,
   runLarpAlignmentPipeline,
   runLarpAlignmentPipelineAsync,
   type LarpPipelineOptions,

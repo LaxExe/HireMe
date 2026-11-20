@@ -11,6 +11,7 @@ import {
 import { buildRunLedger, buildRunMetadata } from "./ledger";
 import {
   draftAndValidateLlmMalleableOptions,
+  PROMPT_VERSION,
   proposeAndValidateLlmBulletCandidates,
   type Completer,
   type LlmTelemetry,
@@ -31,6 +32,8 @@ import type {
 } from "./types";
 import { buildKeywordDiagnostics, evaluateBelievabilityAndRecommend } from "./verify";
 
+export const FOCUSED_ALIGNMENT_PROMPT_VERSION = "align-v2.2-focused";
+
 export interface LarpPipelineOptions {
   jdId?: string;
   variantOffset?: number;
@@ -40,6 +43,8 @@ export interface LarpPipelineOptions {
   includeLlmMalleable?: boolean;
   enableJudge?: boolean;
   excludePairs?: Set<string>;
+  focusedRecommendations?: boolean;
+  defaultPicksByCompanyKey?: Record<string, string>;
 }
 
 function buildSlotsFromResume(
@@ -185,7 +190,8 @@ export function runLarpAlignmentPipeline(
     statsOut,
     undefined,
     keywordWeights,
-    options.excludePairs
+    options.excludePairs,
+    Boolean(options.focusedRecommendations)
   );
 
   const malleableCount = cal.malleableLines ?? 1;
@@ -193,7 +199,15 @@ export function runLarpAlignmentPipeline(
     resume,
     tiers,
     malleableCount,
-    variantOffset
+    variantOffset,
+    options.focusedRecommendations
+      ? {
+          focusedRecommendations: true,
+          jobDescription,
+          keywordWeights,
+          defaultPicksByCompanyKey: options.defaultPicksByCompanyKey,
+        }
+      : undefined
   );
   const aiRecommendation = evaluateBelievabilityAndRecommend(
     malleableBullets,
@@ -236,6 +250,9 @@ export function runLarpAlignmentPipeline(
     jobDescription,
     mode: options.mode ?? "framing",
     model: options.llmModel ?? "deterministic-rules",
+    promptVersion: options.focusedRecommendations
+      ? FOCUSED_ALIGNMENT_PROMPT_VERSION
+      : PROMPT_VERSION,
   });
 
   const acceptedBulletIds = new Set(bulletProposals.map((p) => p.bulletId));
@@ -343,7 +360,8 @@ export async function runLarpAlignmentPipelineAsync(
     statsOut,
     llmCandidates,
     keywordWeights,
-    options.excludePairs
+    options.excludePairs,
+    Boolean(options.focusedRecommendations)
   );
 
   // Merge LLM rejection counts into statsOut so all_rejected diagnostics include LLM rejections
@@ -362,14 +380,23 @@ export async function runLarpAlignmentPipelineAsync(
     resume,
     tiers,
     malleableCount,
-    variantOffset
+    variantOffset,
+    options.focusedRecommendations
+      ? {
+          focusedRecommendations: true,
+          jobDescription,
+          keywordWeights,
+          defaultPicksByCompanyKey: options.defaultPicksByCompanyKey,
+        }
+      : undefined
   );
 
   if (options.includeLlmMalleable && malleableBullets.length > 0) {
     // Token-saving optimization: only draft LLM malleable options for the #1 top-ranked container
-    const containers = selectEligibleContainersForMalleableLines(resume).slice(0, 1);
+    const allContainers = selectEligibleContainersForMalleableLines(resume);
     const mb = malleableBullets[0];
-    const container = containers[0];
+    const container =
+      allContainers.find((c) => c.id === mb?.targetContainerId) ?? allContainers[0];
     if (mb && container) {
       const llmOpts = await draftAndValidateLlmMalleableOptions({
         container,
@@ -381,12 +408,33 @@ export async function runLarpAlignmentPipelineAsync(
         guardCtx,
       });
       if (llmOpts.length > 0) {
-        mb.options.unshift(...llmOpts);
-        mb.markup = llmOpts[0].markup;
-        mb.latex = llmOpts[0].latex;
-        mb.chars = llmOpts[0].chars;
-        mb.widthNcu = llmOpts[0].widthNcu;
-        mb.fit = llmOpts[0].fit;
+        if (options.focusedRecommendations) {
+          const styledLlm = llmOpts.slice(0, 2).map((o, idx) => ({
+            ...o,
+            id: `${mb.id}-llm-${idx + 1}`,
+            styleLabel: "JD Match" as const,
+          }));
+          const templateJdOpts = mb.options.filter(
+            (o) => !o.isDefaultPick && o.source !== "default"
+          );
+          const defaultOpts = mb.options.filter(
+            (o) => o.isDefaultPick || o.source === "default"
+          );
+          const mergedJdOpts = [...styledLlm, ...templateJdOpts].slice(0, 2);
+          mb.options = [...mergedJdOpts, ...defaultOpts];
+          mb.markup = mergedJdOpts[0]?.markup ?? mb.markup;
+          mb.latex = mergedJdOpts[0]?.latex ?? mb.latex;
+          mb.chars = mergedJdOpts[0]?.chars ?? mb.chars;
+          mb.widthNcu = mergedJdOpts[0]?.widthNcu ?? mb.widthNcu;
+          mb.fit = mergedJdOpts[0]?.fit ?? mb.fit;
+        } else {
+          mb.options.unshift(...llmOpts);
+          mb.markup = llmOpts[0].markup;
+          mb.latex = llmOpts[0].latex;
+          mb.chars = llmOpts[0].chars;
+          mb.widthNcu = llmOpts[0].widthNcu;
+          mb.fit = llmOpts[0].fit;
+        }
       }
     }
   }
@@ -432,6 +480,9 @@ export async function runLarpAlignmentPipelineAsync(
     jobDescription,
     mode: options.mode ?? "framing",
     model: options.llmModel ?? llmTelemetry.model,
+    promptVersion: options.focusedRecommendations
+      ? FOCUSED_ALIGNMENT_PROMPT_VERSION
+      : PROMPT_VERSION,
   });
 
   const acceptedBulletIds = new Set(bulletProposals.map((p) => p.bulletId));

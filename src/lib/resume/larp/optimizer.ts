@@ -137,7 +137,8 @@ export function selectBulletMutations(
   statsOut?: Map<string, KeywordCandidateStats>,
   llmCandidates?: LlmValidatedCandidate[],
   keywordWeights?: Map<string, number>,
-  excludePairs?: Set<string>
+  excludePairs?: Set<string>,
+  focusedRecommendations = false
 ): BulletMutationProposal[] {
   const m = centralizedTargetKeywords.length;
   const n = slots.length;
@@ -190,7 +191,12 @@ export function selectBulletMutations(
 
       const pairOptions: EvaluatedPairCandidate[] = [];
 
-      const attempt = tryMinimalKeywordInjection(slot.bullet.text, slot.context, keyword);
+      const attempt = tryMinimalKeywordInjection(
+        slot.bullet.text,
+        slot.context,
+        keyword,
+        !focusedRecommendations || plausibility.pairsWithHit
+      );
       if (!attempt) {
         kwStats.noRuleMatchSlotsCount++;
       } else {
@@ -211,6 +217,13 @@ export function selectBulletMutations(
               (kwStats.rejectionCountsByCode[v.code] ?? 0) + 1;
           }
         } else {
+          const awkwardSuffix =
+            focusedRecommendations &&
+            attempt.source === "generic" &&
+            (!plausibility.pairsWithHit || guard.budget.candFit.tone !== "green");
+          const awkwardDeployedClause =
+            focusedRecommendations &&
+            /\bdeployed\s+on\b[\s\S]*\busing\s+\*\*[^*]+\*\*\.?$/i.test(fittedMarkup);
           const features = scoreCandidate({
             ruleScore: attempt.fitScore,
             jdWeight: kwWeight,
@@ -222,17 +235,26 @@ export function selectBulletMutations(
             isOlderRole: slot.defensibilityBonus > 0 && slot.containerKind === "experience",
           });
 
-          pairOptions.push({
-            slot,
-            keyword,
-            mutatedMarkup: fittedMarkup,
-            reason: attempt.reason,
-            score: features.total,
-            scoreFeatures: features,
-            budget: guard.budget,
-            wordStats: guard.wordStats,
-            source: attempt.source ?? "rule",
-          });
+          const lowFocusedFit =
+            focusedRecommendations &&
+            ((!plausibility.contextOverlap && !plausibility.pairsWithHit) ||
+              features.total < 75);
+
+          if (awkwardSuffix || awkwardDeployedClause || lowFocusedFit) {
+            kwStats.noRuleMatchSlotsCount++;
+          } else {
+            pairOptions.push({
+              slot,
+              keyword,
+              mutatedMarkup: fittedMarkup,
+              reason: attempt.reason,
+              score: features.total,
+              scoreFeatures: features,
+              budget: guard.budget,
+              wordStats: guard.wordStats,
+              source: attempt.source ?? "rule",
+            });
+          }
         }
       }
 
@@ -345,6 +367,11 @@ export function selectBulletMutations(
     if (statsOut) {
       statsOut.set(kwStats.keyword.toLowerCase(), kwStats);
     }
+  }
+
+  if (focusedRecommendations && bulletProposals.length > 4) {
+    bulletProposals.sort((a, b) => (b.totalScore ?? 0) - (a.totalScore ?? 0));
+    return bulletProposals.slice(0, 4);
   }
 
   return bulletProposals;

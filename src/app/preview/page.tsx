@@ -66,6 +66,14 @@ import SkillsSection from "@/components/resume/SkillsSection";
 import ExperienceSection from "@/components/resume/ExperienceSection";
 import ProjectsSection from "@/components/resume/ProjectsSection";
 import AwardsSection from "@/components/resume/AwardsSection";
+import DefaultPicksBar from "@/components/resume/DefaultPicksBar";
+import {
+  applyDefaultPickToPreviewItem,
+  buildCompanyDefaultPicksMap,
+  saveGlobalRoleDefaultPick,
+  toggleOrSelectDefaultPickInState,
+  type RoleDefaultPickItem,
+} from "@/lib/resume/defaultMalleablePicks";
 
 export default function PreviewPage() {
   const router = useRouter();
@@ -113,14 +121,6 @@ export default function PreviewPage() {
     };
   }, [user]);
 
-  if (loading || !user) {
-    return (
-      <div className="flex-1 flex items-center justify-center py-20 text-xs text-neutral-400 font-mono">
-        Authenticating session...
-      </div>
-    );
-  }
-
   const activeItem = queue.find((item) => item.id === selectedId) ?? queue[0] ?? null;
 
   const matchResult = useMemo<KeywordMatchResult | null>(() => {
@@ -135,6 +135,32 @@ export default function PreviewPage() {
       extractMinimumQualifications(activeItem.jobDescription)
     );
   }, [matchResult?.minimumQualifications, activeItem?.jobDescription]);
+
+  const known = useMemo(
+    () =>
+      activeItem?.baseResume
+        ? knownTools(
+            activeItem.baseResume.skills.flatMap((c) => c.skills.map((s) => s.name)),
+            activeItem.baseResume.projects.map((p) => p.techStack)
+          )
+        : [],
+    [activeItem?.baseResume]
+  );
+
+  const allMalleableCollapsed = useMemo(() => {
+    if (!activeItem || activeItem.larpRun.malleableBullets.length === 0) return false;
+    return activeItem.larpRun.malleableBullets.every(
+      (mb) => Boolean(collapsedMalleableIds[mb.id])
+    );
+  }, [activeItem, collapsedMalleableIds]);
+
+  if (loading || !user) {
+    return (
+      <div className="flex-1 flex items-center justify-center py-20 text-xs text-neutral-400 font-mono">
+        Authenticating session...
+      </div>
+    );
+  }
 
   const updateActiveItem = (
     patch: Partial<
@@ -155,21 +181,10 @@ export default function PreviewPage() {
       >
     >
   ) => {
-    if (!activeItem) return;
+    if (!activeItem || !user) return;
     const nextQueue = updatePreviewQueueItem(user.uid, activeItem.id, patch, queue);
     setQueue(nextQueue);
   };
-
-  const known = useMemo(
-    () =>
-      activeItem?.baseResume
-        ? knownTools(
-            activeItem.baseResume.skills.flatMap((c) => c.skills.map((s) => s.name)),
-            activeItem.baseResume.projects.map((p) => p.techStack)
-          )
-        : [],
-    [activeItem?.baseResume]
-  );
 
   const handleToggleSingleMalleable = (id: string) => {
     setCollapsedMalleableIds((prev) => ({
@@ -177,13 +192,6 @@ export default function PreviewPage() {
       [id]: !prev[id],
     }));
   };
-
-  const allMalleableCollapsed = useMemo(() => {
-    if (!activeItem || activeItem.larpRun.malleableBullets.length === 0) return false;
-    return activeItem.larpRun.malleableBullets.every(
-      (mb) => Boolean(collapsedMalleableIds[mb.id])
-    );
-  }, [activeItem, collapsedMalleableIds]);
 
   const handleToggleAllMalleableBullets = () => {
     if (!activeItem) return;
@@ -193,6 +201,39 @@ export default function PreviewPage() {
       nextMap[mb.id] = nextVal;
     }
     setCollapsedMalleableIds(nextMap);
+  };
+
+  const handleQuickSelectDefaultPick = (pick: RoleDefaultPickItem) => {
+    if (!activeItem) return;
+    const {
+      nextMalleableBullets,
+      nextAcceptedMalleableIds,
+      nextSelectedOptionMap,
+    } = toggleOrSelectDefaultPickInState({
+      pick,
+      resume: activeItem.baseResume,
+      malleableBullets: activeItem.larpRun.malleableBullets,
+      acceptedMalleableIds: activeItem.acceptedMalleableIds,
+      selectedOptionBySlotId: activeItem.selectedMalleableOptionBySlotId || {},
+    });
+
+    updateActiveItem({
+      larpRun: {
+        ...activeItem.larpRun,
+        malleableBullets: nextMalleableBullets,
+      },
+      acceptedMalleableIds: nextAcceptedMalleableIds,
+      selectedMalleableOptionBySlotId: nextSelectedOptionMap,
+    });
+  };
+
+  const handleDefaultPickSaved = (pick: RoleDefaultPickItem, newMarkup: string) => {
+    setQueue((prev) =>
+      prev.map((item) =>
+        applyDefaultPickToPreviewItem(item, pick.containerId, pick.companyName, newMarkup)
+      )
+    );
+    setVisualizedUrlBySlot({});
   };
 
   const handleUpdateResume = (patch: Partial<MasterResume>) => {
@@ -524,6 +565,7 @@ export default function PreviewPage() {
     }));
 
     const currentMaster = (await loadMasterResume(user.uid)) || activeItem.baseResume;
+    const defaultPicksMap = buildCompanyDefaultPicksMap(currentMaster, user.uid);
 
     const freshRun = runLarpAlignmentPipeline(
       activeItem.jobDescription,
@@ -533,6 +575,8 @@ export default function PreviewPage() {
         variantOffset: nextOffset,
         excludePairs: prevExcluded,
         mode: "framing",
+        focusedRecommendations: true,
+        defaultPicksByCompanyKey: defaultPicksMap,
       }
     );
 
@@ -574,6 +618,8 @@ export default function PreviewPage() {
         mode: "framing",
         llm: apiCompleter,
         includeLlmMalleable: true,
+        focusedRecommendations: true,
+        defaultPicksByCompanyKey: defaultPicksMap,
       }
     )
       .then((asyncRun) => {
@@ -640,10 +686,14 @@ export default function PreviewPage() {
           roleName: item.roleName || item.title || `Slot #${i + 1}`,
         });
 
+        const defaultPicksMap = buildCompanyDefaultPicksMap(latestMaster, user.uid);
+
         // 1. Run deterministic alignment pipeline with latest master resume
         const freshRun = runLarpAlignmentPipeline(item.jobDescription, latestMaster, {
           jdId: item.roleName || item.title || item.id,
           mode: "framing",
+          focusedRecommendations: true,
+          defaultPicksByCompanyKey: defaultPicksMap,
         });
 
         // 2. Re-analyze with LLM candidate proposer
@@ -654,6 +704,8 @@ export default function PreviewPage() {
             mode: "framing",
             llm: apiCompleter,
             includeLlmMalleable: true,
+            focusedRecommendations: true,
+            defaultPicksByCompanyKey: defaultPicksMap,
           });
           if (asyncRun) {
             finalRun = asyncRun;
@@ -2097,9 +2149,20 @@ export default function PreviewPage() {
                 </div>
               )}
 
-              {/* 3. Malleable 1-Line Bullets (Collapsible) */}
-              {activeItem.larpRun.malleableBullets.length > 0 && (
-                <div className="space-y-2.5 pt-2 border-t border-[#ebebeb]">
+              {/* 3. Malleable 1-Line Bullets (Collapsible + Global Default Picks) */}
+              {(activeItem.larpRun.malleableBullets.length > 0 ||
+                activeItem.baseResume.experience.length > 0) && (
+                <div className="space-y-3 pt-2 border-t border-[#ebebeb]">
+                  <DefaultPicksBar
+                    resume={activeItem.baseResume}
+                    uid={user.uid}
+                    malleableBullets={activeItem.larpRun.malleableBullets}
+                    acceptedMalleableIds={activeItem.acceptedMalleableIds}
+                    selectedOptionBySlotId={activeItem.selectedMalleableOptionBySlotId || {}}
+                    onQuickSelectDefaultPick={handleQuickSelectDefaultPick}
+                    onDefaultPickSaved={handleDefaultPickSaved}
+                  />
+
                   <div className="flex items-center justify-between gap-2 flex-wrap">
                     <button
                       type="button"
@@ -2230,6 +2293,14 @@ export default function PreviewPage() {
                                   {mb.options.map((opt, optIdx) => {
                                     const isOptSelected = opt.id === chosenOptId;
                                     const isEditingOpt = editingMalleableOptId === opt.id;
+                                    const isDefaultOption = Boolean(
+                                      opt.isDefaultPick ||
+                                        opt.source === "default" ||
+                                        opt.styleLabel === "Default Pick"
+                                    );
+                                    const companyLabel =
+                                      mb.targetContainerTitle.split(" · ").pop()?.trim() ||
+                                      mb.targetContainerTitle;
                                     return (
                                       <div
                                         key={opt.id}
@@ -2240,10 +2311,19 @@ export default function PreviewPage() {
                                             : "bg-[#fafafa] border-[#ebebeb] hover:bg-neutral-50"
                                         }`}
                                       >
-                                        <div className="flex items-center justify-between gap-2 mb-0.5">
-                                          <span className="font-mono text-[10px] font-semibold text-neutral-900">
-                                            Option {optIdx + 1} · {opt.styleLabel}
-                                          </span>
+                                        <div className="flex items-center justify-between gap-2 mb-0.5 flex-wrap">
+                                          <div className="flex items-center gap-1.5 flex-wrap">
+                                            <span className="font-mono text-[10px] font-semibold text-neutral-900">
+                                              {isDefaultOption
+                                                ? `Default Pick · ${companyLabel}`
+                                                : `Recommendation ${optIdx + 1} · ${opt.styleLabel}`}
+                                            </span>
+                                            {isDefaultOption && (
+                                              <span className="font-mono text-[9px] px-1.5 py-0.5 rounded bg-neutral-900 text-white">
+                                                All Jobs
+                                              </span>
+                                            )}
+                                          </div>
                                           <div className="flex items-center gap-2">
                                             <span className="font-mono text-[10px] text-neutral-500">
                                               {opt.chars}/{opt.maxChars} chars · {opt.widthNcu} NCU · {opt.fit.badge}
@@ -2253,6 +2333,29 @@ export default function PreviewPage() {
                                               onClick={(e) => {
                                                 e.stopPropagation();
                                                 handleSelectMalleableOption(mb.id, opt.id);
+                                                if (isEditingOpt && isDefaultOption) {
+                                                  void saveGlobalRoleDefaultPick(
+                                                    user.uid,
+                                                    mb.targetContainerId,
+                                                    companyLabel,
+                                                    opt.markup,
+                                                    activeItem.baseResume
+                                                  ).then(() => {
+                                                    handleDefaultPickSaved(
+                                                      {
+                                                        containerId: mb.targetContainerId,
+                                                        companyName: companyLabel,
+                                                        companyKey: "",
+                                                        roleTitle: "",
+                                                        markup: opt.markup,
+                                                        chars: opt.chars,
+                                                        maxChars: opt.maxChars,
+                                                        fit: opt.fit,
+                                                      },
+                                                      opt.markup
+                                                    );
+                                                  });
+                                                }
                                                 setEditingMalleableOptId(
                                                   isEditingOpt ? null : opt.id
                                                 );
@@ -2260,7 +2363,13 @@ export default function PreviewPage() {
                                               className="inline-flex items-center gap-1 font-mono text-[10px] text-neutral-600 hover:text-neutral-900 bg-white border border-[#ebebeb] px-1.5 py-0.5 rounded cursor-pointer"
                                             >
                                               <Pencil className="w-2.5 h-2.5" />
-                                              <span>{isEditingOpt ? "Done" : "Edit"}</span>
+                                              <span>
+                                                {isEditingOpt
+                                                  ? isDefaultOption
+                                                    ? "Save All Jobs"
+                                                    : "Done"
+                                                  : "Edit"}
+                                              </span>
                                             </button>
                                           </div>
                                         </div>

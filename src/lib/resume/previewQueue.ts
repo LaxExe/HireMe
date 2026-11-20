@@ -2,7 +2,12 @@ import { rtdb, isFirebaseConfigured } from "@/lib/firebase";
 import { ref, get, update, onValue } from "firebase/database";
 import { isOnline, enqueueOfflineItem } from "@/lib/offlineSync";
 import { applyLakshmanHeaderToResume, isLakshmanAccount } from "./headerMigration";
-import type { LarpAlignmentRun } from "./larpEngine";
+import { buildCompanyDefaultPicksMap } from "./defaultMalleablePicks";
+import {
+  FOCUSED_ALIGNMENT_PROMPT_VERSION,
+  runLarpAlignmentPipeline,
+  type LarpAlignmentRun,
+} from "./larpEngine";
 import type { MasterResume } from "./types";
 import { uid } from "./utils";
 import { loadAgentsQueue } from "./agentsQueue";
@@ -75,19 +80,88 @@ function migratePreviewItemsIfNeeded(
   uidStr: string,
   items: PreviewQueueItem[]
 ): { items: PreviewQueueItem[]; changed: boolean } {
-  if (!isLakshmanAccount(uidStr)) {
-    return { items, changed: false };
-  }
+  const isLakshman = isLakshmanAccount(uidStr);
   let changed = false;
+
   const migrated = items.map((item) => {
     if (!item?.baseResume) return item;
-    const res = applyLakshmanHeaderToResume(item.baseResume);
-    if (res.changed) {
+    let nextBase = item.baseResume;
+    let itemChanged = false;
+
+    if (isLakshman) {
+      const headerRes = applyLakshmanHeaderToResume(nextBase);
+      if (headerRes.changed) {
+        nextBase = headerRes.resume;
+        itemChanged = true;
+      }
+    }
+
+    const needsFocusedUpgrade =
+      Boolean(item.jobDescription?.trim()) &&
+      item.larpRun?.runMetadata?.promptVersion !== FOCUSED_ALIGNMENT_PROMPT_VERSION;
+
+    if (needsFocusedUpgrade) {
+      const defaultMap = buildCompanyDefaultPicksMap(nextBase, uidStr);
+      const freshRun = runLarpAlignmentPipeline(item.jobDescription, nextBase, {
+        jdId: item.roleName || item.title || item.id,
+        mode: "framing",
+        focusedRecommendations: true,
+        defaultPicksByCompanyKey: defaultMap,
+      });
+
+      const validBulletSet = new Set(freshRun.bulletProposals.map((p) => p.bulletId));
+      const keptBullets = item.acceptedBulletIds.filter((id) => validBulletSet.has(id));
+      const nextAcceptedBulletIds =
+        item.acceptedBulletIds.length === 0
+          ? []
+          : keptBullets.length > 0
+          ? keptBullets
+          : freshRun.bulletProposals.map((p) => p.bulletId);
+
+      const recommendedMalleableIds = freshRun.malleableBullets
+        .filter((m, idx) => idx === 0 || m.recommended)
+        .slice(0, 2)
+        .map((m) => m.id);
+      const nextAcceptedMalleableIds =
+        recommendedMalleableIds.length > 0
+          ? recommendedMalleableIds
+          : freshRun.malleableBullets.slice(0, 1).map((m) => m.id);
+
+      const nextSelectedOpts: Record<string, string> = {};
+      for (const mb of freshRun.malleableBullets) {
+        const prevSelected = item.selectedMalleableOptionBySlotId?.[mb.id];
+        if (prevSelected && prevSelected.includes("default")) {
+          const defOpt = mb.options.find(
+            (o) => o.isDefaultPick || o.source === "default"
+          );
+          if (defOpt) {
+            nextSelectedOpts[mb.id] = defOpt.id;
+            continue;
+          }
+        }
+        if (mb.options[0]) {
+          nextSelectedOpts[mb.id] = mb.options[0].id;
+        }
+      }
+
       changed = true;
-      return { ...item, baseResume: res.resume };
+      return {
+        ...item,
+        baseResume: nextBase,
+        larpRun: freshRun,
+        acceptedBulletIds: nextAcceptedBulletIds,
+        acceptedMalleableIds: nextAcceptedMalleableIds,
+        selectedMalleableOptionBySlotId: nextSelectedOpts,
+      };
+    }
+
+    if (itemChanged) {
+      changed = true;
+      return { ...item, baseResume: nextBase };
     }
     return item;
   });
+
   return { items: migrated, changed };
 }
 

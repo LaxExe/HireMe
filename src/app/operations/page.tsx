@@ -49,6 +49,15 @@ import {
 } from "@/lib/resume/previewQueue";
 import { parseMarkup, plainText } from "@/lib/resume/utils";
 import type { MasterResume } from "@/lib/resume/types";
+import DefaultPicksBar from "@/components/resume/DefaultPicksBar";
+import {
+  applyDefaultPickToMasterResume,
+  buildCompanyDefaultPicksMap,
+  normalizeCompanyKey,
+  saveGlobalRoleDefaultPick,
+  toggleOrSelectDefaultPickInState,
+  type RoleDefaultPickItem,
+} from "@/lib/resume/defaultMalleablePicks";
 
 export default function OperationsPage() {
   const router = useRouter();
@@ -187,11 +196,14 @@ export default function OperationsPage() {
     customVariantOffset = 0
   ) => {
     const kwResult = matchJobDescriptionWithResume(targetJd, currentResume);
+    const defaultPicksMap = buildCompanyDefaultPicksMap(currentResume, user.uid);
     const alignment = runLarpAlignmentPipeline(targetJd, currentResume, {
       jdId: roleName || undefined,
       variantOffset: customVariantOffset,
       excludePairs: customExcludedPairs,
       mode: "framing",
+      focusedRecommendations: true,
+      defaultPicksByCompanyKey: defaultPicksMap,
     });
     setMatchResult(kwResult);
     setLarpRun(alignment);
@@ -221,6 +233,8 @@ export default function OperationsPage() {
         mode: "framing",
         llm: apiCompleter,
         includeLlmMalleable: true,
+        focusedRecommendations: true,
+        defaultPicksByCompanyKey: defaultPicksMap,
       })
         .then((asyncRun) => {
           setLarpRun(asyncRun);
@@ -385,6 +399,60 @@ export default function OperationsPage() {
           prev.bulletProposals
         ),
       };
+    });
+  };
+
+  const handleQuickSelectDefaultPick = (pick: RoleDefaultPickItem) => {
+    if (!resume || !larpRun) return;
+    const {
+      nextMalleableBullets,
+      nextAcceptedMalleableIds,
+      nextSelectedOptionMap,
+    } = toggleOrSelectDefaultPickInState({
+      pick,
+      resume,
+      malleableBullets: larpRun.malleableBullets,
+      acceptedMalleableIds: Array.from(acceptedMalleable),
+      selectedOptionBySlotId: selectedMalleableOption,
+    });
+    setLarpRun((prev) =>
+      prev ? { ...prev, malleableBullets: nextMalleableBullets } : prev
+    );
+    setAcceptedMalleable(new Set(nextAcceptedMalleableIds));
+    setSelectedMalleableOption(nextSelectedOptionMap);
+  };
+
+  const handleDefaultPickSaved = (pick: RoleDefaultPickItem, newMarkup: string) => {
+    if (resume) {
+      setResume(
+        applyDefaultPickToMasterResume(
+          resume,
+          pick.containerId,
+          pick.companyName,
+          newMarkup
+        )
+      );
+    }
+    setLarpRun((prev) => {
+      if (!prev) return prev;
+      const nextMalleable = prev.malleableBullets.map((mb) => {
+        const matches =
+          mb.targetContainerId === pick.containerId ||
+          (pick.companyKey &&
+            normalizeCompanyKey(mb.targetContainerTitle).includes(pick.companyKey));
+        if (!matches) return mb;
+        const defOpt = mb.options.find(
+          (o) => o.isDefaultPick || o.source === "default" || o.styleLabel === "Default Pick"
+        );
+        if (!defOpt) return mb;
+        return updateMalleableOptionWithCustomMarkup(
+          mb,
+          defOpt.id,
+          newMarkup,
+          resume?.calibration
+        );
+      });
+      return { ...prev, malleableBullets: nextMalleable };
     });
   };
 
@@ -1195,21 +1263,33 @@ export default function OperationsPage() {
                   </div>
                 )}
 
-                {/* Step 4: Malleable 1-Line Bullets (Context-Aware Synthesis) */}
+                {/* Step 4: Malleable 1-Line Bullets (JD-Focused Synthesis + Default Picks) */}
                 <div className="border-t border-[#ebebeb] pt-4 space-y-3">
                   <div className="flex items-center justify-between gap-3 flex-wrap">
                     <div>
                       <h3 className="text-xs font-semibold text-neutral-900">
-                        Step 4 · Malleable 1-Line Bullets (Multi-Role Synthesis)
+                        Step 4 · Malleable 1-Line Bullets (1–2 JD Recommendations &amp; Default Picks)
                       </h3>
                       <p className="text-[11px] text-neutral-500 mt-0.5">
-                        Synthesizes context-aware 1-line options across your roles and experiences, calibrated for line-budget fit and interview defensibility.
+                        Generates 1–2 JD-aligned options for the best-fitting roles, plus your editable Default Picks saved across every job.
                       </p>
                     </div>
                     <span className="font-mono text-[10px] text-neutral-500 bg-[#fafafa] border border-[#ebebeb] px-2 py-0.5 rounded">
                       {acceptedMalleable.size} of {larpRun.malleableBullets.length} option(s) selected
                     </span>
                   </div>
+
+                  {resume && (
+                    <DefaultPicksBar
+                      resume={resume}
+                      uid={user.uid}
+                      malleableBullets={larpRun.malleableBullets}
+                      acceptedMalleableIds={Array.from(acceptedMalleable)}
+                      selectedOptionBySlotId={selectedMalleableOption}
+                      onQuickSelectDefaultPick={handleQuickSelectDefaultPick}
+                      onDefaultPickSaved={handleDefaultPickSaved}
+                    />
+                  )}
 
                   {larpRun.malleableBullets.length === 0 ? (
                     <p className="text-xs font-mono text-neutral-400 py-2">
@@ -1342,6 +1422,14 @@ export default function OperationsPage() {
                                   {mb.options.map((opt, optIdx) => {
                                     const isChosenOpt = opt.id === (activeOpt?.id ?? "");
                                     const isEditingOpt = editingMalleableOptId === opt.id;
+                                    const isDefaultOption = Boolean(
+                                      opt.isDefaultPick ||
+                                        opt.source === "default" ||
+                                        opt.styleLabel === "Default Pick"
+                                    );
+                                    const companyLabel =
+                                      mb.targetContainerTitle.split(" · ").pop()?.trim() ||
+                                      mb.targetContainerTitle;
                                     return (
                                       <div
                                         key={opt.id}
@@ -1361,7 +1449,7 @@ export default function OperationsPage() {
                                         }`}
                                       >
                                         <div className="flex items-center justify-between gap-2 mb-1">
-                                          <div className="flex items-center gap-2">
+                                          <div className="flex items-center gap-2 flex-wrap">
                                             <input
                                               type="radio"
                                               name={`malleable-opt-${mb.id}`}
@@ -1370,8 +1458,15 @@ export default function OperationsPage() {
                                               className="text-neutral-900 focus:ring-0"
                                             />
                                             <span className="font-mono text-[10px] font-semibold text-neutral-900">
-                                              Option {optIdx + 1} · {opt.styleLabel}
+                                              {isDefaultOption
+                                                ? `Default Pick · ${companyLabel}`
+                                                : `Recommendation ${optIdx + 1} · ${opt.styleLabel}`}
                                             </span>
+                                            {isDefaultOption && (
+                                              <span className="font-mono text-[9px] px-1.5 py-0.5 rounded bg-neutral-900 text-white">
+                                                All Jobs
+                                              </span>
+                                            )}
                                           </div>
                                           <div className="flex items-center gap-2">
                                             <span className="font-mono text-[10px] text-neutral-500">
@@ -1390,6 +1485,23 @@ export default function OperationsPage() {
                                                     new Set(prev).add(mb.id)
                                                   );
                                                 }
+                                                if (isEditingOpt && isDefaultOption && resume) {
+                                                  void saveGlobalRoleDefaultPick(
+                                                    user.uid,
+                                                    mb.targetContainerId,
+                                                    companyLabel,
+                                                    opt.markup,
+                                                    resume
+                                                  );
+                                                  setResume(
+                                                    applyDefaultPickToMasterResume(
+                                                      resume,
+                                                      mb.targetContainerId,
+                                                      companyLabel,
+                                                      opt.markup
+                                                    )
+                                                  );
+                                                }
                                                 setEditingMalleableOptId(
                                                   isEditingOpt ? null : opt.id
                                                 );
@@ -1397,7 +1509,13 @@ export default function OperationsPage() {
                                               className="inline-flex items-center gap-1 font-mono text-[10px] text-neutral-600 hover:text-neutral-900 bg-white border border-[#ebebeb] px-1.5 py-0.5 rounded cursor-pointer"
                                             >
                                               <Pencil className="w-2.5 h-2.5" />
-                                              <span>{isEditingOpt ? "Done" : "Edit"}</span>
+                                              <span>
+                                                {isEditingOpt
+                                                  ? isDefaultOption
+                                                    ? "Save All Jobs"
+                                                    : "Done"
+                                                  : "Edit"}
+                                              </span>
                                             </button>
                                           </div>
                                         </div>

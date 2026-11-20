@@ -28,6 +28,8 @@ export interface Job {
   isLeadership?: boolean;
   /** Optional domain tags (auto-inferred via DOMAIN_HINTS and user-editable). */
   tags?: DomainContext[];
+  /** Persistent default 1-line malleable bullet shared across all job applications for this role. */
+  defaultMalleableBullet?: string;
 }
 
 export interface ProjectLink {
@@ -51,6 +53,8 @@ export interface Project {
   bullets: Bullet[];
   /** Optional domain tags (auto-inferred via DOMAIN_HINTS and user-editable). */
   tags?: DomainContext[];
+  /** Persistent default 1-line malleable bullet shared across all job applications for this role. */
+  defaultMalleableBullet?: string;
 }
 
 export interface Education {
@@ -269,6 +273,8 @@ export interface MasterResume {
     timestamp: string;
     injectedClaimsCount: number;
   };
+  /** User-defined default 1-line malleable bullets keyed by normalized company/container name or id, shared across all job applications. */
+  defaultMalleableByContainer?: Record<string, string>;
   contact: Contact;
   education: Education[];
   skills: SkillCategory[];

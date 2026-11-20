@@ -275,7 +275,9 @@ export function runRealVerificationPasses(input: RealVerificationInput): {
     ...bulletProposals.map((bp) => plainText(bp.mutatedMarkup)),
     ...malleableBullets.flatMap((mb) => [
       plainText(mb.markup),
-      ...mb.options.map((o) => plainText(o.markup)),
+      ...mb.options
+        .filter((o) => !o.isDefaultPick && o.source !== "default")
+        .map((o) => plainText(o.markup)),
     ]),
   ].join(" \n ");
 
@@ -312,6 +314,7 @@ export function runRealVerificationPasses(input: RealVerificationInput): {
   }
   for (const mb of malleableBullets) {
     for (const opt of mb.options) {
+      if (opt.isDefaultPick || opt.source === "default") continue;
       const optPlain = plainText(opt.markup);
       for (const s of pureSkillsOnly) {
         if (containsPhrase(optPlain, s)) {
