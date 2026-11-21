@@ -251,6 +251,10 @@ export const DEFAULT_RESUME_FORMAT: ResumeFormat = {
 };
 
 export interface MasterResume {
+  /** Unique identifier for this master resume slot in a multi-resume collection. */
+  id?: string;
+  /** User-facing display name for this master resume (e.g. "Master Resume", "Systems / C++"). */
+  name?: string;
   version: 1;
   updatedAt: string;
   calibration?: CalibrationConfig;
@@ -308,8 +312,10 @@ export function hasResumeSection(resume: MasterResume, key: ResumeSectionKey): b
   return key === "contact";
 }
 
-export function emptyResume(): MasterResume {
+export function emptyResume(meta?: { id?: string; name?: string }): MasterResume {
   return {
+    ...(meta?.id ? { id: meta.id } : {}),
+    ...(meta?.name ? { name: meta.name } : {}),
     version: 1,
     updatedAt: new Date().toISOString(),
     calibration: { ...DEFAULT_CALIBRATION },

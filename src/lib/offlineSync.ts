@@ -52,6 +52,8 @@ export interface PendingMasterResume {
   type: "masterResume";
   uid: string;
   data: string;
+  resumesData?: string;
+  activeResumeId?: string;
   timestamp: string;
 }
 
@@ -139,10 +141,17 @@ export async function flushOfflineQueue(): Promise<void> {
           updatedAt: item.timestamp,
         });
       } else if (item.type === "masterResume") {
-        await set(ref(rtdb, `masterResumes/${item.uid}`), {
+        const payload: Record<string, string> = {
           data: item.data,
           updatedAt: item.timestamp,
-        });
+        };
+        if (item.resumesData) {
+          payload.resumesData = item.resumesData;
+        }
+        if (item.activeResumeId) {
+          payload.activeResumeId = item.activeResumeId;
+        }
+        await set(ref(rtdb, `masterResumes/${item.uid}`), payload);
       }
     } catch (e) {
       console.warn("Could not sync offline item to Firebase, will retry when network restores:", e);

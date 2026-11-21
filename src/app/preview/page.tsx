@@ -33,7 +33,11 @@ import {
   deletePreviewQueueItem,
   type PreviewQueueItem,
 } from "@/lib/resume/previewQueue";
-import { loadMasterResume } from "@/lib/resume/store";
+import {
+  loadMasterResume,
+  loadMasterResumes,
+  getMasterResumeById,
+} from "@/lib/resume/store";
 import {
   apiCompleter,
   applyLarpMutationsToResume,
@@ -399,7 +403,7 @@ export default function PreviewPage() {
 
   const handleResetSlotToMaster = async () => {
     if (!user || !activeItem) return;
-    const master = await loadMasterResume(user.uid);
+    const master = await loadMasterResume(user.uid, activeItem.baseResume?.id);
     if (!master) {
       alert("Could not load your latest master resume.");
       return;
@@ -556,7 +560,8 @@ export default function PreviewPage() {
       [activeItem.id]: Array.from(prevExcluded),
     }));
 
-    const currentMaster = (await loadMasterResume(user.uid)) || activeItem.baseResume;
+    const currentMaster =
+      (await loadMasterResume(user.uid, activeItem.baseResume?.id)) || activeItem.baseResume;
     const defaultPicksMap = buildCompanyDefaultPicksMap(currentMaster, user.uid);
 
     const freshRun = runLarpAlignmentPipeline(
@@ -661,8 +666,9 @@ export default function PreviewPage() {
     if (!user || queue.length === 0) return;
     setRefreshModalStep("refreshing");
     try {
-      const latestMaster = await loadMasterResume(user.uid);
-      if (!latestMaster) {
+      const masterCollection = await loadMasterResumes(user.uid);
+      const fallbackMaster = getMasterResumeById(masterCollection, masterCollection.activeResumeId);
+      if (!fallbackMaster) {
         alert("Could not load your latest master resume. Please verify your resume is saved in Experience.");
         setRefreshModalStep(null);
         return;
@@ -672,6 +678,8 @@ export default function PreviewPage() {
 
       for (let i = 0; i < queue.length; i++) {
         const item = queue[i];
+        const latestMaster =
+          getMasterResumeById(masterCollection, item.baseResume?.id) || fallbackMaster;
         setRefreshProgress({
           current: i + 1,
           total: queue.length,
@@ -1215,6 +1223,7 @@ export default function PreviewPage() {
                           </p>
                         )}
                         <p className="font-mono text-[10px] text-neutral-500 mt-1">
+                          {item.baseResume?.name ? `${item.baseResume.name} · ` : ""}
                           {totalSelectedEdits} edits active
                           {isVisualized ? " · PDF ready" : ""}
                         </p>
