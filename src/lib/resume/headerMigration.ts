@@ -109,6 +109,20 @@ export function applyLakshmanHeaderToResume(resume: MasterResume): {
     return { resume, changed: false };
   }
 
+  const hasContent =
+    (resume.education?.length || 0) +
+      (resume.skills?.length || 0) +
+      (resume.experience?.length || 0) +
+      (resume.projects?.length || 0) +
+      (resume.awards?.length || 0) >
+      0 ||
+    Boolean(resume.contact?.name) ||
+    Boolean(resume.rawLatex);
+
+  if (!hasContent) {
+    return { resume, changed: false };
+  }
+
   const normalizedRaw = normalizeNewlines(resume.rawLatex);
   const rawHasExactHeading = normalizedRaw.includes(LAKSHMAN_HEADING_LATEX);
 
@@ -216,19 +230,21 @@ export async function migrateAllLakshmanApplicationsInFirebase(
     let previewUpdatedCount = 0;
     let agentsUpdatedCount = 0;
 
-    // 1. Migrate Master Resume
+    // 1. Migrate Master Resume(s)
     try {
       const masterRef = ref(rtdb, `masterResumes/${uid}`);
       const masterSnap = await get(masterRef);
       if (masterSnap.exists()) {
         const val = masterSnap.val();
+        const updates: Record<string, string> = {};
+
         if (typeof val?.data === "string") {
           const parsed = JSON.parse(val.data) as MasterResume;
           const { resume: migrated, changed } = applyLakshmanHeaderToResume(parsed);
           if (changed) {
             const payload = JSON.stringify(migrated);
-            const updatedAt = migrated.updatedAt || new Date().toISOString();
-            await set(masterRef, { data: payload, updatedAt });
+            updates.data = payload;
+            updates.updatedAt = migrated.updatedAt || new Date().toISOString();
             if (typeof window !== "undefined") {
               try {
                 localStorage.setItem(`hireme_master_resume_${uid}`, payload);
@@ -236,6 +252,30 @@ export async function migrateAllLakshmanApplicationsInFirebase(
             }
             masterUpdated = true;
           }
+        }
+
+        if (typeof val?.resumesData === "string") {
+          const parsedList = JSON.parse(val.resumesData) as MasterResume[];
+          if (Array.isArray(parsedList)) {
+            let listChanged = false;
+            const migratedList = parsedList.map((r) => {
+              const { resume: migrated, changed } = applyLakshmanHeaderToResume(r);
+              if (changed) {
+                listChanged = true;
+                return migrated;
+              }
+              return r;
+            });
+            if (listChanged) {
+              updates.resumesData = JSON.stringify(migratedList);
+              updates.updatedAt = new Date().toISOString();
+              masterUpdated = true;
+            }
+          }
+        }
+
+        if (Object.keys(updates).length > 0) {
+          await update(masterRef, updates);
         }
       }
     } catch (e) {

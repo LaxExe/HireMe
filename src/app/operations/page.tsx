@@ -15,9 +15,10 @@ import {
   Download,
   ChevronDown,
   ChevronUp,
+  FileText,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
-import { loadMasterResume, subscribeMasterResume } from "@/lib/resume/store";
+import { subscribeMasterResumes } from "@/lib/resume/store";
 import { isEmptyResume } from "@/lib/resume/latex";
 import {
   matchJobDescriptionWithResume,
@@ -62,7 +63,8 @@ export default function OperationsPage() {
   const router = useRouter();
   const { user, loading } = useAuth();
 
-  const [resume, setResume] = useState<MasterResume | null>(null);
+  const [masterResumes, setMasterResumes] = useState<MasterResume[]>([]);
+  const [selectedResumeId, setSelectedResumeId] = useState<string>("");
   const [resumeReady, setResumeReady] = useState(false);
 
   const [roleName, setRoleName] = useState("");
@@ -83,6 +85,7 @@ export default function OperationsPage() {
   const [queuedSlotBanner, setQueuedSlotBanner] = useState<{
     count: number;
     latestTitle: string;
+    resumeName?: string;
   } | null>(null);
   const [missingResumePrompt, setMissingResumePrompt] = useState(false);
   const [scrapingUrl, setScrapingUrl] = useState(false);
@@ -163,8 +166,20 @@ export default function OperationsPage() {
       }
     }
 
-    const unsubMaster = subscribeMasterResume(user.uid, (loaded) => {
-      setResume(loaded);
+    const unsubMaster = subscribeMasterResumes(user.uid, (collection) => {
+      setMasterResumes(collection.resumes);
+      setSelectedResumeId((prevId) => {
+        if (prevId && collection.resumes.some((r) => r.id === prevId && !isEmptyResume(r))) {
+          return prevId;
+        }
+        const preferred =
+          collection.resumes.find(
+            (r) => r.id === collection.activeResumeId && !isEmptyResume(r)
+          ) ||
+          collection.resumes.find((r) => !isEmptyResume(r)) ||
+          collection.resumes[0];
+        return preferred?.id || "";
+      });
       setResumeReady(true);
     });
 
@@ -185,6 +200,22 @@ export default function OperationsPage() {
       </div>
     );
   }
+
+  const validResumes = masterResumes.filter((r) => !isEmptyResume(r));
+  const resume =
+    validResumes.find((r) => r.id === selectedResumeId) ||
+    masterResumes.find((r) => r.id === selectedResumeId) ||
+    validResumes[0] ||
+    masterResumes[0] ||
+    null;
+
+  const setResume = (updated: MasterResume | null) => {
+    if (!updated) return;
+    const targetId = updated.id || resume?.id;
+    setMasterResumes((prev) =>
+      prev.map((r) => (r.id === targetId ? { ...updated, id: r.id, name: r.name } : r))
+    );
+  };
 
   const hasValidResume = Boolean(resume && !isEmptyResume(resume));
 
@@ -294,6 +325,19 @@ export default function OperationsPage() {
     a.click();
     document.body.removeChild(a);
     setTimeout(() => URL.revokeObjectURL(url), 1500);
+  };
+
+  const handleSelectMasterResume = (newResumeId: string) => {
+    setSelectedResumeId(newResumeId);
+    const chosen = masterResumes.find((r) => r.id === newResumeId);
+    if (chosen && !isEmptyResume(chosen)) {
+      setMissingResumePrompt(false);
+      if (jobDescription.trim() && (matchResult || larpRun)) {
+        setExcludedPairs(new Set());
+        setVariantOffset(0);
+        executeAnalysisAndLarp(jobDescription.trim(), chosen, new Set(), 0);
+      }
+    }
   };
 
   const handleSubmitJobDescription = () => {
@@ -490,7 +534,13 @@ export default function OperationsPage() {
     setEditingMalleableOptId(null);
     setApplySkillsSwap(true);
     setMissingResumePrompt(false);
-    setQueuedSlotBanner({ count: totalCount, latestTitle: item.title });
+    const chosenResumeName =
+      resume.name?.trim() || resume.contact.name?.trim() || "Master Resume";
+    setQueuedSlotBanner({
+      count: totalCount,
+      latestTitle: item.title,
+      resumeName: chosenResumeName,
+    });
   };
 
   return (
@@ -515,7 +565,13 @@ export default function OperationsPage() {
               <Check className="w-3 h-3" />
             </span>
             <span>
-              Queued <span className="font-semibold text-neutral-900">&ldquo;{queuedSlotBanner.latestTitle}&rdquo;</span> ({queuedSlotBanner.count} in Preview Queue).
+              Queued <span className="font-semibold text-neutral-900">&ldquo;{queuedSlotBanner.latestTitle}&rdquo;</span>
+              {queuedSlotBanner.resumeName ? (
+                <>
+                  {" "}using <span className="font-mono font-semibold text-neutral-900">{queuedSlotBanner.resumeName}</span>
+                </>
+              ) : null}{" "}
+              ({queuedSlotBanner.count} in Preview Queue).
             </span>
           </div>
           <div className="flex items-center gap-2">
@@ -666,15 +722,76 @@ export default function OperationsPage() {
           )}
         </div>
 
-        <div className="flex items-center justify-end gap-2 pt-1">
-          <button
-            type="submit"
-            disabled={!jobDescription.trim()}
-            className="inline-flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium text-white bg-neutral-900 hover:bg-neutral-800 rounded-full disabled:opacity-40 shadow-subtle active:scale-95 transition-all cursor-pointer"
-          >
-            <Send className="w-3.5 h-3.5" />
-            <span>Submit Job Description</span>
-          </button>
+        {/* Master Resume Selection Bar (before analysis / submission) */}
+        <div className="pt-2 border-t border-[#ebebeb] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="space-y-1.5 flex-1 min-w-0">
+            <div className="flex items-center justify-between sm:justify-start gap-2 flex-wrap">
+              <span className="font-mono text-[10px] uppercase tracking-wider text-neutral-500 font-semibold">
+                Select Master Resume ({validResumes.length})
+              </span>
+              <button
+                type="button"
+                onClick={() => router.push("/experience")}
+                className="font-mono text-[10px] text-neutral-500 hover:text-neutral-900 underline underline-offset-2 cursor-pointer"
+              >
+                Manage in Experience
+              </button>
+            </div>
+            {validResumes.length === 0 ? (
+              <p className="text-[11px] font-mono text-amber-700">
+                No master resume uploaded yet. Add one in Experience first.
+              </p>
+            ) : (
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {validResumes.map((r, idx) => {
+                  const isSelected = r.id === resume?.id;
+                  const expCount = r.experience?.length || 0;
+                  const projCount = r.projects?.length || 0;
+                  return (
+                    <button
+                      key={r.id || idx}
+                      type="button"
+                      onClick={() => r.id && handleSelectMasterResume(r.id)}
+                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border transition-all duration-150 active:scale-95 cursor-pointer ${
+                        isSelected
+                          ? "bg-neutral-900 border-neutral-900 text-white shadow-2xs"
+                          : "bg-[#fafafa] border-[#ebebeb] text-neutral-700 hover:bg-neutral-100 hover:border-neutral-300"
+                      }`}
+                    >
+                      <FileText
+                        className={`w-3 h-3 shrink-0 ${
+                          isSelected ? "text-neutral-200" : "text-neutral-500"
+                        }`}
+                      />
+                      <span className="truncate max-w-[160px]">
+                        {r.name?.trim() || `Master Resume ${idx + 1}`}
+                      </span>
+                      <span
+                        className={`font-mono text-[10px] px-1.5 py-0.5 rounded-full ${
+                          isSelected
+                            ? "bg-white/15 text-neutral-200"
+                            : "bg-white border border-[#ebebeb] text-neutral-500"
+                        }`}
+                      >
+                        {expCount} exp · {projCount} proj
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          <div className="flex items-center justify-end gap-2 shrink-0">
+            <button
+              type="submit"
+              disabled={!jobDescription.trim()}
+              className="inline-flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium text-white bg-neutral-900 hover:bg-neutral-800 rounded-full disabled:opacity-40 shadow-subtle active:scale-95 transition-all cursor-pointer"
+            >
+              <Send className="w-3.5 h-3.5" />
+              <span>Submit Job Description</span>
+            </button>
+          </div>
         </div>
       </form>
 
@@ -753,9 +870,10 @@ export default function OperationsPage() {
                         <span>Tier-2 Banned Guardrail: 0 Injected</span>
                       </span>
                     )}
-                    {resume?.contact.name && (
-                      <span className="font-mono text-[11px] text-neutral-500 bg-[#fafafa] border border-[#ebebeb] px-2.5 py-1 rounded-full">
-                        {resume.contact.name}
+                    {resume && (
+                      <span className="inline-flex items-center gap-1 font-mono text-[11px] text-neutral-700 bg-[#fafafa] border border-[#ebebeb] px-2.5 py-1 rounded-full">
+                        <FileText className="w-3 h-3 text-neutral-500" />
+                        <span>{resume.name?.trim() || resume.contact.name || "Master Resume"}</span>
                       </span>
                     )}
                   </div>
@@ -1384,16 +1502,53 @@ export default function OperationsPage() {
                   )}
                 </div>
 
-                {/* Queue to Preview Slot Bar */}
-                <div className="flex items-center justify-end gap-3 pt-3 border-t border-[#ebebeb] flex-wrap">
-                  <div className="flex items-center gap-2">
+                {/* Queue to Preview Slot Bar with Resume Selection */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-4 border-t border-[#ebebeb]">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-mono text-[10px] uppercase tracking-wider text-neutral-500 font-semibold">
+                      Resume for Preview:
+                    </span>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      {validResumes.map((r, idx) => {
+                        const isSelected = r.id === resume?.id;
+                        return (
+                          <button
+                            key={`preview-pick-${r.id || idx}`}
+                            type="button"
+                            onClick={() => r.id && handleSelectMasterResume(r.id)}
+                            className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium border transition-all duration-150 active:scale-95 cursor-pointer ${
+                              isSelected
+                                ? "bg-neutral-900 border-neutral-900 text-white shadow-2xs"
+                                : "bg-[#fafafa] border-[#ebebeb] text-neutral-700 hover:bg-neutral-100 hover:border-neutral-300"
+                            }`}
+                          >
+                            <FileText
+                              className={`w-3 h-3 shrink-0 ${
+                                isSelected ? "text-neutral-200" : "text-neutral-500"
+                              }`}
+                            />
+                            <span className="truncate max-w-[160px]">
+                              {r.name?.trim() || `Master Resume ${idx + 1}`}
+                            </span>
+                            {isSelected && (
+                              <Check className="w-3 h-3 text-emerald-400 shrink-0" />
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-end gap-2 shrink-0">
                     <button
                       type="button"
                       onClick={handleQueueIntoPreviewSlot}
                       className="inline-flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium text-white bg-neutral-900 hover:bg-neutral-800 rounded-full shadow-subtle active:scale-95 transition-all cursor-pointer"
                     >
                       <Plus className="w-3.5 h-3.5" />
-                      <span>Queue to Preview Slot</span>
+                      <span>
+                        Queue {resume?.name?.trim() ? `"${resume.name.trim()}" ` : ""}to Preview Slot
+                      </span>
                     </button>
                   </div>
                 </div>
