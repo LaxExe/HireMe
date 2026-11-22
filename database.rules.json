@@ -22,12 +22,6 @@
         ".read": "auth != null && (auth.uid === $uid || auth.token.email === 'lakshman.r.2008@gmail.com' || auth.token.email === 'lakshmananramanathan08@gmail.com')",
         ".write": "auth != null && (auth.uid === $uid || auth.token.email === 'lakshman.r.2008@gmail.com' || auth.token.email === 'lakshmananramanathan08@gmail.com')"
       }
-    },
-    "userSecretArchivedJobs": {
-      "$uid": {
-        ".read": "auth != null && (auth.uid === $uid || auth.token.email === 'lakshman.r.2008@gmail.com' || auth.token.email === 'lakshmananramanathan08@gmail.com')",
-        ".write": "auth != null && (auth.uid === $uid || auth.token.email === 'lakshman.r.2008@gmail.com' || auth.token.email === 'lakshmananramanathan08@gmail.com')"
-      }
     }
   }
 }

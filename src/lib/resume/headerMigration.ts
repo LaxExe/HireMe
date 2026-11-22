@@ -282,7 +282,7 @@ export async function migrateAllLakshmanApplicationsInFirebase(
       console.warn("Firebase masterResumes header migration failed:", e);
     }
 
-    // 2. Migrate Preview Queue Slots (use update() to preserve secretJobsStore)
+    // 2. Migrate Preview Queue Slots (use update() to preserve dbViewerStore)
     try {
       const previewRef = ref(rtdb, `previewQueues/${uid}`);
       const previewSnap = await get(previewRef);

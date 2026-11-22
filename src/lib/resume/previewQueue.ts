@@ -349,7 +349,7 @@ export function savePreviewQueue(uidStr: string, items: PreviewQueueItem[]): voi
     console.warn("Failed to save preview queue to localStorage:", e);
   }
 
-  // If online and Firebase is configured, update only data/updatedAt so secretJobsStore is preserved
+  // If online and Firebase is configured, update only data/updatedAt so dbViewerStore is preserved
   if (isOnline() && isFirebaseConfigured) {
     update(ref(rtdb, `previewQueues/${uidStr}`), {
       data: serialized,
