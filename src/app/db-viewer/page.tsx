@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState, useMemo, useCallback } from "react";
+import React, { useEffect, useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
@@ -8,7 +8,6 @@ import {
   Sliders,
   ShieldAlert,
   Search,
-  Sparkles,
   ArrowRight,
   User,
   Users,
@@ -32,24 +31,24 @@ import {
   type PreviewQueueItem,
 } from "@/lib/resume/previewQueue";
 import {
-  subscribeSecretJobsStore,
-  archiveJobInCloud,
-  unarchiveJobInCloud,
+  subscribeDbViewerStore,
+  archiveRecordInCloud,
+  unarchiveRecordInCloud,
   restoreAllArchivedInCloud,
-  mergeJobsIntoStore,
-  getJobIdentifier,
-  type CandidateAppliedJob,
-  type SecretJobsStoreData,
-} from "@/lib/resume/secretJobsStore";
+  mergeRecordsIntoStore,
+  getRecordIdentifier,
+  type DbViewerRecord,
+  type DbViewerStoreData,
+} from "@/lib/resume/dbViewerStore";
 
-// Known administrator UIDs
-const ADMIN_UIDS = new Set([
-  "PvKPmKmpqSZMTW9w4XVqWK3Y8El1", // lakshman.r.2008@gmail.com
-  "CtF9N7qVfcQse3DsZcPvkQ4dwCT2", // lakshmananramanathan08@gmail.com
+// Workspace owner UIDs
+const OWNER_UIDS = new Set([
+  "PvKPmKmpqSZMTW9w4XVqWK3Y8El1",
+  "CtF9N7qVfcQse3DsZcPvkQ4dwCT2",
 ]);
 
-// Authorized administrator email list (with typos/aliases handled)
-const AUTHORIZED_ADMIN_EMAILS = [
+// Authorized workspace accounts
+const AUTHORIZED_VIEWER_EMAILS = [
   "lakshman.r.2008@gmail.com",
   "lakshmananramanathan08@gmail.com",
   "lakshmananramanthan08@gmail.com",
@@ -85,31 +84,23 @@ function getDomainFromUrl(url: string): string {
   }
 }
 
-/**
- * Checks if a job belongs to the current user or administrator identity
- * to ensure that admin jobs (including lakshmananramanathan08@gmail.com)
- * are NEVER displayed in the candidate stream.
- */
-function isJobFromAdminOrSelf(
-  job: CandidateAppliedJob,
+function isRecordFromCurrentOwner(
+  record: DbViewerRecord,
   currentUserUid?: string,
   currentUserEmail?: string
 ): boolean {
-  // 1. Current user UID or known Admin UIDs
-  if (currentUserUid && job.applicantId === currentUserUid) return true;
-  if (ADMIN_UIDS.has(job.applicantId)) return true;
+  if (currentUserUid && record.applicantId === currentUserUid) return true;
+  if (OWNER_UIDS.has(record.applicantId)) return true;
 
-  // 2. Current user email match
-  if (currentUserEmail && job.applicantEmail) {
-    if (job.applicantEmail.toLowerCase().trim() === currentUserEmail.toLowerCase().trim()) {
+  if (currentUserEmail && record.applicantEmail) {
+    if (record.applicantEmail.toLowerCase().trim() === currentUserEmail.toLowerCase().trim()) {
       return true;
     }
   }
 
-  // 3. Known Admin emails / patterns
-  const emailLower = (job.applicantEmail || "").toLowerCase().trim();
+  const emailLower = (record.applicantEmail || "").toLowerCase().trim();
   if (emailLower) {
-    if (AUTHORIZED_ADMIN_EMAILS.includes(emailLower)) return true;
+    if (AUTHORIZED_VIEWER_EMAILS.includes(emailLower)) return true;
     if (
       emailLower.includes("lakshman") ||
       emailLower.includes("ramanathan") ||
@@ -120,8 +111,7 @@ function isJobFromAdminOrSelf(
     }
   }
 
-  // 4. Admin name match
-  const nameLower = (job.applicantName || "").toLowerCase().trim();
+  const nameLower = (record.applicantName || "").toLowerCase().trim();
   if (
     nameLower.includes("lakshman") ||
     nameLower.includes("ramanathan") ||
@@ -133,12 +123,12 @@ function isJobFromAdminOrSelf(
   return false;
 }
 
-export default function SecretJobsPage() {
+export default function DbViewerPage() {
   const router = useRouter();
   const { user, loading } = useAuth();
 
   // Persistent store loaded directly from Firebase Realtime Database
-  const [storeData, setStoreData] = useState<SecretJobsStoreData>({
+  const [storeData, setStoreData] = useState<DbViewerStoreData>({
     jobs: [],
     archivedKeys: [],
     updatedAt: "",
@@ -151,7 +141,7 @@ export default function SecretJobsPage() {
   // Tab: "active" vs "archived"
   const [viewTab, setViewTab] = useState<"active" | "archived">("active");
 
-  // Manual Add Job Modal state
+  // Manual Add Record Modal state
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [newJobTitle, setNewJobTitle] = useState("");
   const [newJobUrl, setNewJobUrl] = useState("");
@@ -159,31 +149,30 @@ export default function SecretJobsPage() {
   const [newCandidateEmail, setNewCandidateEmail] = useState("");
   const [isSubmittingNewJob, setIsSubmittingNewJob] = useState(false);
 
-  // Current user's own queue items (to exclude jobs already applied to or queued)
+  // Current user's own queue items
   const [myAgentsEntries, setMyAgentsEntries] = useState<AgentResumeEntry[]>([]);
   const [myPreviewItems, setMyPreviewItems] = useState<PreviewQueueItem[]>([]);
 
   // Authentication gate
   useEffect(() => {
     if (!loading && !user) {
-      router.push("/login?redirect=/secret/jobs");
+      router.push("/login?redirect=/db-viewer");
     }
   }, [user, loading, router]);
 
   const isAuthorized = useMemo(() => {
     if (!user?.email) return false;
-    return AUTHORIZED_ADMIN_EMAILS.includes(user.email.toLowerCase().trim());
+    return AUTHORIZED_VIEWER_EMAILS.includes(user.email.toLowerCase().trim());
   }, [user]);
 
-  // Subscribe to persistent store in Firebase Realtime Database (previewQueues/${user.uid}/secretJobsStore)
-  // This guarantees identical jobs and archive states across any computer!
+  // Subscribe to persistent store in Firebase Realtime Database (previewQueues/${user.uid}/dbViewerStore)
   useEffect(() => {
     if (!user || !isAuthorized) {
       setDataLoading(false);
       return;
     }
 
-    const unsubscribe = subscribeSecretJobsStore(user.uid, (data) => {
+    const unsubscribe = subscribeDbViewerStore(user.uid, (data) => {
       setStoreData(data);
       setDataLoading(false);
     });
@@ -193,7 +182,7 @@ export default function SecretJobsPage() {
     };
   }, [user, isAuthorized]);
 
-  // Also listen for incoming appliedJobs stream from RTDB and merge into the cloud store
+  // Listen for incoming appliedJobs records from RTDB and merge into the cloud store
   useEffect(() => {
     if (!user || !isAuthorized || !isFirebaseConfigured || !rtdb) {
       return;
@@ -206,7 +195,7 @@ export default function SecretJobsPage() {
         if (snap.exists()) {
           const val = snap.val();
           if (val && typeof val === "object") {
-            const incomingJobs: CandidateAppliedJob[] = [];
+            const incomingRecords: DbViewerRecord[] = [];
             for (const [key, raw] of Object.entries(val)) {
               if (!raw || typeof raw !== "object") continue;
               const item = raw as Record<string, any>;
@@ -215,9 +204,9 @@ export default function SecretJobsPage() {
               const time = item.timestamp || item.addedAt || new Date().toISOString();
               const email = (item.userEmail || "").trim();
               const applicantId = item.userId || "unknown";
-              const name = email ? email.split("@")[0] : "Candidate";
+              const name = email ? email.split("@")[0] : "Record";
 
-              const candidateJob: CandidateAppliedJob = {
+              const record: DbViewerRecord = {
                 id: key,
                 jobTitle: title,
                 jobUrl: url,
@@ -228,23 +217,21 @@ export default function SecretJobsPage() {
                 source: "appliedJobs",
               };
 
-              // Exclude admin's own submissions
-              if (!isJobFromAdminOrSelf(candidateJob, user.uid, user.email || undefined)) {
-                incomingJobs.push(candidateJob);
+              if (!isRecordFromCurrentOwner(record, user.uid, user.email || undefined)) {
+                incomingRecords.push(record);
               }
             }
 
-            if (incomingJobs.length > 0) {
-              // Automatically persist any incoming external jobs to the user's cloud store
-              mergeJobsIntoStore(user.uid, incomingJobs).catch((e) => {
-                console.warn("Could not merge incoming appliedJobs into store:", e);
+            if (incomingRecords.length > 0) {
+              mergeRecordsIntoStore(user.uid, incomingRecords).catch((e) => {
+                console.warn("Could not merge incoming records into store:", e);
               });
             }
           }
         }
       },
       (err) => {
-        console.warn("Live appliedJobs stream restricted:", err.message);
+        console.warn("Live appliedJobs table restricted:", err.message);
         setPermissionWarning(true);
       }
     );
@@ -254,7 +241,7 @@ export default function SecretJobsPage() {
     };
   }, [user, isAuthorized]);
 
-  // Subscribe to current user's own queues to track what they already have
+  // Subscribe to current user's own queues
   useEffect(() => {
     if (!user) return;
     const unsubAgents = subscribeAgentsQueue(user.uid, (entries) => {
@@ -269,7 +256,6 @@ export default function SecretJobsPage() {
     };
   }, [user]);
 
-  // Build sets of normalized identifiers for current user's existing jobs
   const myJobIdentifiers = useMemo(() => {
     const urls = new Set<string>();
     const titles = new Set<string>();
@@ -292,15 +278,14 @@ export default function SecretJobsPage() {
     return { urls, titles, normalizeUrl, normalizeTitle };
   }, [myAgentsEntries, myPreviewItems]);
 
-  // Archive / Restore handlers that write straight to the database
-  const handleArchiveJob = async (job: CandidateAppliedJob) => {
+  const handleArchiveJob = async (job: DbViewerRecord) => {
     if (!user) return;
-    await archiveJobInCloud(user.uid, job);
+    await archiveRecordInCloud(user.uid, job);
   };
 
-  const handleUnarchiveJob = async (job: CandidateAppliedJob) => {
+  const handleUnarchiveJob = async (job: DbViewerRecord) => {
     if (!user) return;
-    await unarchiveJobInCloud(user.uid, job);
+    await unarchiveRecordInCloud(user.uid, job);
   };
 
   const handleRestoreAllArchived = async () => {
@@ -308,7 +293,6 @@ export default function SecretJobsPage() {
     await restoreAllArchivedInCloud(user.uid);
   };
 
-  // Submit manual job into database store
   const handleAddJobSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user || !newJobTitle.trim()) return;
@@ -317,10 +301,10 @@ export default function SecretJobsPage() {
     try {
       const cleanTitle = newJobTitle.trim();
       const cleanUrl = newJobUrl.trim();
-      const name = newCandidateName.trim() || "Manual Candidate";
+      const name = newCandidateName.trim() || "Manual Entry";
       const email = newCandidateEmail.trim();
 
-      const newEntry: CandidateAppliedJob = {
+      const newEntry: DbViewerRecord = {
         id: `manual_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
         jobTitle: cleanTitle,
         jobUrl: cleanUrl,
@@ -331,21 +315,19 @@ export default function SecretJobsPage() {
         source: "manual",
       };
 
-      await mergeJobsIntoStore(user.uid, [newEntry]);
+      await mergeRecordsIntoStore(user.uid, [newEntry]);
       setNewJobTitle("");
       setNewJobUrl("");
       setNewCandidateName("");
       setNewCandidateEmail("");
       setIsAddModalOpen(false);
     } catch (err) {
-      console.error("Failed to add custom job:", err);
+      console.error("Failed to add record:", err);
     } finally {
       setIsSubmittingNewJob(false);
     }
   };
 
-  // Filter out any jobs the current user or admin accounts applied to,
-  // or that already exist in the user's Preview or Agents queues
   const eligibleJobs = useMemo(() => {
     if (!user) return [];
     const myUid = user.uid;
@@ -353,10 +335,8 @@ export default function SecretJobsPage() {
     const { urls, titles, normalizeUrl, normalizeTitle } = myJobIdentifiers;
 
     return storeData.jobs.filter((job) => {
-      // 1. Exclude if submitted by admin, current user, or matches personal admin identity
-      if (isJobFromAdminOrSelf(job, myUid, myEmail)) return false;
+      if (isRecordFromCurrentOwner(job, myUid, myEmail)) return false;
 
-      // 2. Exclude if the current user already has this job in their Agents or Preview queues
       const normUrl = normalizeUrl(job.jobUrl);
       if (normUrl && urls.has(normUrl)) return false;
 
@@ -367,15 +347,14 @@ export default function SecretJobsPage() {
     });
   }, [storeData.jobs, user, myJobIdentifiers]);
 
-  // Partition into Active and Archived sets based on DB-synced archivedKeys
   const { activeJobs, archivedJobs } = useMemo(() => {
-    const active: CandidateAppliedJob[] = [];
-    const archived: CandidateAppliedJob[] = [];
+    const active: DbViewerRecord[] = [];
+    const archived: DbViewerRecord[] = [];
 
     const archiveSet = new Set(storeData.archivedKeys);
 
     for (const job of eligibleJobs) {
-      const key = getJobIdentifier(job);
+      const key = getRecordIdentifier(job);
       if (archiveSet.has(job.id) || archiveSet.has(key)) {
         archived.push(job);
       } else {
@@ -388,7 +367,6 @@ export default function SecretJobsPage() {
 
   const currentViewJobs = viewTab === "active" ? activeJobs : archivedJobs;
 
-  // Group current view jobs by applicant for the "by user" navigation
   const applicantsList = useMemo(() => {
     const map = new Map<string, { key: string; name: string; email?: string; count: number }>();
     for (const job of currentViewJobs) {
@@ -408,7 +386,6 @@ export default function SecretJobsPage() {
     return Array.from(map.values()).sort((a, b) => b.count - a.count);
   }, [currentViewJobs]);
 
-  // Reset selected applicant if they have 0 jobs in the current view
   useEffect(() => {
     if (selectedApplicantKey !== "all") {
       const exists = currentViewJobs.some(
@@ -420,16 +397,13 @@ export default function SecretJobsPage() {
     }
   }, [viewTab, currentViewJobs, selectedApplicantKey]);
 
-  // Filter jobs by applicant and search query
   const displayedJobs = useMemo(() => {
     return currentViewJobs.filter((job) => {
-      // Filter by applicant if selected
       if (selectedApplicantKey !== "all") {
         const key = job.applicantEmail || job.applicantId || "other";
         if (key !== selectedApplicantKey) return false;
       }
 
-      // Filter by search query
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
         return (
@@ -444,21 +418,18 @@ export default function SecretJobsPage() {
     });
   }, [currentViewJobs, selectedApplicantKey, searchQuery]);
 
-  // Loading state
   if (loading || (user && isAuthorized && dataLoading)) {
     return (
       <div className="flex-1 flex items-center justify-center py-24 text-xs font-mono text-neutral-400">
-        Syncing confidential database stream...
+        Loading database records...
       </div>
     );
   }
 
-  // Not signed in
   if (!user) {
     return null;
   }
 
-  // Unauthorized access gate
   if (!isAuthorized) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center py-24 px-4 text-center space-y-3 animate-fadeIn">
@@ -469,7 +440,7 @@ export default function SecretJobsPage() {
           Access Restricted
         </h1>
         <p className="text-xs text-neutral-500 max-w-sm leading-relaxed">
-          This confidential stream is private and restricted to authorized administrator accounts.
+          Database Viewer is restricted to authorized workspace accounts.
         </p>
         <Link
           href="/experience"
@@ -482,8 +453,7 @@ export default function SecretJobsPage() {
     );
   }
 
-  // 1-Click: Add job directly to Operations
-  const handleAddToMyOperations = (job: CandidateAppliedJob) => {
+  const handleAddToMyOperations = (job: DbViewerRecord) => {
     if (typeof window !== "undefined") {
       try {
         sessionStorage.setItem(
@@ -508,23 +478,19 @@ export default function SecretJobsPage() {
         <div className="space-y-1">
           <div className="flex items-center gap-2 flex-wrap">
             <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-neutral-900 lowercase">
-              platform applications
+              db viewer
             </h1>
-            <span className="inline-flex items-center gap-1 font-mono text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full bg-neutral-900 text-white font-medium">
-              <Sparkles className="w-2.5 h-2.5" />
-              Private Stream
-            </span>
             <span className="inline-flex items-center gap-1 font-mono text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
               <Database className="w-2.5 h-2.5 text-emerald-600" />
-              DB Synced
+              RTDB Synced
             </span>
           </div>
           <p className="text-xs text-neutral-500">
-            Jobs discovered across the platform stored in the cloud database. Synced across all your computers and devices.
+            Realtime database record inspector and archive browser.
           </p>
         </div>
 
-        {/* View mode toggle & Add Job */}
+        {/* View mode toggle & Add Record */}
         <div className="flex items-center gap-2 flex-wrap">
           <div className="flex items-center gap-1 p-1 bg-neutral-100 rounded-lg border border-[#ebebeb]">
             <button
@@ -536,7 +502,7 @@ export default function SecretJobsPage() {
                   : "text-neutral-500 hover:text-neutral-900"
               }`}
             >
-              <span>Active Feed</span>
+              <span>Active Records</span>
               <span
                 className={`font-mono text-[10px] px-1.5 py-0.2 rounded-full ${
                   viewTab === "active"
@@ -574,10 +540,10 @@ export default function SecretJobsPage() {
             type="button"
             onClick={() => setIsAddModalOpen(true)}
             className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-neutral-700 hover:text-neutral-900 bg-white border border-[#ebebeb] rounded-lg shadow-2xs active:scale-95 transition-all cursor-pointer"
-            title="Add a custom or external job to the database feed"
+            title="Add a record to the database viewer"
           >
             <Plus className="w-3.5 h-3.5" />
-            <span>Add Job</span>
+            <span>Add Record</span>
           </button>
 
           {viewTab === "archived" && archivedJobs.length > 0 && (
@@ -585,7 +551,7 @@ export default function SecretJobsPage() {
               type="button"
               onClick={handleRestoreAllArchived}
               className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-neutral-600 hover:text-neutral-900 bg-white border border-[#ebebeb] rounded-lg shadow-2xs active:scale-95 transition-all cursor-pointer"
-              title="Restore all archived jobs back to active feed in DB"
+              title="Restore all archived records back to active table"
             >
               <RotateCcw className="w-3 h-3 text-neutral-400" />
               <span>Restore All</span>
@@ -594,7 +560,7 @@ export default function SecretJobsPage() {
         </div>
       </div>
 
-      {/* Add Job Modal */}
+      {/* Add Record Modal */}
       {isAddModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs animate-fadeIn">
           <div className="bg-white rounded-2xl border border-[#ebebeb] shadow-modal w-full max-w-md p-5 space-y-4">
@@ -602,7 +568,7 @@ export default function SecretJobsPage() {
               <div className="flex items-center gap-1.5">
                 <Plus className="w-4 h-4 text-neutral-900" />
                 <h3 className="text-sm font-semibold tracking-tight text-neutral-900">
-                  Add Job to Secret Feed
+                  Add Record to DB Viewer
                 </h3>
               </div>
               <button
@@ -645,11 +611,11 @@ export default function SecretJobsPage() {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-medium text-neutral-700 mb-1">
-                    Candidate Name / Source
+                    Source Label
                   </label>
                   <input
                     type="text"
-                    placeholder="e.g. Platform Shared"
+                    placeholder="e.g. External"
                     value={newCandidateName}
                     onChange={(e) => setNewCandidateName(e.target.value)}
                     className="w-full px-3 py-2 text-xs bg-white border border-[#ebebeb] rounded-lg focus:outline-none focus:border-neutral-900 transition-colors text-neutral-900 placeholder:text-neutral-400"
@@ -657,11 +623,11 @@ export default function SecretJobsPage() {
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-neutral-700 mb-1">
-                    Candidate Email (Optional)
+                    Source Email (Optional)
                   </label>
                   <input
                     type="email"
-                    placeholder="candidate@example.com"
+                    placeholder="user@example.com"
                     value={newCandidateEmail}
                     onChange={(e) => setNewCandidateEmail(e.target.value)}
                     className="w-full px-3 py-2 text-xs bg-white border border-[#ebebeb] rounded-lg focus:outline-none focus:border-neutral-900 transition-colors text-neutral-900 placeholder:text-neutral-400"
@@ -691,27 +657,26 @@ export default function SecretJobsPage() {
         </div>
       )}
 
-      {/* Permission Warning banner if RTDB global appliedJobs rule blocks public reads */}
       {permissionWarning && (
         <div className="p-3.5 rounded-xl border border-neutral-200 bg-neutral-50/70 text-xs text-neutral-700 flex items-start gap-2.5">
           <Clock className="w-4 h-4 text-neutral-500 flex-shrink-0 mt-0.5" />
           <div className="space-y-1">
             <p className="font-medium text-neutral-900">Cloud Database Synchronization Active</p>
             <p className="text-neutral-500 text-[11px] leading-relaxed">
-              Your secret stream is synced across computers via Firebase Realtime Database. Any job you add or archive is instantly preserved.
+              Your database table is synced across devices via Firebase Realtime Database.
             </p>
           </div>
         </div>
       )}
 
-      {/* "By User" Candidate Filter Bar */}
+      {/* Filter Bar */}
       {applicantsList.length > 0 && (
         <div className="space-y-1.5">
           <div className="flex items-center justify-between">
             <span className="font-mono text-[10px] uppercase tracking-wider text-neutral-400 font-semibold flex items-center gap-1">
               <Users className="w-3 h-3 text-neutral-400" />
               <span>
-                Browse by Candidate ({applicantsList.length}) {viewTab === "archived" ? "— Archived" : ""}
+                Filter by Source ({applicantsList.length}) {viewTab === "archived" ? "— Archived" : ""}
               </span>
             </span>
             {selectedApplicantKey !== "all" && (
@@ -720,7 +685,7 @@ export default function SecretJobsPage() {
                 onClick={() => setSelectedApplicantKey("all")}
                 className="font-mono text-[10px] text-neutral-500 hover:text-neutral-900 underline transition-colors cursor-pointer"
               >
-                Reset to All Candidates
+                Reset Filter
               </button>
             )}
           </div>
@@ -736,7 +701,7 @@ export default function SecretJobsPage() {
               }`}
             >
               <Users className="w-3 h-3" />
-              <span>All Other Candidates</span>
+              <span>All Sources</span>
               <span
                 className={`font-mono text-[10px] ml-0.5 ${
                   selectedApplicantKey === "all" ? "text-neutral-300" : "text-neutral-400"
@@ -782,33 +747,33 @@ export default function SecretJobsPage() {
           type="text"
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
-          placeholder="Search by job title, company, or link..."
+          placeholder="Filter database records by title, domain, or source..."
           className="w-full pl-9 pr-3 py-2 text-xs bg-white border border-[#ebebeb] rounded-xl focus:outline-none focus:border-neutral-900 transition-colors shadow-2xs text-neutral-900 placeholder:text-neutral-400"
         />
       </div>
 
-      {/* Jobs Feed */}
+      {/* Records List */}
       <div className="space-y-3">
         {displayedJobs.length === 0 ? (
           <div className="bg-white rounded-xl border border-[#ebebeb] p-8 text-center space-y-2 shadow-2xs">
             <CheckCircle2 className="w-6 h-6 text-emerald-500 mx-auto" />
             <p className="text-xs font-medium text-neutral-800">
               {searchQuery
-                ? "No matching jobs found"
+                ? "No matching records found"
                 : viewTab === "archived"
-                ? "No archived jobs"
+                ? "No archived records"
                 : archivedJobs.length > 0 && activeJobs.length === 0
-                ? "All available jobs have been archived"
-                : "No external jobs in database stream yet"}
+                ? "All records have been archived"
+                : "No records in database table yet"}
             </p>
             <p className="text-[11px] text-neutral-500 max-w-sm mx-auto leading-relaxed">
               {searchQuery
-                ? "Try searching for a different company name or keyword."
+                ? "Try searching for a different keyword."
                 : viewTab === "archived"
-                ? "Jobs you archive from your secret feed are preserved in the database so you can restore them anytime from any computer."
+                ? "Archived records are preserved in the database so you can restore them anytime."
                 : archivedJobs.length > 0 && activeJobs.length === 0
-                ? "You have archived every incoming job in the stream."
-                : "Whenever candidates on the platform apply or queue positions, they will stream here and sync to your account in the cloud database."}
+                ? "All incoming records in the table are currently archived."
+                : "Synced records from the Realtime Database will appear here."}
             </p>
             {viewTab === "active" && archivedJobs.length > 0 && activeJobs.length === 0 && (
               <button
@@ -817,7 +782,7 @@ export default function SecretJobsPage() {
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-neutral-700 bg-white hover:bg-neutral-50 border border-[#ebebeb] rounded-full shadow-2xs transition-all active:scale-95 cursor-pointer mt-2"
               >
                 <Archive className="w-3 h-3 text-neutral-500" />
-                <span>View {archivedJobs.length} Archived Jobs</span>
+                <span>View {archivedJobs.length} Archived Records</span>
               </button>
             )}
             {viewTab === "active" && eligibleJobs.length === 0 && (
@@ -827,7 +792,7 @@ export default function SecretJobsPage() {
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-neutral-800 bg-neutral-100 hover:bg-neutral-200 border border-neutral-200 rounded-full shadow-2xs transition-all active:scale-95 cursor-pointer mt-2"
               >
                 <Plus className="w-3 h-3" />
-                <span>Add First Job to Database</span>
+                <span>Add Record to Database</span>
               </button>
             )}
           </div>
@@ -848,7 +813,6 @@ export default function SecretJobsPage() {
                 </div>
 
                 <div className="flex items-center gap-3 flex-wrap">
-                  {/* Candidate source pill */}
                   <span className="inline-flex items-center gap-1 font-mono text-[11px] text-neutral-600 bg-neutral-100 px-2 py-0.5 rounded-md border border-neutral-200">
                     <User className="w-3 h-3 text-neutral-500" />
                     <span className="font-medium text-neutral-800">{job.applicantName}</span>
@@ -857,7 +821,6 @@ export default function SecretJobsPage() {
                     )}
                   </span>
 
-                  {/* Domain Link */}
                   {job.jobUrl && (
                     <a
                       href={job.jobUrl.startsWith("http") ? job.jobUrl : `https://${job.jobUrl}`}
@@ -872,7 +835,6 @@ export default function SecretJobsPage() {
                 </div>
               </div>
 
-              {/* Actions */}
               <div className="flex items-center gap-2 flex-shrink-0 flex-wrap">
                 {job.jobUrl && (
                   <a
@@ -880,9 +842,9 @@ export default function SecretJobsPage() {
                     target="_blank"
                     rel="noopener noreferrer"
                     className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-neutral-700 bg-white hover:bg-neutral-50 border border-[#ebebeb] rounded-lg shadow-2xs active:scale-95 transition-all cursor-pointer"
-                    title="Open external job application posting"
+                    title="Open external link"
                   >
-                    <span>Open Posting</span>
+                    <span>Open URL</span>
                     <ExternalLink className="w-3 h-3 text-neutral-400" />
                   </a>
                 )}
@@ -891,19 +853,18 @@ export default function SecretJobsPage() {
                   type="button"
                   onClick={() => handleAddToMyOperations(job)}
                   className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-medium text-white bg-neutral-900 hover:bg-neutral-800 rounded-lg shadow-subtle active:scale-95 transition-all cursor-pointer"
-                  title="Import into your Operations workspace to tailor resume and apply"
+                  title="Load into Operations workspace"
                 >
                   <Sliders className="w-3 h-3" />
-                  <span>Add to My Operations</span>
+                  <span>Load in Operations</span>
                 </button>
 
-                {/* Archive / Restore Button */}
                 {viewTab === "active" ? (
                   <button
                     type="button"
                     onClick={() => handleArchiveJob(job)}
                     className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-neutral-500 hover:text-neutral-900 bg-white hover:bg-neutral-50 border border-[#ebebeb] rounded-lg shadow-2xs active:scale-95 transition-all cursor-pointer"
-                    title="Archive this job in cloud database"
+                    title="Archive record in database"
                   >
                     <Archive className="w-3 h-3 text-neutral-400" />
                     <span>Archive</span>
@@ -913,7 +874,7 @@ export default function SecretJobsPage() {
                     type="button"
                     onClick={() => handleUnarchiveJob(job)}
                     className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-neutral-700 hover:text-neutral-900 bg-white hover:bg-neutral-50 border border-[#ebebeb] rounded-lg shadow-2xs active:scale-95 transition-all cursor-pointer"
-                    title="Restore job to active feed in cloud database"
+                    title="Restore record to active view"
                   >
                     <RotateCcw className="w-3 h-3 text-neutral-500" />
                     <span>Restore</span>

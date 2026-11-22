@@ -137,7 +137,7 @@ export default function OperationsPage() {
     if (!user) return;
     clearStoredOperationsDraft(user.uid);
 
-    // Check for prefill from secret admin jobs feed or query params
+    // Check for prefill from DB viewer or query params
     if (typeof window !== "undefined") {
       const params = new URLSearchParams(window.location.search);
       const qRole = params.get("roleName");
