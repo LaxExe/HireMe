@@ -1214,4 +1214,151 @@ Required Qualifications:
       assert.strictEqual(run.aiRecommendation?.verified, true);
     });
   });
+
+  describe("Phase 14: Role-Context LLM Bullet Rewriting & Strict Ecosystem Coherence", () => {
+    it("blocks cross-ecosystem language/framework mismatches (e.g. Java or Jest on a Python bullet, FastAPI on a TypeScript bullet)", async () => {
+      const { checkEcosystemCompatibility, checkSlotPlausibility } = await import(
+        "../../larpEngine"
+      );
+
+      const pythonBullet =
+        "Built **Python** and **FastAPI** inference endpoints processing **120** requests/sec.";
+      const pythonSlot = {
+        bullet: {
+          id: "b_py_api",
+          text: pythonBullet,
+          tools: ["Python", "FastAPI"],
+          metrics: ["120"],
+        },
+        context: "backend-api-db" as const,
+        tags: ["backend" as const],
+        containerStack: ["Python", "FastAPI", "PostgreSQL"],
+      };
+
+      assert.strictEqual(
+        checkEcosystemCompatibility(pythonBullet, ["Python", "FastAPI"], ["Python", "FastAPI"], "Java"),
+        false,
+        "Python bullet must never accept Java"
+      );
+      assert.strictEqual(
+        checkEcosystemCompatibility(pythonBullet, ["Python", "FastAPI"], ["Python", "FastAPI"], "Jest"),
+        false,
+        "Python bullet must never accept Jest (JS/TS testing framework)"
+      );
+      assert.strictEqual(
+        checkSlotPlausibility(pythonSlot, "Jest", true).ok,
+        false,
+        "checkSlotPlausibility must reject Jest on a Python/FastAPI slot"
+      );
+      assert.strictEqual(
+        checkSlotPlausibility(pythonSlot, "Node.js", true).ok,
+        false,
+        "checkSlotPlausibility must reject Node.js on a Python/FastAPI slot"
+      );
+      assert.strictEqual(
+        checkSlotPlausibility(pythonSlot, "Unit Testing", true).ok,
+        true,
+        "checkSlotPlausibility must allow language-agnostic Unit Testing on a Python/FastAPI slot"
+      );
+
+      const tsBullet =
+        "Developed **TypeScript** and **Next.js** dashboard views serving **40** enterprise clients.";
+      assert.strictEqual(
+        checkEcosystemCompatibility(tsBullet, ["TypeScript", "Next.js"], ["TypeScript", "Next.js", "React"], "FastAPI"),
+        false,
+        "TypeScript/Next.js bullet must never accept Python FastAPI"
+      );
+      assert.strictEqual(
+        checkEcosystemCompatibility(tsBullet, ["TypeScript", "Next.js"], ["TypeScript", "Next.js", "React"], "Jest"),
+        true,
+        "TypeScript/Next.js bullet should accept Jest"
+      );
+    });
+
+    it("provides the LLM with every bullet done in the role/project, compatible available items, and ecosystem exclusions, and prioritizes LLM rewrites over generic rules", async () => {
+      const {
+        clearLlmRewriteCache,
+        runLarpAlignmentPipelineAsync,
+      } = await import("../../larpEngine");
+      clearLlmRewriteCache();
+
+      const capturedPrompts: string[] = [];
+      const mockLlm = async (p: { system: string; user: string }): Promise<string> => {
+        capturedPrompts.push(p.user);
+        return JSON.stringify({
+          rewrites: [
+            "Built **FastAPI** webhook routes and **Redis** session cache handling **500+** daily calls.",
+          ],
+        });
+      };
+
+      const roleResume: MasterResume = {
+        ...structuredClone(masterResume),
+        experience: [
+          {
+            id: "job_py_role",
+            title: "Backend Software Engineer",
+            company: "VoiceFlow AI",
+            companyUrl: "",
+            location: "Waterloo, ON",
+            dates: "2026",
+            tags: ["backend"],
+            bullets: [
+              {
+                id: "b_role_1",
+                text: "Built **FastAPI** webhook routes handling **500+** daily calls.",
+                tools: ["FastAPI", "Python"],
+                metrics: ["500+"],
+              },
+              {
+                id: "b_role_2",
+                text: "Designed **PostgreSQL** schemas and **Python** worker queues for call transcripts.",
+                tools: ["PostgreSQL", "Python"],
+                metrics: [],
+              },
+              {
+                id: "b_role_3",
+                text: "Automated **Docker** container builds and health checks across staging hosts.",
+                tools: ["Docker"],
+                metrics: [],
+              },
+            ],
+          },
+        ],
+        projects: [],
+      };
+
+      const run = await runLarpAlignmentPipelineAsync(
+        "Required Qualifications:\n- Experience with Python, FastAPI, PostgreSQL, and Redis caching.",
+        roleResume,
+        {
+          llm: mockLlm,
+          focusedRecommendations: true,
+        }
+      );
+
+      assert.ok(capturedPrompts.length > 0, "LLM proposer must be invoked even when catalog rules exist");
+      const firstPrompt = capturedPrompts[0];
+      assert.ok(
+        firstPrompt.includes("Built **FastAPI** webhook routes") &&
+          firstPrompt.includes("Designed **PostgreSQL** schemas") &&
+          firstPrompt.includes("Automated **Docker** container builds"),
+        "Prompt must include ALL bullets from the role so the LLM sees everything done in that role"
+      );
+      assert.ok(
+        firstPrompt.includes("Java") && firstPrompt.includes("Jest"),
+        "Forbidden list for a Python/FastAPI bullet must explicitly exclude Java and Jest"
+      );
+
+      const redisProp = run.bulletProposals.find((bp) =>
+        bp.injectedKeywords.includes("Redis")
+      );
+      assert.ok(redisProp, "Redis proposal should be selected");
+      assert.strictEqual(
+        redisProp.source,
+        "llm",
+        "Guardrail-verified role-contextual LLM rewrite should win over generic regex rules"
+      );
+    });
+  });
 });

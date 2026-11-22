@@ -74,6 +74,7 @@ export {
 } from "./larp/skills";
 
 export {
+  checkEcosystemCompatibility,
   checkSlotPlausibility,
   classifyBulletContext,
   type PlausibilityCheckResult,

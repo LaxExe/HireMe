@@ -86,8 +86,8 @@ export async function POST(req: Request) {
   if (
     typeof system !== "string" ||
     typeof user !== "string" ||
-    user.length > 4000 ||
-    system.length > 4000
+    user.length > 8000 ||
+    system.length > 8000
   ) {
     return NextResponse.json({ error: "bad request" }, { status: 400 });
   }

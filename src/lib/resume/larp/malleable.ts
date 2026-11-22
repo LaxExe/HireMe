@@ -1,5 +1,6 @@
 import { markupToLatex } from "../latex";
 import { bulletFit, plainText } from "../utils";
+import { checkEcosystemCompatibility } from "./candidates";
 import { findCatalogEntry } from "./catalog";
 import { DEFAULT_CALIBRATION, inferDomainTags } from "./config";
 import { calculateDynamicBelievabilityScore } from "./scoring";
@@ -224,6 +225,16 @@ function buildFocusedJdCandidatesForTarget(
     const kLower = kw.toLowerCase();
     const entry = findCatalogEntry(kw);
     if (isSystemsTarget && !SYSTEMS_ALLOWED_KWS_RE.test(kLower)) {
+      return false;
+    }
+    if (
+      !checkEcosystemCompatibility(
+        target.existingBullets.join(" "),
+        target.techSignals,
+        target.techSignals,
+        kw
+      )
+    ) {
       return false;
     }
     if (entry?.contexts && !entry.contexts.some((c) => target.tags.includes(c))) {
