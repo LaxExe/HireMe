@@ -1,6 +1,10 @@
 import { markupToLatex } from "../latex";
 import { bulletFit, plainText } from "../utils";
-import { checkSlotPlausibility, tryMinimalKeywordInjection } from "./candidates";
+import {
+  checkEcosystemCompatibility,
+  checkSlotPlausibility,
+  tryMinimalKeywordInjection,
+} from "./candidates";
 import { findCatalogEntry } from "./catalog";
 import { DEFAULT_CALIBRATION, SINGLE_LINE_NCU } from "./config";
 import {
@@ -29,10 +33,18 @@ export interface LlmRequest {
   containerTitle: string;
   stack: string[];
   tags: string[];
-  styleRefs: string[]; // 1-2 other bullets from the same container
-  forbidden: string[]; // tier-2 and tier-1.5 labels not already on the resume
+  styleRefs: string[]; // other bullets from the same container
+  forbidden: string[]; // tier-2, tier-1.5, and ecosystem-conflicting labels
   maxWordChanges: number;
   maxChars: number;
+  /** Full role or project overview (title, company/project, dates, location/meta). */
+  roleOverview?: string;
+  /** Complete list of everything done in this role/project (all bullets in the container). */
+  allRoleBullets?: string[];
+  /** Specific tools and languages already present in the target bullet itself. */
+  bulletTools?: string[];
+  /** Key available JD/stack items that are ecosystem-compatible with this specific role and bullet. */
+  availableRoleKeywords?: string[];
 }
 
 export interface Prompt {
@@ -42,43 +54,62 @@ export interface Prompt {
 
 export type Completer = (p: Prompt & { temperature: number }) => Promise<string>;
 
-export const PROMPT_VERSION = "rewrite-v1";
+export const PROMPT_VERSION = "rewrite-v2-role-context";
 export const DEFAULT_LLM_MODEL =
   (typeof process !== "undefined" &&
     (process.env?.LARP_MODEL || process.env?.LARP_LLM_MODEL)) ||
   "gemini-3.5-flash-lite";
 
-export const SYSTEM = `You are an editor for resume bullet points. You rewrite ONE bullet so it naturally mentions ONE given technology.
+export const SYSTEM = `You are a senior staff engineer editing a resume bullet point. You are given EVERYTHING done in a specific role or project (all bullets, full tech stack, and domain) and you rewrite ONE target bullet so it naturally weaves in ONE given technology.
 Hard rules:
-1. Change at most N words (N is given). Prefer swapping or adding 2-5 words over restructuring.
-2. Keep every number, percentage and metric exactly as written.
-3. Mention only the given technology. Do not add any other tool, language, framework or service. Never mention anything on the forbidden list.
-4. Wrap the technology in **double asterisks**, e.g. **Redis**. Keep any existing **bold** markers.
-5. The technology must describe HOW the existing work was done or where it ran. Do not add a new accomplishment, metric, scope or responsibility.
-6. Match the voice of the style examples: same tense, same terse past-tense verbs, no filler clauses, no buzzwords.
-7. Stay under the character limit. One sentence, ends with a period.
-8. The 3-5 rewrites must differ from each other in placement or phrasing, not just punctuation.
+1. Read all bullets from the role/project first so your rewrite fits the exact system, architecture, and programming language built in that role.
+2. Strict ecosystem & language coherence: NEVER mix incompatible language ecosystems (for example, never pair a Python/FastAPI/PyTorch bullet with Java, JUnit, Jest, C++, or React concepts; never pair a TypeScript/React bullet with Python/FastAPI/C++ tools; never pair a C++/ROS 2 bullet with web/JS/JVM tools). The injected technology must fit the exact language and work of the bullet.
+3. Change at most N words (N is given). Prefer weaving 2-5 words into the middle or technical clause of the sentence where it explains HOW the work in this role was built, tested, cached, deployed, or stored — avoid lazy tacked-on suffixes.
+4. Keep every number, percentage and metric from the original bullet exactly as written.
+5. Mention only the given technology (plus tools already in the original bullet). Do not add any other tool, language, framework or service. Never mention anything on the forbidden list.
+6. Wrap the technology in **double asterisks**, e.g. **Redis**. Keep all existing **bold** markers on original tools and metrics.
+7. Do not invent a new accomplishment, metric, or unrelated responsibility.
+8. Match the voice of the role's bullets: same tense, same terse past-tense engineering verbs, no filler clauses, no buzzwords.
+9. Stay strictly under the character limit. One sentence, ends with a period.
+10. The 3-5 rewrites must differ meaningfully in placement or phrasing.
 Output JSON only: {"rewrites":["...","...","..."]}`;
 
 export const EXAMPLES = `Examples (format only):
 Bullet: Built **REST APIs** serving 40 clients across 5 internal services.
 Technology: Redis | N=7
-{"rewrites":["Built **REST APIs** serving 40 clients across 5 internal services with **Redis** caching.","Built cached **REST APIs** on **Redis** serving 40 clients across 5 internal services."]}`;
+{"rewrites":["Built **REST APIs** with **Redis** caching serving 40 clients across 5 internal services.","Built **Redis**-backed **REST APIs** serving 40 clients across 5 internal services."]}`;
 
-export const buildPrompt = (r: LlmRequest): Prompt => ({
-  system: SYSTEM,
-  user: `${EXAMPLES}
+export const buildPrompt = (r: LlmRequest): Prompt => {
+  const fullBulletsBlock =
+    r.allRoleBullets && r.allRoleBullets.length > 0
+      ? r.allRoleBullets.map((b, i) => `  ${i + 1}. ${b}`).join("\n")
+      : r.styleRefs.map((s) => `- ${s}`).join("\n") || "- n/a";
+
+  const bulletToolsLine =
+    r.bulletTools && r.bulletTools.length > 0
+      ? `\nTarget bullet existing tools/languages: ${r.bulletTools.join(", ")}`
+      : "";
+
+  const availableKeysLine =
+    r.availableRoleKeywords && r.availableRoleKeywords.length > 0
+      ? `\nKey available compatible items for this role: ${r.availableRoleKeywords.join(", ")}`
+      : "";
+
+  return {
+    system: SYSTEM,
+    user: `${EXAMPLES}
 
 Now the real task.
-Role/project: ${r.containerTitle}
+Role/project: ${r.roleOverview || r.containerTitle}
 Stack already used here: ${r.stack.join(", ") || "n/a"}
-Domain: ${r.tags.join(", ") || "general"}
-Style examples from the same role:
-${r.styleRefs.map((s) => `- ${s}`).join("\n") || "- n/a"}
-Forbidden: ${r.forbidden.join(", ") || "none"}
+Domain: ${r.tags.join(", ") || "general"}${bulletToolsLine}${availableKeysLine}
+Everything done in this role/project (full context & style):
+${fullBulletsBlock}
+Forbidden (never mention): ${r.forbidden.join(", ") || "none"}
 Bullet: ${r.bullet}
 Technology: ${r.keyword} | N=${r.maxWordChanges} | max ${r.maxChars} characters`,
-});
+  };
+};
 
 export function parseRewrites(raw: string): string[] {
   try {
@@ -203,8 +234,13 @@ export async function judge(
  * OPTIONAL NEW-BULLET DRAFTER (MALLEABLE PATH)
  * ============================================================================ */
 
-export const DRAFT_SYSTEM = `You draft ONE new one-line resume bullet for a given role or project, in the same voice as its existing bullets.
-Rules: past tense, one line under the character limit, ends with a period; mention only the given technology plus tools already in the stack; no new metrics or numbers; describe a small, modest piece of work (integration, config, testing, caching, tooling); do not repeat or paraphrase an existing bullet; wrap the technology in **double asterisks**.
+export const DRAFT_SYSTEM = `You draft ONE new one-line resume bullet for a given role or project, based on EVERYTHING done in that role or project (all existing bullets, architecture, and stack).
+Rules:
+1. Read all existing bullets in the role/project so the new 1-line bullet sounds like a direct, authentic engineering continuation of the specific system built there.
+2. Strict ecosystem & language coherence: ONLY use the given target technology plus tools/languages already used in this specific role's stack. NEVER introduce an incompatible language or framework (e.g. never pair a Python role with Java/Jest/C++/React; never pair a C++ role with web/JS/Java tools).
+3. Past tense, one line strictly under the character limit, ends with a period.
+4. No new metrics or numbers; describe a concrete, defensible piece of engineering work (automated testing, schema/request validation, caching, CI checks, runtime/build tooling, or error handling) directly connected to the role's actual domain.
+5. Do not repeat or paraphrase an existing bullet; wrap every technology name in **double asterisks**.
 Output JSON only: {"rewrites":["...","...","..."]}`;
 
 export interface LlmTelemetry {
@@ -256,12 +292,13 @@ function simpleHash(input: string): string {
 export function shortlistPlausibleSlotsForKeyword(
   slots: CandidateBulletSlot[],
   keyword: string,
-  maxSlots = 4
+  maxSlots = 4,
+  allowExtendedFallback = true
 ): CandidateBulletSlot[] {
   const scored: { slot: CandidateBulletSlot; rankScore: number }[] = [];
 
   slots.forEach((slot, idx) => {
-    const p = checkSlotPlausibility(slot, keyword);
+    const p = checkSlotPlausibility(slot, keyword, allowExtendedFallback);
     if (!p.ok) return;
 
     let rankScore = 50;
@@ -277,22 +314,120 @@ export function shortlistPlausibleSlotsForKeyword(
   return scored.slice(0, maxSlots).map((s) => s.slot);
 }
 
-function getStyleRefsForSlot(slot: CandidateBulletSlot, resume?: MasterResume): string[] {
-  if (!resume) return [];
-  if (slot.containerKind === "experience") {
-    const job = resume.experience.find((j) => j.id === slot.containerId);
-    if (!job) return [];
-    return job.bullets
-      .filter((b) => b.id !== slot.bullet.id)
-      .slice(0, 2)
-      .map((b) => b.text);
+const PYTHON_ONLY_EXCLUSIONS = ["Java", "Spring Boot", "JUnit", "Kotlin", "Jest", "C++", "CMake", "ROS 2", "Gazebo"];
+const JS_TS_ONLY_EXCLUSIONS = ["Java", "Spring Boot", "JUnit", "Kotlin", "FastAPI", "Flask", "PyTorch", "Pandas", "NumPy", "C++", "CMake", "ROS 2", "Gazebo"];
+const CPP_ONLY_EXCLUSIONS = ["Java", "Spring Boot", "JUnit", "Jest", "TypeScript", "JavaScript", "React", "Next.js", "Node.js", "Express", "Tailwind CSS", "FastAPI", "Flask", "Supabase", "Firebase"];
+
+export function buildEcosystemForbiddenForBullet(
+  bulletText: string,
+  bulletTools: string[],
+  containerStack: string[],
+  baseForbidden: string[]
+): string[] {
+  const combinedBullet = `${plainText(bulletText)} ${bulletTools.join(" ")}`.toLowerCase();
+  const combinedStack = `${combinedBullet} ${containerStack.join(" ")}`.toLowerCase();
+  const set = new Set(baseForbidden);
+
+  const hasPy = /\b(?:python|fastapi|flask|django|pytorch|tensorflow|pandas|numpy|scikit-learn|opencv|slurm|sam\s*2|optuna)\b/i.test(combinedBullet);
+  const hasJsTs = /\b(?:typescript|javascript|react|next\.js|node\.js|express|tailwind|redux|jest)\b/i.test(combinedBullet);
+  const hasCpp = /(?:\bc\+\+|\b(?:cmake|ros\s*2|gazebo|cuda|lidar|embedded|firmware)\b)/i.test(combinedBullet);
+
+  if (hasPy && !hasJsTs && !hasCpp) {
+    for (const item of PYTHON_ONLY_EXCLUSIONS) set.add(item);
+  } else if (hasJsTs && !hasPy && !hasCpp) {
+    for (const item of JS_TS_ONLY_EXCLUSIONS) set.add(item);
+  } else if (hasCpp && !hasPy && !hasJsTs) {
+    for (const item of CPP_ONLY_EXCLUSIONS) set.add(item);
   }
-  const proj = resume.projects.find((p) => p.id === slot.containerId);
-  if (!proj) return [];
-  return proj.bullets
-    .filter((b) => b.id !== slot.bullet.id)
-    .slice(0, 2)
-    .map((b) => b.text);
+
+  if (!/\b(?:java|spring|kotlin|scala|junit)\b/i.test(combinedStack)) {
+    set.add("Java");
+    set.add("Spring Boot");
+    set.add("JUnit");
+    set.add("Kotlin");
+  }
+
+  return Array.from(set);
+}
+
+function getFullRoleContextForSlot(
+  slot: CandidateBulletSlot,
+  resume: MasterResume | undefined,
+  allCandidateKeywords: string[],
+  baseForbidden: string[]
+): {
+  roleOverview: string;
+  allRoleBullets: string[];
+  styleRefs: string[];
+  fullStack: string[];
+  bulletTools: string[];
+  availableRoleKeywords: string[];
+  forbidden: string[];
+} {
+  let roleOverview = slot.containerTitle;
+  let allRoleBullets: string[] = [slot.bullet.text];
+  let styleRefs: string[] = [];
+  const stackSet = new Set<string>(slot.containerStack ?? []);
+  for (const t of slot.bullet.tools) stackSet.add(t);
+
+  if (resume) {
+    if (slot.containerKind === "experience") {
+      const job = resume.experience.find((j) => j.id === slot.containerId);
+      if (job) {
+        const metaParts = [job.company, job.location, job.dates].filter(Boolean);
+        roleOverview = `${job.title}${metaParts.length > 0 ? ` · ${metaParts.join(" · ")}` : ""}`;
+        allRoleBullets = job.bullets.map((b) =>
+          b.id === slot.bullet.id ? `[TARGET BULLET] ${b.text}` : b.text
+        );
+        styleRefs = job.bullets
+          .filter((b) => b.id !== slot.bullet.id)
+          .map((b) => b.text);
+        for (const b of job.bullets) {
+          for (const t of b.tools) stackSet.add(t);
+        }
+      }
+    } else {
+      const proj = resume.projects.find((p) => p.id === slot.containerId);
+      if (proj) {
+        const metaParts = [
+          proj.meta,
+          proj.techStack.length > 0 ? `Stack: ${proj.techStack.join(", ")}` : "",
+        ].filter(Boolean);
+        roleOverview = `${proj.name}${metaParts.length > 0 ? ` (${metaParts.join(" · ")})` : ""}`;
+        allRoleBullets = proj.bullets.map((b) =>
+          b.id === slot.bullet.id ? `[TARGET BULLET] ${b.text}` : b.text
+        );
+        styleRefs = proj.bullets
+          .filter((b) => b.id !== slot.bullet.id)
+          .map((b) => b.text);
+        for (const t of proj.techStack) stackSet.add(t);
+        for (const b of proj.bullets) {
+          for (const t of b.tools) stackSet.add(t);
+        }
+      }
+    }
+  }
+
+  const fullStack = Array.from(stackSet);
+  const availableRoleKeywords = allCandidateKeywords.filter((kw) =>
+    checkEcosystemCompatibility(slot.bullet.text, slot.bullet.tools, fullStack, kw)
+  );
+  const forbidden = buildEcosystemForbiddenForBullet(
+    slot.bullet.text,
+    slot.bullet.tools,
+    fullStack,
+    baseForbidden
+  );
+
+  return {
+    roleOverview,
+    allRoleBullets,
+    styleRefs,
+    fullStack,
+    bulletTools: slot.bullet.tools,
+    availableRoleKeywords,
+    forbidden,
+  };
 }
 
 export function buildForbiddenLabelsList(ctx: GuardContext): string[] {
@@ -339,9 +474,9 @@ export async function proposeAndValidateLlmBulletCandidates(params: {
     completer,
     resume,
     model = DEFAULT_LLM_MODEL,
-    maxSlotsPerKeyword = 2,
-    maxTotalCalls = 6,
-    skipWhenSpecificRuleFits = true,
+    maxSlotsPerKeyword = 3,
+    maxTotalCalls = 10,
+    skipWhenSpecificRuleFits = false,
     enableJudge = false,
     guardCtx,
     rejectionCountsByKeyword,
@@ -399,10 +534,10 @@ export async function proposeAndValidateLlmBulletCandidates(params: {
       if (hasStrongRule) continue;
     }
 
-    const shortlisted = shortlistPlausibleSlotsForKeyword(slots, keyword, maxSlotsPerKeyword);
+    const shortlisted = shortlistPlausibleSlotsForKeyword(slots, keyword, maxSlotsPerKeyword, true);
     for (const slot of shortlisted) {
       if (tasks.length >= maxTotalCalls) break;
-      const p = checkSlotPlausibility(slot, keyword);
+      const p = checkSlotPlausibility(slot, keyword, true);
       tasks.push({ slot, keyword, pairsWithHit: p.pairsWithHit });
     }
   }
@@ -411,18 +546,22 @@ export async function proposeAndValidateLlmBulletCandidates(params: {
     tasks.map(async ({ slot, keyword, pairsWithHit }) => {
       const entry = findCatalogEntry(keyword);
       const keywordLabel = entry?.label ?? keyword;
-      const styleRefs = getStyleRefsForSlot(slot, resume);
+      const roleCtx = getFullRoleContextForSlot(slot, resume, keywords, forbidden);
 
       const req: LlmRequest = {
         bullet: slot.bullet.text,
         keyword: keywordLabel,
         containerTitle: slot.containerTitle,
-        stack: slot.containerStack ?? slot.bullet.tools,
+        stack: roleCtx.fullStack.length > 0 ? roleCtx.fullStack : slot.bullet.tools,
         tags: slot.tags,
-        styleRefs,
-        forbidden,
+        styleRefs: roleCtx.styleRefs,
+        forbidden: roleCtx.forbidden,
         maxWordChanges: ctx.maxWordsCap,
         maxChars: slot.maxAllowedChars,
+        roleOverview: roleCtx.roleOverview,
+        allRoleBullets: roleCtx.allRoleBullets,
+        bulletTools: roleCtx.bulletTools,
+        availableRoleKeywords: roleCtx.availableRoleKeywords,
       };
 
       const promptObj = buildPrompt(req);
@@ -457,6 +596,16 @@ export async function proposeAndValidateLlmBulletCandidates(params: {
       const bannedLower = tiers.tier_2_banned.map((b) => b.toLowerCase());
 
       for (const rawOption of rawRewrites) {
+        if (
+          !checkEcosystemCompatibility(
+            slot.bullet.text,
+            slot.bullet.tools,
+            roleCtx.fullStack,
+            keywordLabel
+          )
+        ) {
+          continue;
+        }
         const fitted = fitBulletToCalibratedLineArea(rawOption, cal);
         const guard = evaluateCandidateGuardrails(
           slot.bullet.text,
@@ -481,7 +630,7 @@ export async function proposeAndValidateLlmBulletCandidates(params: {
           continue;
         }
 
-        const baseScore = 80;
+        const baseScore = 95;
         const greenBonus = guard.budget.candFit.tone === "green" ? 12 : 0;
         const pairsBonus = pairsWithHit ? 10 : 0;
         const totalScore =
@@ -495,7 +644,7 @@ export async function proposeAndValidateLlmBulletCandidates(params: {
           slot,
           keyword: keywordLabel,
           mutatedMarkup: fitted,
-          reason: `LLM-proposed surgical reframe incorporating ${keywordLabel}`,
+          reason: `AI role-grounded rewrite weaving ${keywordLabel} into ${slot.containerTitle}`,
           baseScore,
           score: totalScore,
           budget: guard.budget,
@@ -586,16 +735,44 @@ export async function draftAndValidateLlmMalleableOptions(params: {
 
   const oneLineMax = cal.oneLineMax || DEFAULT_CALIBRATION.oneLineMax;
   const ctx = guardCtx ?? createGuardContext(tiers, cal, undefined, 25, SINGLE_LINE_NCU);
-  const forbidden = buildForbiddenLabelsList(ctx);
-  const primaryTarget = targetKeywords[0] ?? container.techSignals[0] ?? "";
+  const baseForbidden = buildForbiddenLabelsList(ctx);
+
+  const compatibleTargets = targetKeywords.filter((kw) =>
+    checkEcosystemCompatibility(
+      container.existingBullets.join(" "),
+      container.techSignals,
+      container.techSignals,
+      kw
+    )
+  );
+  const primaryTarget = compatibleTargets[0] ?? targetKeywords[0] ?? container.techSignals[0] ?? "";
+  if (
+    primaryTarget &&
+    !checkEcosystemCompatibility(
+      container.existingBullets.join(" "),
+      container.techSignals,
+      container.techSignals,
+      primaryTarget
+    )
+  ) {
+    return [];
+  }
+
+  const forbidden = buildEcosystemForbiddenForBullet(
+    container.existingBullets.join(" "),
+    container.techSignals,
+    container.techSignals,
+    baseForbidden
+  );
 
   const userPrompt = [
-    `Role/project: ${container.title}`,
-    `Stack: ${container.techSignals.join(", ") || "n/a"}`,
+    `Role/project: ${container.roleSummary || container.title}`,
+    `Stack used in this role: ${container.techSignals.join(", ") || "n/a"}`,
     `Domain: ${container.tags.join(", ") || "general"}`,
-    `Existing bullets:`,
-    ...container.existingBullets.map((b) => `- ${b}`),
-    `Forbidden: ${forbidden.join(", ") || "none"}`,
+    `Key available compatible technologies for this role: ${compatibleTargets.join(", ") || primaryTarget}`,
+    `Everything done in this role/project (all existing bullets):`,
+    ...container.existingBullets.map((b, i) => `  ${i + 1}. ${b}`),
+    `Forbidden (never mention): ${forbidden.join(", ") || "none"}`,
     `Technology: ${primaryTarget} | max ${oneLineMax} characters`,
   ].join("\n");
 
@@ -632,7 +809,17 @@ export async function draftAndValidateLlmMalleableOptions(params: {
     );
     if (duplicatesExisting) return;
 
-    // 4. Tech subset of {target} U stack (no banned_term or new_tech)
+    // 4. Tech subset of {target} U stack (no banned_term or new_tech) and ecosystem-compatible
+    if (
+      !checkEcosystemCompatibility(
+        container.existingBullets.join(" "),
+        container.techSignals,
+        container.techSignals,
+        primaryTarget
+      )
+    ) {
+      return;
+    }
     const violations = validateRewrite(allowedBaselineMarkup, fitted, primaryTarget, ctx).filter(
       (v) => v.code === "banned_term" || v.code === "new_tech" || v.code === "missing_keyword"
     );

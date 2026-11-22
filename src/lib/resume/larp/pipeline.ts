@@ -689,51 +689,56 @@ export async function runLarpAlignmentPipelineAsync(
   );
 
   if (options.includeLlmMalleable && malleableBullets.length > 0) {
-    // Token-saving optimization: only draft LLM malleable options for the #1 top-ranked container
     const allContainers = selectEligibleContainersForMalleableLines(resume);
-    const mb = malleableBullets[0];
-    const container =
-      allContainers.find((c) => c.id === mb?.targetContainerId) ?? allContainers[0];
-    if (mb && container) {
-      const llmOpts = await draftAndValidateLlmMalleableOptions({
-        container,
-        containerIdx: 0,
-        targetKeywords: mb.injectedKeywords,
-        tiers,
-        cal,
-        completer: options.llm!,
-        guardCtx,
-      });
-      if (llmOpts.length > 0) {
-        if (options.focusedRecommendations) {
-          const styledLlm = llmOpts.slice(0, 2).map((o, idx) => ({
-            ...o,
-            id: `${mb.id}-llm-${idx + 1}`,
-            styleLabel: "JD Match" as const,
-          }));
-          const templateJdOpts = mb.options.filter(
-            (o) => !o.isDefaultPick && o.source !== "default"
-          );
-          const defaultOpts = mb.options.filter(
-            (o) => o.isDefaultPick || o.source === "default"
-          );
-          const mergedJdOpts = [...styledLlm, ...templateJdOpts].slice(0, 2);
-          mb.options = [...mergedJdOpts, ...defaultOpts];
-          mb.markup = mergedJdOpts[0]?.markup ?? mb.markup;
-          mb.latex = mergedJdOpts[0]?.latex ?? mb.latex;
-          mb.chars = mergedJdOpts[0]?.chars ?? mb.chars;
-          mb.widthNcu = mergedJdOpts[0]?.widthNcu ?? mb.widthNcu;
-          mb.fit = mergedJdOpts[0]?.fit ?? mb.fit;
-        } else {
-          mb.options.unshift(...llmOpts);
-          mb.markup = llmOpts[0].markup;
-          mb.latex = llmOpts[0].latex;
-          mb.chars = llmOpts[0].chars;
-          mb.widthNcu = llmOpts[0].widthNcu;
-          mb.fit = llmOpts[0].fit;
+    await Promise.all(
+      malleableBullets.map(async (mb, mbIdx) => {
+        const container =
+          allContainers.find((c) => c.id === mb.targetContainerId) ?? allContainers[mbIdx] ?? allContainers[0];
+        if (!container) return;
+
+        const targetPool = Array.from(
+          new Set([...mb.injectedKeywords, ...centralizedTargetKeywords])
+        );
+        const llmOpts = await draftAndValidateLlmMalleableOptions({
+          container,
+          containerIdx: mbIdx,
+          targetKeywords: targetPool,
+          tiers,
+          cal,
+          completer: options.llm!,
+          guardCtx,
+        });
+        if (llmOpts.length > 0) {
+          if (options.focusedRecommendations) {
+            const styledLlm = llmOpts.slice(0, 2).map((o, idx) => ({
+              ...o,
+              id: `${mb.id}-llm-${idx + 1}`,
+              styleLabel: "JD Match" as const,
+            }));
+            const templateJdOpts = mb.options.filter(
+              (o) => !o.isDefaultPick && o.source !== "default"
+            );
+            const defaultOpts = mb.options.filter(
+              (o) => o.isDefaultPick || o.source === "default"
+            );
+            const mergedJdOpts = [...styledLlm, ...templateJdOpts].slice(0, 2);
+            mb.options = [...mergedJdOpts, ...defaultOpts];
+            mb.markup = mergedJdOpts[0]?.markup ?? mb.markup;
+            mb.latex = mergedJdOpts[0]?.latex ?? mb.latex;
+            mb.chars = mergedJdOpts[0]?.chars ?? mb.chars;
+            mb.widthNcu = mergedJdOpts[0]?.widthNcu ?? mb.widthNcu;
+            mb.fit = mergedJdOpts[0]?.fit ?? mb.fit;
+          } else {
+            mb.options.unshift(...llmOpts);
+            mb.markup = llmOpts[0].markup;
+            mb.latex = llmOpts[0].latex;
+            mb.chars = llmOpts[0].chars;
+            mb.widthNcu = llmOpts[0].widthNcu;
+            mb.fit = llmOpts[0].fit;
+          }
         }
-      }
-    }
+      })
+    );
   }
 
   const aiRecommendation = evaluateBelievabilityAndRecommend(

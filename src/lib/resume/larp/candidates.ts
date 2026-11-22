@@ -15,7 +15,102 @@ export interface PlausibilityCheckResult {
   ok: boolean;
   pairsWithHit: boolean;
   contextOverlap: boolean;
-  reason?: "systems_context" | "implausible_slot";
+  reason?: "systems_context" | "implausible_slot" | "ecosystem_mismatch";
+}
+
+const JVM_LOCKED_RE = /^(?:java|spring(?:\s*boot)?|kotlin|scala|junit|maven|gradle|hibernate)$/i;
+const JS_TS_LOCKED_RE =
+  /^(?:jest|node(?:\.js)?|express(?:\.js)?|react(?:\s*native)?|next(?:\.js)?|tailwind(?:\s*css)?|redux|angular|vue(?:\.js)?|svelte|typescript|javascript|html5?|css3?)$/i;
+const PYTHON_LOCKED_RE =
+  /^(?:python|fastapi|flask|django|pytorch|tensorflow|pandas|numpy|scikit-learn|opencv|langchain|hugging\s*face|llama\.cpp|pytest|optuna)$/i;
+const CPP_SYSTEMS_LOCKED_RE =
+  /^(?:c\+\+|c|cmake|ros\s*2?|gazebo|cuda|verilog|assembly|rtos)$/i;
+const OTHER_LANG_LOCKED_RE =
+  /^(?:go|golang|rust|c#|\.net|ruby(?:\s*on\s*rails)?|rails|php|swift|dart|flutter|elixir|matlab)$/i;
+
+const BULLET_PYTHON_SIGNAL_RE =
+  /\b(?:python|fastapi|flask|django|pytorch|tensorflow|pandas|numpy|scikit-learn|opencv|slurm|sam\s*2|optuna|pytest|llama\.cpp)\b/i;
+const BULLET_JS_TS_SIGNAL_RE =
+  /\b(?:typescript|javascript|react|next\.js|node\.js|express|tailwind|redux|jest|html|css|frontend|ui\b|dashboard|portal)\b/i;
+const BULLET_CPP_SIGNAL_RE =
+  /(?:\bc\+\+|\b(?:cmake|ros\s*2|gazebo|cuda|lidar|occupancy-grid|embedded|firmware|rtos)\b)/i;
+const BULLET_JVM_SIGNAL_RE = /\b(?:java|spring\s*boot|kotlin|scala|junit|maven|gradle)\b/i;
+const BULLET_WEB_DB_HIGHLEVEL_RE =
+  /\b(?:typescript|javascript|react|next\.js|tailwind|node\.js|fastapi|flask|postgresql|supabase|firebase|twilio|stripe|oauth|graphql|webhooks)\b/i;
+
+/**
+ * Enforces strict programming-language and ecosystem coherence between a target bullet (and its
+ * role/project stack) and a candidate keyword. Prevents implausible cross-ecosystem injections
+ * such as Java/Jest in a Python bullet, FastAPI/PyTorch in a TypeScript/React bullet, or CMake/C++
+ * in a web dashboard bullet.
+ */
+export function checkEcosystemCompatibility(
+  bulletMarkup: string,
+  bulletTools: string[],
+  containerStack: string[] | undefined,
+  keywordOrId: string
+): boolean {
+  const entry = findCatalogEntry(keywordOrId);
+  const kwLabel = (entry?.label ?? keywordOrId).trim();
+  const kwLower = kwLabel.toLowerCase();
+
+  const bulletText = `${plainText(bulletMarkup)} ${bulletTools.join(" ")}`;
+  const stackText = `${bulletText} ${(containerStack ?? []).join(" ")}`;
+
+  const bulletHasPython = BULLET_PYTHON_SIGNAL_RE.test(bulletText);
+  const bulletHasJsTs = BULLET_JS_TS_SIGNAL_RE.test(bulletText);
+  const bulletHasCpp = BULLET_CPP_SIGNAL_RE.test(bulletText);
+  const bulletHasJvm = BULLET_JVM_SIGNAL_RE.test(bulletText);
+
+  const stackHasPython = BULLET_PYTHON_SIGNAL_RE.test(stackText);
+  const stackHasJsTs = BULLET_JS_TS_SIGNAL_RE.test(stackText);
+  const stackHasCpp = BULLET_CPP_SIGNAL_RE.test(stackText);
+  const stackHasJvm = BULLET_JVM_SIGNAL_RE.test(stackText);
+
+  // 1. JVM / Java ecosystem tools require Java/JVM already present in the bullet or role stack
+  if (JVM_LOCKED_RE.test(kwLower)) {
+    if (!stackHasJvm) return false;
+    if ((bulletHasPython || bulletHasJsTs || bulletHasCpp) && !bulletHasJvm) return false;
+  }
+
+  // 2. JS / TS / Frontend tools must never be injected into a pure Python, C++, or JVM bullet
+  if (JS_TS_LOCKED_RE.test(kwLower)) {
+    if ((bulletHasPython || bulletHasCpp || bulletHasJvm) && !bulletHasJsTs) {
+      return false;
+    }
+    if (!stackHasJsTs) {
+      return false;
+    }
+  }
+
+  // 3. Python ecosystem tools must never be injected into a pure JS/TS, C++, or JVM bullet
+  if (PYTHON_LOCKED_RE.test(kwLower)) {
+    if ((bulletHasJsTs || bulletHasCpp || bulletHasJvm) && !bulletHasPython) {
+      return false;
+    }
+    if (!stackHasPython) {
+      return false;
+    }
+  }
+
+  // 4. C / C++ / Systems tools must never be injected into web/DB/JS/Python-API bullets
+  if (CPP_SYSTEMS_LOCKED_RE.test(kwLower)) {
+    if (BULLET_WEB_DB_HIGHLEVEL_RE.test(bulletText) && !bulletHasCpp) {
+      return false;
+    }
+    if (!stackHasCpp && !/\blinux\b/i.test(stackText)) {
+      return false;
+    }
+  }
+
+  // 5. Other standalone languages (Go, Rust, C#, Ruby, Swift, PHP, etc.) require existing presence in role stack
+  if (OTHER_LANG_LOCKED_RE.test(kwLower)) {
+    if (!containsPhrase(stackText, kwLabel)) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 /**
@@ -47,6 +142,22 @@ export function checkSlotPlausibility(
   }
 
   if (!entry) {
+    return {
+      ok: false,
+      pairsWithHit: false,
+      contextOverlap: false,
+      reason: "implausible_slot",
+    };
+  }
+
+  if (
+    !checkEcosystemCompatibility(
+      slot.bullet.text,
+      slot.bullet.tools,
+      slot.containerStack,
+      entry.label
+    )
+  ) {
     return {
       ok: false,
       pairsWithHit: false,

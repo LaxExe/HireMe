@@ -604,7 +604,38 @@ function buildDefaultInjectionSpecForTech(
     };
   }
 
-  if (id === "unit_testing" || id === "jest") {
+  if (id === "jest") {
+    return {
+      contexts: ["frontend", "backend"],
+      pairsWith: [
+        "TypeScript",
+        "JavaScript",
+        "React",
+        "Next.js",
+        "Node.js",
+        "Express",
+      ],
+      rules: [
+        {
+          find: /(\b(?:TypeScript|JavaScript|React|Next\.js|Node\.js|dashboards?|portals?|views?|UI|routes?)\b[\s\S]*)\.$/i,
+          replace: "$1 verified with {kw}.",
+          score: 92,
+          reason: "Added Jest test verification to TypeScript/JavaScript web bullet",
+          contexts: ["frontend", "backend"],
+        },
+      ],
+      suffixes: [
+        {
+          suffix: " with {kw}",
+          score: 86,
+          reason: "Added Jest test verification context",
+          contexts: ["frontend", "backend"],
+        },
+      ],
+    };
+  }
+
+  if (id === "unit_testing") {
     return {
       contexts: ["backend", "frontend", "systems"],
       pairsWith: [
@@ -868,7 +899,55 @@ function buildDefaultInjectionSpecForTech(
     };
   }
 
-  if (id === "fastapi" || id === "flask" || id === "node_js" || id === "express" || id === "git" || id === "postman") {
+  if (id === "fastapi" || id === "flask") {
+    return {
+      contexts: ["backend", "ml"],
+      pairsWith: ["Python", "FastAPI", "Flask", "REST APIs", "PostgreSQL", "Supabase", "Firebase"],
+      rules: [
+        {
+          find: /(\b(?:Python|APIs?|services?|endpoints?|routes?|pipelines?|agents?|backend)\b[\s\S]*)\.$/i,
+          replace: "$1 using {kw}.",
+          score: 92,
+          reason: `Paired ${label} with existing Python backend/service bullet`,
+          contexts: ["backend", "ml"],
+        },
+      ],
+      suffixes: [
+        {
+          suffix: " using {kw}",
+          score: 86,
+          reason: `Paired ${label} with existing Python backend workflow`,
+          contexts: ["backend", "ml"],
+        },
+      ],
+    };
+  }
+
+  if (id === "node_js" || id === "express") {
+    return {
+      contexts: ["backend", "frontend"],
+      pairsWith: ["TypeScript", "JavaScript", "Node.js", "Express", "React", "Next.js", "REST APIs", "PostgreSQL", "Supabase"],
+      rules: [
+        {
+          find: /(\b(?:TypeScript|JavaScript|Next\.js|React|APIs?|services?|endpoints?|routes?|dashboards?|backend)\b[\s\S]*)\.$/i,
+          replace: "$1 using {kw}.",
+          score: 92,
+          reason: `Paired ${label} with existing TypeScript/JavaScript service bullet`,
+          contexts: ["backend", "frontend"],
+        },
+      ],
+      suffixes: [
+        {
+          suffix: " using {kw}",
+          score: 86,
+          reason: `Paired ${label} with existing JS/TS service workflow`,
+          contexts: ["backend", "frontend"],
+        },
+      ],
+    };
+  }
+
+  if (id === "git" || id === "postman") {
     return {
       contexts: ["backend", "infra", "frontend"],
       pairsWith: ["Python", "FastAPI", "Flask", "TypeScript", "JavaScript", "REST APIs", "PostgreSQL", "Supabase", "Firebase"],
@@ -876,7 +955,7 @@ function buildDefaultInjectionSpecForTech(
         {
           find: /(\b(?:APIs?|services?|endpoints?|routes?|dashboards?|pipelines?|agents?|backend)\b[\s\S]*)\.$/i,
           replace: "$1 using {kw}.",
-          score: 92,
+          score: 90,
           reason: `Paired ${label} with existing backend/service bullet`,
           contexts: ["backend", "infra", "frontend"],
         },
@@ -884,7 +963,7 @@ function buildDefaultInjectionSpecForTech(
       suffixes: [
         {
           suffix: " using {kw}",
-          score: 88,
+          score: 86,
           reason: `Paired ${label} with existing engineering workflow`,
           contexts: ["backend", "infra", "frontend"],
         },
