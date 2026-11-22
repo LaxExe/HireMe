@@ -715,13 +715,10 @@ export async function runLarpAlignmentPipelineAsync(
               id: `${mb.id}-llm-${idx + 1}`,
               styleLabel: "JD Match" as const,
             }));
-            const templateJdOpts = mb.options.filter(
-              (o) => !o.isDefaultPick && o.source !== "default"
-            );
             const defaultOpts = mb.options.filter(
               (o) => o.isDefaultPick || o.source === "default"
             );
-            const mergedJdOpts = [...styledLlm, ...templateJdOpts].slice(0, 2);
+            const mergedJdOpts = styledLlm.slice(0, 2);
             mb.options = [...mergedJdOpts, ...defaultOpts];
             mb.markup = mergedJdOpts[0]?.markup ?? mb.markup;
             mb.latex = mergedJdOpts[0]?.latex ?? mb.latex;

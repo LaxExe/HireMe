@@ -178,6 +178,20 @@ export function checkSlotPlausibility(
     (ctx) => slot.tags.includes(ctx) || ctx === slotContextTag
   );
   const isTier0 = entry.tier === "tier_0_workflow";
+  const isPmTicketTool = /^(?:jira|linear|agile)$/i.test(entry.label);
+  const isPureMlOrMathBullet =
+    /\b(?:pytorch|sam\s*2|vlm|optuna|slurm|dataset annotation|permeability|hyperparameter|detectors?|occupancy-grid|lidar)\b/i.test(
+      plainText(slot.bullet.text)
+    ) && !/\b(?:sprint|release|feature|dashboard|portal|client|api|service)\b/i.test(plainText(slot.bullet.text));
+
+  if (isPmTicketTool && isPureMlOrMathBullet) {
+    return {
+      ok: false,
+      pairsWithHit: false,
+      contextOverlap: false,
+      reason: "implausible_slot",
+    };
+  }
 
   const ok = isTier0 || pairsWithHit || contextOverlap;
 
