@@ -64,14 +64,14 @@ export const SYSTEM = `You are a senior staff engineer editing a resume bullet p
 Hard rules:
 1. Read all bullets from the role/project first so your rewrite fits the exact system, architecture, and programming language built in that role.
 2. Strict ecosystem & language coherence: NEVER mix incompatible language ecosystems (for example, never pair a Python/FastAPI/PyTorch bullet with Java, JUnit, Jest, C++, or React concepts; never pair a TypeScript/React bullet with Python/FastAPI/C++ tools; never pair a C++/ROS 2 bullet with web/JS/JVM tools). The injected technology must fit the exact language and work of the bullet.
-3. Change at most N words (N is given). Prefer weaving 2-5 words into the middle or technical clause of the sentence where it explains HOW the work in this role was built, tested, cached, deployed, or stored — avoid lazy tacked-on suffixes.
-4. Keep every number, percentage and metric from the original bullet exactly as written.
-5. Mention only the given technology (plus tools already in the original bullet). Do not add any other tool, language, framework or service. Never mention anything on the forbidden list.
-6. Wrap the technology in **double asterisks**, e.g. **Redis**. Keep all existing **bold** markers on original tools and metrics.
-7. Do not invent a new accomplishment, metric, or unrelated responsibility.
-8. Match the voice of the role's bullets: same tense, same terse past-tense engineering verbs, no filler clauses, no buzzwords.
-9. Stay strictly under the character limit. One sentence, ends with a period.
-10. The 3-5 rewrites must differ meaningfully in placement or phrasing.
+3. For workflow/process terms (Agile, Jira, Linear, CI/CD, end-to-end), describe how the engineering features, services, or releases were delivered or automated — NEVER attach a project-management tool as an adjective onto a model, detector, algorithm, or database (never write "Jira-tracked detectors" or "Agile database").
+4. Change at most N words (N is given). When the original bullet is already near the character limit, tighten/shorten 2-4 verbose existing words while weaving in the technology so the final bullet stays strictly within max characters (1-line bullets MUST stay <= max characters and never spill onto a 2nd line).
+5. Keep every number, percentage and metric from the original bullet exactly as written.
+6. Mention only the given technology (plus tools already in the original bullet). Do not add any other tool, language, framework or service. Never mention anything on the forbidden list.
+7. Wrap the technology in **double asterisks**, e.g. **Redis**. Keep all existing **bold** markers on original tools and metrics.
+8. Do not invent a new accomplishment, metric, or unrelated responsibility.
+9. Match the voice of the role's bullets: same tense, same terse past-tense engineering verbs, no filler clauses, no buzzwords.
+10. Stay strictly under the character limit. One sentence, ends with a period. Return 3 distinct rewrites.
 Output JSON only: {"rewrites":["...","...","..."]}`;
 
 export const EXAMPLES = `Examples (format only):
@@ -95,6 +95,17 @@ export const buildPrompt = (r: LlmRequest): Prompt => {
       ? `\nKey available compatible items for this role: ${r.availableRoleKeywords.join(", ")}`
       : "";
 
+  const origPlainLen = plainText(r.bullet).trim().length;
+  const slack = r.maxChars - origPlainLen;
+  const lineBudgetHint =
+    r.roleOverview
+      ? `\nLine budget: original is ${origPlainLen} plain chars; target MUST be <= ${r.maxChars} plain chars (${
+          slack < 20
+            ? `only ${Math.max(0, slack)} chars of slack — you MUST shorten/tighten 2-4 verbose words in the original sentence while weaving in **${r.keyword}** so the final bullet stays <= ${r.maxChars} chars`
+            : `${slack} chars of free slack available`
+        }).`
+      : "";
+
   return {
     system: SYSTEM,
     user: `${EXAMPLES}
@@ -102,7 +113,7 @@ export const buildPrompt = (r: LlmRequest): Prompt => {
 Now the real task.
 Role/project: ${r.roleOverview || r.containerTitle}
 Stack already used here: ${r.stack.join(", ") || "n/a"}
-Domain: ${r.tags.join(", ") || "general"}${bulletToolsLine}${availableKeysLine}
+Domain: ${r.tags.join(", ") || "general"}${bulletToolsLine}${availableKeysLine}${lineBudgetHint}
 Everything done in this role/project (full context & style):
 ${fullBulletsBlock}
 Forbidden (never mention): ${r.forbidden.join(", ") || "none"}
@@ -234,13 +245,13 @@ export async function judge(
  * OPTIONAL NEW-BULLET DRAFTER (MALLEABLE PATH)
  * ============================================================================ */
 
-export const DRAFT_SYSTEM = `You draft ONE new one-line resume bullet for a given role or project, based on EVERYTHING done in that role or project (all existing bullets, architecture, and stack).
+export const DRAFT_SYSTEM = `You draft 3 distinct new one-line resume bullets for a given role or project, based on EVERYTHING done in that role or project (all existing bullets, architecture, and stack).
 Rules:
-1. Read all existing bullets in the role/project so the new 1-line bullet sounds like a direct, authentic engineering continuation of the specific system built there.
-2. Strict ecosystem & language coherence: ONLY use the given target technology plus tools/languages already used in this specific role's stack. NEVER introduce an incompatible language or framework (e.g. never pair a Python role with Java/Jest/C++/React; never pair a C++ role with web/JS/Java tools).
-3. Past tense, one line strictly under the character limit, ends with a period.
+1. Read all existing bullets in the role/project so each new 1-line bullet sounds like a direct, authentic engineering continuation of the specific system built there (e.g. referencing the actual domain such as voice agents, insurance/eligibility APIs, dataset annotation pipelines, or autonomous simulation).
+2. Strict ecosystem & language coherence: ONLY use the given target technology (or key available compatible technologies listed for this role) plus tools/languages already used in this specific role's stack. NEVER introduce an incompatible language or framework (e.g. never pair a Python role with Java/Jest/C++/React; never pair a C++ role with web/JS/Java tools).
+3. Past tense, one line strictly under the character limit (aim for 88-106 characters), ends with a period.
 4. No new metrics or numbers; describe a concrete, defensible piece of engineering work (automated testing, schema/request validation, caching, CI checks, runtime/build tooling, or error handling) directly connected to the role's actual domain.
-5. Do not repeat or paraphrase an existing bullet; wrap every technology name in **double asterisks**.
+5. Do not repeat or paraphrase an existing bullet; wrap every technology name in **double asterisks**. Return 3 distinct options in the rewrites array.
 Output JSON only: {"rewrites":["...","...","..."]}`;
 
 export interface LlmTelemetry {
@@ -293,7 +304,8 @@ export function shortlistPlausibleSlotsForKeyword(
   slots: CandidateBulletSlot[],
   keyword: string,
   maxSlots = 4,
-  allowExtendedFallback = true
+  allowExtendedFallback = true,
+  slotUsageCounts?: Map<string, number>
 ): CandidateBulletSlot[] {
   const scored: { slot: CandidateBulletSlot; rankScore: number }[] = [];
 
@@ -304,8 +316,20 @@ export function shortlistPlausibleSlotsForKeyword(
     let rankScore = 50;
     if (p.pairsWithHit) rankScore += 25;
     if (p.contextOverlap) rankScore += 15;
+    const ruleAttempt = tryMinimalKeywordInjection(
+      slot.bullet.text,
+      slot.context,
+      keyword,
+      true,
+      true
+    );
+    if (ruleAttempt) rankScore += 20;
     rankScore += Math.max(0, 10 - idx);
     rankScore += Math.min(8, Math.max(0, slot.charSlack / 8));
+    if (slotUsageCounts) {
+      const priorUses = slotUsageCounts.get(slot.bullet.id) ?? 0;
+      rankScore -= priorUses * 18;
+    }
 
     scored.push({ slot, rankScore });
   });
@@ -474,8 +498,8 @@ export async function proposeAndValidateLlmBulletCandidates(params: {
     completer,
     resume,
     model = DEFAULT_LLM_MODEL,
-    maxSlotsPerKeyword = 3,
-    maxTotalCalls = 10,
+    maxSlotsPerKeyword = 4,
+    maxTotalCalls = 18,
     skipWhenSpecificRuleFits = false,
     enableJudge = false,
     guardCtx,
@@ -507,6 +531,7 @@ export async function proposeAndValidateLlmBulletCandidates(params: {
   }
 
   const tasks: Task[] = [];
+  const slotUsageCounts = new Map<string, number>();
   for (const keyword of keywords) {
     if (tasks.length >= maxTotalCalls) break;
 
@@ -534,11 +559,18 @@ export async function proposeAndValidateLlmBulletCandidates(params: {
       if (hasStrongRule) continue;
     }
 
-    const shortlisted = shortlistPlausibleSlotsForKeyword(slots, keyword, maxSlotsPerKeyword, true);
+    const shortlisted = shortlistPlausibleSlotsForKeyword(
+      slots,
+      keyword,
+      maxSlotsPerKeyword,
+      true,
+      slotUsageCounts
+    );
     for (const slot of shortlisted) {
       if (tasks.length >= maxTotalCalls) break;
       const p = checkSlotPlausibility(slot, keyword, true);
       tasks.push({ slot, keyword, pairsWithHit: p.pairsWithHit });
+      slotUsageCounts.set(slot.bullet.id, (slotUsageCounts.get(slot.bullet.id) ?? 0) + 1);
     }
   }
 
@@ -607,13 +639,15 @@ export async function proposeAndValidateLlmBulletCandidates(params: {
           continue;
         }
         const fitted = fitBulletToCalibratedLineArea(rawOption, cal);
+        const effectiveMaxWordsCap =
+          slot.charSlack < 25 ? Math.max(ctx.maxWordsCap, 14) : ctx.maxWordsCap;
         const guard = evaluateCandidateGuardrails(
           slot.bullet.text,
           fitted,
           bannedLower,
           cal,
           SINGLE_LINE_NCU,
-          ctx.maxWordsCap,
+          effectiveMaxWordsCap,
           keywordLabel,
           ctx
         );
@@ -789,7 +823,12 @@ export async function draftAndValidateLlmMalleableOptions(params: {
     return [];
   }
 
-  const allowedBaselineMarkup = [...container.techSignals, ...targetKeywords].join(" ");
+  const allowedBaselineMarkup = [
+    container.existingBullets.join(" "),
+    ...container.techSignals,
+    ...compatibleTargets,
+    ...targetKeywords,
+  ].join(" ");
   const validOptions: MalleableBulletOption[] = [];
 
   rawOptions.forEach((raw, idx) => {
@@ -810,17 +849,21 @@ export async function draftAndValidateLlmMalleableOptions(params: {
     if (duplicatesExisting) return;
 
     // 4. Tech subset of {target} U stack (no banned_term or new_tech) and ecosystem-compatible
+    const matchedTarget =
+      compatibleTargets.find((kw) =>
+        plain.toLowerCase().includes(kw.toLowerCase())
+      ) ?? primaryTarget;
     if (
       !checkEcosystemCompatibility(
         container.existingBullets.join(" "),
         container.techSignals,
         container.techSignals,
-        primaryTarget
+        matchedTarget
       )
     ) {
       return;
     }
-    const violations = validateRewrite(allowedBaselineMarkup, fitted, primaryTarget, ctx).filter(
+    const violations = validateRewrite(allowedBaselineMarkup, fitted, matchedTarget, ctx).filter(
       (v) => v.code === "banned_term" || v.code === "new_tech" || v.code === "missing_keyword"
     );
     if (violations.length > 0) return;

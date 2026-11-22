@@ -159,6 +159,7 @@ export function selectBulletMutations(
   );
 
   const statsByRow: KeywordCandidateStats[] = [];
+  const hasAnyLlmCandidates = Boolean(llmCandidates && llmCandidates.length > 0);
 
   for (let i = 0; i < m; i++) {
     const keyword = centralizedTargetKeywords[i];
@@ -191,71 +192,73 @@ export function selectBulletMutations(
 
       const pairOptions: EvaluatedPairCandidate[] = [];
 
-      const attempt = tryMinimalKeywordInjection(
-        slot.bullet.text,
-        slot.context,
-        keyword,
-        !focusedRecommendations || plausibility.pairsWithHit,
-        focusedRecommendations
-      );
-      if (!attempt) {
-        kwStats.noRuleMatchSlotsCount++;
-      } else {
-        const fittedMarkup = fitBulletToCalibratedLineArea(attempt.mutatedMarkup, cal);
-        const guard = evaluateCandidateGuardrails(
+      if (!hasAnyLlmCandidates) {
+        const attempt = tryMinimalKeywordInjection(
           slot.bullet.text,
-          fittedMarkup,
-          bannedLower,
-          cal,
-          singleLineNcu,
-          7,
+          slot.context,
           keyword,
-          ctx
+          !focusedRecommendations || plausibility.pairsWithHit,
+          focusedRecommendations
         );
-        if (!guard.valid || !guard.budget || !guard.wordStats) {
-          for (const v of guard.violations ?? []) {
-            kwStats.rejectionCountsByCode[v.code] =
-              (kwStats.rejectionCountsByCode[v.code] ?? 0) + 1;
-          }
+        if (!attempt) {
+          kwStats.noRuleMatchSlotsCount++;
         } else {
-          const awkwardSuffix =
-            focusedRecommendations &&
-            attempt.source === "generic" &&
-            (!plausibility.pairsWithHit || guard.budget.candFit.tone !== "green");
-          const awkwardDeployedClause =
-            focusedRecommendations &&
-            /\bdeployed\s+on\b[\s\S]*\busing\s+\*\*[^*]+\*\*\.?$/i.test(fittedMarkup);
-          const features = scoreCandidate({
-            ruleScore: attempt.fitScore,
-            jdWeight: kwWeight,
-            wordsChanged: guard.wordStats.reframedWords,
-            fit: guard.budget.candFit,
-            domainOverlap: plausibility.contextOverlap,
-            pairsWithHit: plausibility.pairsWithHit,
-            containerKind: slot.containerKind,
-            isOlderRole: slot.defensibilityBonus > 0 && slot.containerKind === "experience",
-          });
-
-          const minRuleThreshold = attempt.source === "generic" ? 75 : 50;
-          const lowFocusedFit =
-            focusedRecommendations &&
-            ((!plausibility.contextOverlap && !plausibility.pairsWithHit) ||
-              features.total < minRuleThreshold);
-
-          if (awkwardSuffix || awkwardDeployedClause || lowFocusedFit) {
-            kwStats.noRuleMatchSlotsCount++;
+          const fittedMarkup = fitBulletToCalibratedLineArea(attempt.mutatedMarkup, cal);
+          const guard = evaluateCandidateGuardrails(
+            slot.bullet.text,
+            fittedMarkup,
+            bannedLower,
+            cal,
+            singleLineNcu,
+            7,
+            keyword,
+            ctx
+          );
+          if (!guard.valid || !guard.budget || !guard.wordStats) {
+            for (const v of guard.violations ?? []) {
+              kwStats.rejectionCountsByCode[v.code] =
+                (kwStats.rejectionCountsByCode[v.code] ?? 0) + 1;
+            }
           } else {
-            pairOptions.push({
-              slot,
-              keyword,
-              mutatedMarkup: fittedMarkup,
-              reason: attempt.reason,
-              score: features.total,
-              scoreFeatures: features,
-              budget: guard.budget,
-              wordStats: guard.wordStats,
-              source: attempt.source ?? "rule",
+            const awkwardSuffix =
+              focusedRecommendations &&
+              attempt.source === "generic" &&
+              (!plausibility.pairsWithHit || guard.budget.candFit.tone !== "green");
+            const awkwardDeployedClause =
+              focusedRecommendations &&
+              /\bdeployed\s+on\b[\s\S]*\busing\s+\*\*[^*]+\*\*\.?$/i.test(fittedMarkup);
+            const features = scoreCandidate({
+              ruleScore: attempt.fitScore,
+              jdWeight: kwWeight,
+              wordsChanged: guard.wordStats.reframedWords,
+              fit: guard.budget.candFit,
+              domainOverlap: plausibility.contextOverlap,
+              pairsWithHit: plausibility.pairsWithHit,
+              containerKind: slot.containerKind,
+              isOlderRole: slot.defensibilityBonus > 0 && slot.containerKind === "experience",
             });
+
+            const minRuleThreshold = attempt.source === "generic" ? 75 : 50;
+            const lowFocusedFit =
+              focusedRecommendations &&
+              ((!plausibility.contextOverlap && !plausibility.pairsWithHit) ||
+                features.total < minRuleThreshold);
+
+            if (awkwardSuffix || awkwardDeployedClause || lowFocusedFit) {
+              kwStats.noRuleMatchSlotsCount++;
+            } else {
+              pairOptions.push({
+                slot,
+                keyword,
+                mutatedMarkup: fittedMarkup,
+                reason: attempt.reason,
+                score: features.total,
+                scoreFeatures: features,
+                budget: guard.budget,
+                wordStats: guard.wordStats,
+                source: attempt.source ?? "rule",
+              });
+            }
           }
         }
       }
