@@ -1,5 +1,5 @@
 import { rtdb, isFirebaseConfigured } from "./firebase";
-import { ref, push, set } from "firebase/database";
+import { ref, push, set, update } from "firebase/database";
 
 export interface PendingAppliedJob {
   type: "appliedJob";
@@ -136,7 +136,7 @@ export async function flushOfflineQueue(): Promise<void> {
           updatedAt: item.timestamp,
         });
       } else if (item.type === "previewQueue") {
-        await set(ref(rtdb, `previewQueues/${item.uid}`), {
+        await update(ref(rtdb, `previewQueues/${item.uid}`), {
           data: item.data,
           updatedAt: item.timestamp,
         });

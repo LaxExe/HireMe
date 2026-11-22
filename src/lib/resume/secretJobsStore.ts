@@ -20,6 +20,71 @@ export interface SecretJobsStoreData {
 }
 
 const LOCAL_STORE_KEY = (uid: string) => `hireme_secret_jobs_store_${uid}`;
+const cloudSecretStoreLoaded: Record<string, boolean> = {};
+
+function parseRemoteSecretStore(val: Record<string, any> | null | undefined): SecretJobsStoreData {
+  if (!val || typeof val !== "object") {
+    return { jobs: [], archivedKeys: [], updatedAt: "" };
+  }
+  let jobsList: CandidateAppliedJob[] = [];
+  if (Array.isArray(val.jobs)) {
+    jobsList = val.jobs;
+  } else if (typeof val.jobs === "string") {
+    try {
+      jobsList = JSON.parse(val.jobs);
+    } catch {}
+  } else if (val.jobs && typeof val.jobs === "object") {
+    jobsList = Object.values(val.jobs);
+  }
+
+  let archived: string[] = [];
+  if (Array.isArray(val.archivedKeys)) {
+    archived = val.archivedKeys;
+  } else if (typeof val.archivedKeys === "string") {
+    try {
+      archived = JSON.parse(val.archivedKeys);
+    } catch {}
+  }
+
+  return {
+    jobs: jobsList,
+    archivedKeys: archived,
+    updatedAt: val.updatedAt || new Date().toISOString(),
+  };
+}
+
+async function ensureHydratedSecretJobsStore(uid: string): Promise<SecretJobsStoreData> {
+  const local = loadLocalSecretJobsStore(uid);
+  if (cloudSecretStoreLoaded[uid] || !isFirebaseConfigured || !rtdb || !uid) {
+    return local;
+  }
+  try {
+    const snap = await get(ref(rtdb, `previewQueues/${uid}/secretJobsStore`));
+    cloudSecretStoreLoaded[uid] = true;
+    if (snap.exists()) {
+      const remote = parseRemoteSecretStore(snap.val());
+      const mergedArchived = Array.from(new Set([...remote.archivedKeys, ...local.archivedKeys]));
+      const existingMap = new Map<string, CandidateAppliedJob>();
+      for (const j of remote.jobs) {
+        existingMap.set(normalizeJobKey(j.jobTitle, j.jobUrl), j);
+      }
+      for (const j of local.jobs) {
+        const k = normalizeJobKey(j.jobTitle, j.jobUrl);
+        if (!existingMap.has(k)) existingMap.set(k, j);
+      }
+      const hydrated: SecretJobsStoreData = {
+        jobs: Array.from(existingMap.values()),
+        archivedKeys: mergedArchived,
+        updatedAt: remote.updatedAt || local.updatedAt,
+      };
+      saveLocalSecretJobsStore(uid, hydrated);
+      return hydrated;
+    }
+  } catch (e) {
+    console.warn("Could not hydrate secret jobs store from RTDB:", e);
+  }
+  return local;
+}
 
 function normalizeJobKey(title?: string, url?: string): string {
   const normTitle = (title || "").toLowerCase().replace(/[^a-z0-9]/g, "").trim();
@@ -94,37 +159,14 @@ export function subscribeSecretJobsStore(
       storeRef,
       (snap) => {
         if (snap.exists()) {
-          const val = snap.val();
-          let jobsList: CandidateAppliedJob[] = [];
-          if (Array.isArray(val.jobs)) {
-            jobsList = val.jobs;
-          } else if (typeof val.jobs === "string") {
-            try {
-              jobsList = JSON.parse(val.jobs);
-            } catch {}
-          } else if (val.jobs && typeof val.jobs === "object") {
-            jobsList = Object.values(val.jobs);
-          }
-
-          let archived: string[] = [];
-          if (Array.isArray(val.archivedKeys)) {
-            archived = val.archivedKeys;
-          } else if (typeof val.archivedKeys === "string") {
-            try {
-              archived = JSON.parse(val.archivedKeys);
-            } catch {}
-          }
-
-          const remoteData: SecretJobsStoreData = {
-            jobs: jobsList,
-            archivedKeys: archived,
-            updatedAt: val.updatedAt || new Date().toISOString(),
-          };
+          cloudSecretStoreLoaded[uid] = true;
+          const remoteData = parseRemoteSecretStore(snap.val());
 
           // Update local cache
           saveLocalSecretJobsStore(uid, remoteData);
           callback(remoteData);
         } else {
+          cloudSecretStoreLoaded[uid] = true;
           // If remote doesn't exist yet but we have local data, initialize remote
           const currentLocal = loadLocalSecretJobsStore(uid);
           if (currentLocal.jobs.length > 0 || currentLocal.archivedKeys.length > 0) {
@@ -178,7 +220,7 @@ export async function mergeJobsIntoStore(
   uid: string,
   newJobs: CandidateAppliedJob[]
 ): Promise<SecretJobsStoreData> {
-  const current = loadLocalSecretJobsStore(uid);
+  const current = await ensureHydratedSecretJobsStore(uid);
   const existingMap = new Map<string, CandidateAppliedJob>();
 
   for (const job of current.jobs) {
@@ -220,7 +262,7 @@ export async function archiveJobInCloud(
   uid: string,
   job: CandidateAppliedJob
 ): Promise<SecretJobsStoreData> {
-  const current = loadLocalSecretJobsStore(uid);
+  const current = await ensureHydratedSecretJobsStore(uid);
   const key = normalizeJobKey(job.jobTitle, job.jobUrl);
   const updatedKeys = Array.from(new Set([...current.archivedKeys, job.id, key]));
 
