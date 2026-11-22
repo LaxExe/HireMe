@@ -28,6 +28,7 @@ const AGENTS_QUEUE_KEY = (uidStr: string) => `hireme_agents_queue_${uidStr}`;
 const AGENTS_QUEUE_GLOBAL_KEY = "hireme_agents_queue_global";
 
 const memoryAgentsQueue: Record<string, AgentResumeEntry[]> = {};
+const cloudAgentsLoaded: Record<string, boolean> = {};
 
 export function getCachedAgentsQueue(uidStr: string): AgentResumeEntry[] {
   if (uidStr && memoryAgentsQueue[uidStr] && memoryAgentsQueue[uidStr].length > 0) {
@@ -188,6 +189,7 @@ export function subscribeAgentsQueue(
                 remoteItems
               );
               memoryAgentsQueue[uidStr] = migrated;
+              cloudAgentsLoaded[uidStr] = true;
               if (changed) {
                 saveAgentsQueue(uidStr, migrated);
               } else if (typeof window !== "undefined") {
@@ -349,7 +351,33 @@ export function pushResumeToAgents(
   };
 
   const updated = [newEntry, ...existing.filter((e) => e.id !== newEntry.id)];
-  saveAgentsQueue(uidStr, updated);
+
+  if (!cloudAgentsLoaded[uidStr] && isOnline() && isFirebaseConfigured && uidStr) {
+    memoryAgentsQueue[uidStr] = updated;
+    get(ref(rtdb, `agentsQueues/${uidStr}`))
+      .then((snap) => {
+        let remoteItems: AgentResumeEntry[] = [];
+        if (snap.exists()) {
+          const val = snap.val();
+          if (typeof val?.data === "string") {
+            remoteItems = normalizeAgentEntries(JSON.parse(val.data));
+          }
+        }
+        const seenIds = new Set(updated.map((e) => e.id));
+        const merged = [
+          ...updated,
+          ...remoteItems.filter((r) => !seenIds.has(r.id)),
+        ];
+        cloudAgentsLoaded[uidStr] = true;
+        saveAgentsQueue(uidStr, merged);
+      })
+      .catch(() => {
+        saveAgentsQueue(uidStr, updated);
+      });
+  } else {
+    saveAgentsQueue(uidStr, updated);
+  }
+
   logAppliedJobToFirebase(roleName, params.roleUrl, "queued", undefined, uidStr, params.jobDescription);
   return newEntry;
 }

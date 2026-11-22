@@ -60,7 +60,11 @@ import {
   type KeywordMatchResult,
   type MinimumQualificationsResult,
 } from "@/lib/resume/keywordMatch";
-import { pushResumeToAgents } from "@/lib/resume/agentsQueue";
+import {
+  pushResumeToAgents,
+  subscribeAgentsQueue,
+  type AgentResumeEntry,
+} from "@/lib/resume/agentsQueue";
 import {
   compileResumePdfBlobUrl,
   downloadResumePdf,
@@ -113,6 +117,7 @@ export default function PreviewPage() {
   const [isMalleableSectionCollapsed, setIsMalleableSectionCollapsed] = useState(false);
   const [showLatexModal, setShowLatexModal] = useState(false);
   const [copiedLatex, setCopiedLatex] = useState(false);
+  const [agentsEntries, setAgentsEntries] = useState<AgentResumeEntry[]>([]);
 
   useEffect(() => {
     if (!loading && !user) {
@@ -128,8 +133,12 @@ export default function PreviewPage() {
         prev && freshQueue.some((i) => i.id === prev) ? prev : (freshQueue[0]?.id ?? null)
       );
     });
+    const unsubAgents = subscribeAgentsQueue(user.uid, (entries) => {
+      setAgentsEntries(entries);
+    });
     return () => {
       unsubscribe();
+      unsubAgents();
     };
   }, [user]);
 
@@ -842,13 +851,17 @@ export default function PreviewPage() {
 
   const handlePushToAgents = (item: PreviewQueueItem) => {
     const tailored = buildTailoredResumeForSlot(item);
-    pushResumeToAgents(user.uid, {
-      sourcePreviewId: item.id,
-      roleName: item.roleName || item.title,
-      roleUrl: item.roleUrl,
-      tailoredResume: tailored,
-      jobDescription: item.jobDescription,
-    });
+    pushResumeToAgents(
+      user.uid,
+      {
+        sourcePreviewId: item.id,
+        roleName: item.roleName || item.title,
+        roleUrl: item.roleUrl,
+        tailoredResume: tailored,
+        jobDescription: item.jobDescription,
+      },
+      agentsEntries.length > 0 ? agentsEntries : undefined
+    );
     handleDeleteSlot(item.id);
     router.push("/agents");
   };
