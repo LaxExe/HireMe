@@ -13,7 +13,15 @@ export const viewport: Viewport = {
 export const metadata: Metadata = {
   title: "HireMe",
   description: "Minimalist talent discovery and recruitment platform",
+  applicationName: "HireMe",
+  keywords: ["resume alignment", "recruitment", "talent discovery", "LaTeX resume"],
   manifest: "/manifest.webmanifest",
+  openGraph: {
+    title: "HireMe",
+    description: "Minimalist talent discovery and recruitment platform",
+    type: "website",
+    siteName: "HireMe",
+  },
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
