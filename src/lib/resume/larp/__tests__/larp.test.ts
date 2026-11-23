@@ -1360,5 +1360,46 @@ Required Qualifications:
         "Guardrail-verified role-contextual LLM rewrite should win over generic regex rules"
       );
     });
+
+    it("enforces makesSense: false and strictLlmOnly so no injection occurs unless it makes sense to the LLM", async () => {
+      const {
+        clearLlmRewriteCache,
+        parseRewrites,
+        runLarpAlignmentPipelineAsync,
+      } = await import("../../larpEngine");
+      clearLlmRewriteCache();
+
+      assert.deepStrictEqual(
+        parseRewrites(JSON.stringify({ makesSense: false, rewrites: ["Should be ignored."] })),
+        [],
+        "parseRewrites must return [] when LLM judges makesSense: false"
+      );
+
+      const senseRejectingLlm = async (): Promise<string> =>
+        JSON.stringify({ makesSense: false, rewrites: [] });
+
+      const run = await runLarpAlignmentPipelineAsync(
+        "Required Qualifications:\n- Experience with Python, FastAPI, PostgreSQL, and Redis caching.",
+        masterResume,
+        {
+          llm: senseRejectingLlm,
+          includeLlmMalleable: true,
+          focusedRecommendations: true,
+          strictLlmOnly: true,
+        }
+      );
+
+      assert.strictEqual(
+        run.bulletProposals.length,
+        0,
+        "When strictLlmOnly is enabled and the LLM decides an injection does not make sense, zero bullet proposals should be emitted (never falling back to regex rules)"
+      );
+      for (const mb of run.malleableBullets) {
+        assert.ok(
+          mb.options.every((o) => o.source === "llm" || o.source === "default" || o.isDefaultPick),
+          "When strictLlmOnly is enabled, zero static template malleable options may be emitted"
+        );
+      }
+    });
   });
 });

@@ -97,8 +97,14 @@ function migratePreviewItemsIfNeeded(
       }
     }
 
+    const hasLlmProposals =
+      item.larpRun?.bulletProposals?.some((bp) => bp.source === "llm") ||
+      item.larpRun?.malleableBullets?.some((mb) =>
+        mb.options?.some((o) => o.source === "llm")
+      );
     const needsFocusedUpgrade =
       Boolean(item.jobDescription?.trim()) &&
+      !hasLlmProposals &&
       item.larpRun?.runMetadata?.promptVersion !== FOCUSED_ALIGNMENT_PROMPT_VERSION;
 
     if (needsFocusedUpgrade) {

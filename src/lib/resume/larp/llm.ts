@@ -60,24 +60,29 @@ export const DEFAULT_LLM_MODEL =
     (process.env?.LARP_MODEL || process.env?.LARP_LLM_MODEL)) ||
   "gemini-3.5-flash-lite";
 
-export const SYSTEM = `You are a senior staff engineer editing a resume bullet point. You are given EVERYTHING done in a specific role or project (all bullets, full tech stack, and domain) and you rewrite ONE target bullet so it naturally weaves in ONE given technology.
+export const SYSTEM = `You are a senior staff engineer editing a resume bullet point. You are given EVERYTHING done in a specific role or project (all bullets, full tech stack, and domain) and you must first decide if weaving the given technology into the target bullet genuinely makes technical and architectural sense, and ONLY if it makes 100% realistic engineering sense, rewrite the target bullet for yourself so it reads like the engineer originally wrote it.
 Hard rules:
-1. Read all bullets from the role/project first so your rewrite fits the exact system, architecture, and programming language built in that role.
-2. Strict ecosystem & language coherence: NEVER mix incompatible language ecosystems (for example, never pair a Python/FastAPI/PyTorch bullet with Java, JUnit, Jest, C++, or React concepts; never pair a TypeScript/React bullet with Python/FastAPI/C++ tools; never pair a C++/ROS 2 bullet with web/JS/JVM tools). The injected technology must fit the exact language and work of the bullet.
-3. For workflow/process terms (Agile, Jira, Linear, CI/CD, end-to-end), describe how the engineering features, services, or releases were delivered or automated — NEVER attach a project-management tool as an adjective onto a model, detector, algorithm, or database (never write "Jira-tracked detectors" or "Agile database").
-4. Change at most N words (N is given). When the original bullet is already near the character limit, tighten/shorten 2-4 verbose existing words while weaving in the technology so the final bullet stays strictly within max characters (1-line bullets MUST stay <= max characters and never spill onto a 2nd line).
-5. Keep every number, percentage and metric from the original bullet exactly as written.
-6. Mention only the given technology (plus tools already in the original bullet). Do not add any other tool, language, framework or service. Never mention anything on the forbidden list.
-7. Wrap the technology in **double asterisks**, e.g. **Redis**. Keep all existing **bold** markers on original tools and metrics.
-8. Do not invent a new accomplishment, metric, or unrelated responsibility.
-9. Match the voice of the role's bullets: same tense, same terse past-tense engineering verbs, no filler clauses, no buzzwords.
-10. Stay strictly under the character limit. One sentence, ends with a period. Return 3 distinct rewrites.
-Output JSON only: {"rewrites":["...","...","..."]}`;
+1. Sense & Believability Gate (IF AND ONLY IF IT MAKES SENSE): Evaluate whether the given technology naturally belongs in this specific bullet and role. If the technology does NOT make genuine technical sense in this specific bullet (e.g. forcing a frontend/CSS tool into a backend/ML pipeline, forcing an incompatible language/framework, or shoehorning an unrelated tool into a sentence where it sounds bolted-on or fake), DO NOT force it — return {"makesSense":false,"rewrites":[]}.
+2. Rewrite the Bullet Yourself (No Lazy Tacked-On Suffixes): When the technology DOES make sense, rewrite the sentence structure yourself around the real engineering work of the role so the technology plays a real, believable technical role in the sentence. NEVER just slap a lazy suffix like ", using **X**" or "tracked in **X**" onto the end of an unrelated clause.
+3. Read all bullets from the role/project first so your rewrite fits the exact system, architecture, and programming language built in that role.
+4. Strict ecosystem & language coherence: NEVER mix incompatible language ecosystems (for example, never pair a Python/FastAPI/PyTorch bullet with Java, JUnit, Jest, C++, or React concepts; never pair a TypeScript/React bullet with Python/FastAPI/C++ tools; never pair a C++/ROS 2 bullet with web/JS/JVM tools).
+5. For workflow/process terms (Agile, Jira, Linear, CI/CD, end-to-end), only inject if the bullet describes shipping services, releases, or team features — NEVER attach a project-management tool as an adjective onto a model, detector, algorithm, metric count, or database (never write "100 Jira-tracked interactions", "Jira-tracked detectors", or "Agile database"). If it cannot be woven naturally into how the work was shipped, return {"makesSense":false,"rewrites":[]}.
+6. Change at most N words (N is given). When the original bullet is already near the character limit, tighten/shorten 2-4 verbose existing words while rewriting the point so the final bullet stays strictly within max characters (1-line bullets MUST stay <= max characters and never spill onto a 2nd line).
+7. Keep every number, percentage and metric from the original bullet exactly as written.
+8. Mention only the given technology (plus tools already in the original bullet). Do not add any other tool, language, framework or service. Never mention anything on the forbidden list.
+9. Wrap the technology in **double asterisks**, e.g. **Redis**. Keep all existing **bold** markers on original tools and metrics.
+10. Do not invent a new accomplishment, metric, or unrelated responsibility.
+11. Match the voice of the role's bullets: same tense, same terse past-tense engineering verbs, no filler clauses, no buzzwords.
+12. Stay strictly under the character limit. One sentence, ends with a period. Return 3 distinct rewrites when makesSense is true.
+Output JSON only: {"makesSense":true,"rewrites":["...","...","..."]} or {"makesSense":false,"rewrites":[]}`;
 
 export const EXAMPLES = `Examples (format only):
 Bullet: Built **REST APIs** serving 40 clients across 5 internal services.
 Technology: Redis | N=7
-{"rewrites":["Built **REST APIs** with **Redis** caching serving 40 clients across 5 internal services.","Built **Redis**-backed **REST APIs** serving 40 clients across 5 internal services."]}`;
+{"makesSense":true,"rewrites":["Built **REST APIs** with **Redis** caching serving 40 clients across 5 internal services.","Built **Redis**-backed **REST APIs** serving 40 clients across 5 internal services."]}
+Bullet: Trained **PyTorch** segmentation models on **12,000** labeled frames.
+Technology: React | N=7
+{"makesSense":false,"rewrites":[]}`;
 
 export const buildPrompt = (r: LlmRequest): Prompt => {
   const fullBulletsBlock =
@@ -129,7 +134,11 @@ export function parseRewrites(raw: string): string[] {
     const jsonEnd = cleaned.lastIndexOf("}");
     const jsonSlice =
       jsonStart >= 0 && jsonEnd > jsonStart ? cleaned.slice(jsonStart, jsonEnd + 1) : cleaned;
-    const arr = JSON.parse(jsonSlice)?.rewrites;
+    const parsed = JSON.parse(jsonSlice);
+    if (parsed && parsed.makesSense === false) {
+      return [];
+    }
+    const arr = parsed?.rewrites;
     return Array.isArray(arr)
       ? [
           ...new Set(
@@ -247,12 +256,13 @@ export async function judge(
 
 export const DRAFT_SYSTEM = `You draft 3 distinct new one-line resume bullets for a given role or project, based on EVERYTHING done in that role or project (all existing bullets, architecture, and stack).
 Rules:
-1. Read all existing bullets in the role/project so each new 1-line bullet sounds like a direct, authentic engineering continuation of the specific system built there (e.g. referencing the actual domain such as voice agents, insurance/eligibility APIs, dataset annotation pipelines, or autonomous simulation).
-2. Strict ecosystem & language coherence: ONLY use the given target technology (or key available compatible technologies listed for this role) plus tools/languages already used in this specific role's stack. NEVER introduce an incompatible language or framework (e.g. never pair a Python role with Java/Jest/C++/React; never pair a C++ role with web/JS/Java tools).
-3. Past tense, one line strictly under the character limit (aim for 88-106 characters), ends with a period.
-4. No new metrics or numbers; describe a concrete, defensible piece of engineering work (automated testing, schema/request validation, caching, CI checks, runtime/build tooling, or error handling) directly connected to the role's actual domain.
-5. Do not repeat or paraphrase an existing bullet; wrap every technology name in **double asterisks**. Return 3 distinct options in the rewrites array.
-Output JSON only: {"rewrites":["...","...","..."]}`;
+1. Sense & Believability Gate (IF AND ONLY IF IT MAKES SENSE): First check whether the target technology (or compatible role technologies) genuinely makes engineering sense for this specific role/project. If none of the target technologies make realistic sense for this role's architecture and domain, return {"makesSense":false,"rewrites":[]}.
+2. Read all existing bullets in the role/project and write each new 1-line bullet yourself so it sounds like a direct, authentic engineering continuation of the specific system built there (e.g. referencing the actual domain such as voice agents, insurance/eligibility APIs, dataset annotation pipelines, or autonomous simulation).
+3. Strict ecosystem & language coherence: ONLY use the given target technology (or key available compatible technologies listed for this role) plus tools/languages already used in this specific role's stack. NEVER introduce an incompatible language or framework (e.g. never pair a Python role with Java/Jest/C++/React; never pair a C++ role with web/JS/Java tools).
+4. Past tense, one line strictly under the character limit (aim for 88-106 characters), ends with a period.
+5. No new metrics or numbers; describe a concrete, defensible piece of engineering work (automated testing, schema/request validation, caching, CI checks, runtime/build tooling, or error handling) directly connected to the role's actual domain.
+6. Do not repeat or paraphrase an existing bullet; wrap every technology name in **double asterisks**. Return 3 distinct options in the rewrites array.
+Output JSON only: {"makesSense":true,"rewrites":["...","...","..."]} or {"makesSense":false,"rewrites":[]}`;
 
 export interface LlmTelemetry {
   callsAttempted: number;

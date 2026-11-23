@@ -705,7 +705,7 @@ export default function PreviewPage() {
           defaultPicksByCompanyKey: defaultPicksMap,
         });
 
-        // 2. Re-analyze with LLM candidate proposer
+        // 2. Re-analyze with LLM candidate proposer (strictLlmOnly so only LLM-verified rewrites are injected)
         let finalRun = freshRun;
         try {
           const asyncRun = await runLarpAlignmentPipelineAsync(item.jobDescription, latestMaster, {
@@ -714,6 +714,7 @@ export default function PreviewPage() {
             llm: apiCompleter,
             includeLlmMalleable: true,
             focusedRecommendations: true,
+            strictLlmOnly: true,
             defaultPicksByCompanyKey: defaultPicksMap,
           });
           if (asyncRun) {
