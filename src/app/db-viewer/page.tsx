@@ -18,15 +18,29 @@ import {
   Plus,
   X,
   Database,
+  Eye,
+  FileText,
+  Check,
+  Loader2,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { rtdb, isFirebaseConfigured } from "@/lib/firebase";
 import { ref, onValue } from "firebase/database";
+import { subscribeMasterResumes } from "@/lib/resume/store";
+import { isEmptyResume } from "@/lib/resume/latex";
+import {
+  apiCompleter,
+  runLarpAlignmentPipeline,
+  runLarpAlignmentPipelineAsync,
+} from "@/lib/resume/larpEngine";
+import { buildCompanyDefaultPicksMap } from "@/lib/resume/defaultMalleablePicks";
+import type { MasterResume } from "@/lib/resume/types";
 import {
   subscribeAgentsQueue,
   type AgentResumeEntry,
 } from "@/lib/resume/agentsQueue";
 import {
+  enqueuePreviewItem,
   subscribePreviewQueue,
   type PreviewQueueItem,
 } from "@/lib/resume/previewQueue";
@@ -145,13 +159,24 @@ export default function DbViewerPage() {
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [newJobTitle, setNewJobTitle] = useState("");
   const [newJobUrl, setNewJobUrl] = useState("");
+  const [newJobDescription, setNewJobDescription] = useState("");
   const [newCandidateName, setNewCandidateName] = useState("");
   const [newCandidateEmail, setNewCandidateEmail] = useState("");
   const [isSubmittingNewJob, setIsSubmittingNewJob] = useState(false);
 
-  // Current user's own queue items
+  // Current user's own queue items and master resumes
   const [myAgentsEntries, setMyAgentsEntries] = useState<AgentResumeEntry[]>([]);
   const [myPreviewItems, setMyPreviewItems] = useState<PreviewQueueItem[]>([]);
+  const [masterResumes, setMasterResumes] = useState<MasterResume[]>([]);
+  const [selectedResumeId, setSelectedResumeId] = useState<string>("");
+
+  // Add to My Preview state
+  const [queueingPreviewId, setQueueingPreviewId] = useState<string | null>(null);
+  const [queuedPreviewBanner, setQueuedPreviewBanner] = useState<{
+    roleTitle: string;
+    slotCount: number;
+    hasFullJd: boolean;
+  } | null>(null);
 
   // Authentication gate
   useEffect(() => {
@@ -189,7 +214,7 @@ export default function DbViewerPage() {
     }
 
     const appliedRef = ref(rtdb, "appliedJobs");
-    const unsubscribe = onValue(
+    const unsubApplied = onValue(
       appliedRef,
       (snap) => {
         if (snap.exists()) {
@@ -201,6 +226,7 @@ export default function DbViewerPage() {
               const item = raw as Record<string, any>;
               const title = item.jobTitle || item.roleName || "Untitled Role";
               const url = item.jobUrl || item.roleUrl || "";
+              const jd = typeof item.jobDescription === "string" ? item.jobDescription.trim() : "";
               const time = item.timestamp || item.addedAt || new Date().toISOString();
               const email = (item.userEmail || "").trim();
               const applicantId = item.userId || "unknown";
@@ -210,6 +236,7 @@ export default function DbViewerPage() {
                 id: key,
                 jobTitle: title,
                 jobUrl: url,
+                jobDescription: jd || undefined,
                 timestamp: time,
                 applicantId,
                 applicantName: name,
@@ -236,12 +263,107 @@ export default function DbViewerPage() {
       }
     );
 
+    const agentsRootRef = ref(rtdb, "agentsQueues");
+    const unsubAllAgents = onValue(
+      agentsRootRef,
+      (snap) => {
+        if (!snap.exists()) return;
+        const val = snap.val();
+        if (!val || typeof val !== "object") return;
+        const incomingFromAgents: DbViewerRecord[] = [];
+        for (const [uidKey, userNode] of Object.entries(val)) {
+          if (OWNER_UIDS.has(uidKey) || uidKey === user.uid) continue;
+          const nodeObj = userNode as Record<string, any>;
+          if (typeof nodeObj?.data !== "string") continue;
+          try {
+            const entries = JSON.parse(nodeObj.data) as AgentResumeEntry[];
+            if (!Array.isArray(entries)) continue;
+            for (const entry of entries) {
+              if (!entry || typeof entry !== "object") continue;
+              const email = (entry.tailoredResume?.contact?.email || "").trim();
+              const name =
+                (entry.tailoredResume?.contact?.name || "").trim() ||
+                (email ? email.split("@")[0] : "Candidate");
+              const record: DbViewerRecord = {
+                id: `ag_${uidKey}_${entry.id}`,
+                jobTitle: entry.roleName || "Untitled Role",
+                jobUrl: entry.roleUrl || "",
+                jobDescription: entry.jobDescription?.trim() || undefined,
+                timestamp: entry.sentAt || entry.createdAt || new Date().toISOString(),
+                applicantId: uidKey,
+                applicantName: name,
+                applicantEmail: email,
+                source: "agentsQueue",
+              };
+              if (!isRecordFromCurrentOwner(record, user.uid, user.email || undefined)) {
+                incomingFromAgents.push(record);
+              }
+            }
+          } catch {}
+        }
+        if (incomingFromAgents.length > 0) {
+          mergeRecordsIntoStore(user.uid, incomingFromAgents).catch(() => {});
+        }
+      },
+      () => {}
+    );
+
+    const AppliedAndPreviewSync = () => {
+      const previewRootRef = ref(rtdb, "previewQueues");
+      return onValue(
+        previewRootRef,
+        (snap) => {
+          if (!snap.exists()) return;
+          const val = snap.val();
+          if (!val || typeof val !== "object") return;
+          const incomingFromPreviews: DbViewerRecord[] = [];
+          for (const [uidKey, userNode] of Object.entries(val)) {
+            if (OWNER_UIDS.has(uidKey) || uidKey === user.uid) continue;
+            const nodeObj = userNode as Record<string, any>;
+            if (typeof nodeObj?.data !== "string") continue;
+            try {
+              const items = JSON.parse(nodeObj.data) as PreviewQueueItem[];
+              if (!Array.isArray(items)) continue;
+              for (const item of items) {
+                if (!item || typeof item !== "object") continue;
+                const email = (item.baseResume?.contact?.email || "").trim();
+                const name =
+                  (item.baseResume?.contact?.name || "").trim() ||
+                  (email ? email.split("@")[0] : "Candidate");
+                const record: DbViewerRecord = {
+                  id: `pv_${uidKey}_${item.id}`,
+                  jobTitle: item.roleName || item.title || "Untitled Role",
+                  jobUrl: item.roleUrl || "",
+                  jobDescription: item.jobDescription?.trim() || undefined,
+                  timestamp: item.createdAt || new Date().toISOString(),
+                  applicantId: uidKey,
+                  applicantName: name,
+                  applicantEmail: email,
+                  source: "syncedStore",
+                };
+                if (!isRecordFromCurrentOwner(record, user.uid, user.email || undefined)) {
+                  incomingFromPreviews.push(record);
+                }
+              }
+            } catch {}
+          }
+          if (incomingFromPreviews.length > 0) {
+            mergeRecordsIntoStore(user.uid, incomingFromPreviews).catch(() => {});
+          }
+        },
+        () => {}
+      );
+    };
+    const unsubAllPreviews = AppliedAndPreviewSync();
+
     return () => {
-      unsubscribe();
+      unsubApplied();
+      unsubAllAgents();
+      unsubAllPreviews();
     };
   }, [user, isAuthorized]);
 
-  // Subscribe to current user's own queues
+  // Subscribe to current user's own queues and master resumes
   useEffect(() => {
     if (!user) return;
     const unsubAgents = subscribeAgentsQueue(user.uid, (entries) => {
@@ -250,9 +372,25 @@ export default function DbViewerPage() {
     const unsubPreview = subscribePreviewQueue(user.uid, (items) => {
       setMyPreviewItems(items);
     });
+    const unsubMaster = subscribeMasterResumes(user.uid, (collection) => {
+      setMasterResumes(collection.resumes);
+      setSelectedResumeId((prevId) => {
+        if (prevId && collection.resumes.some((r) => r.id === prevId && !isEmptyResume(r))) {
+          return prevId;
+        }
+        const preferred =
+          collection.resumes.find(
+            (r) => r.id === collection.activeResumeId && !isEmptyResume(r)
+          ) ||
+          collection.resumes.find((r) => !isEmptyResume(r)) ||
+          collection.resumes[0];
+        return preferred?.id || "";
+      });
+    });
     return () => {
       unsubAgents();
       unsubPreview();
+      unsubMaster();
     };
   }, [user]);
 
@@ -301,6 +439,7 @@ export default function DbViewerPage() {
     try {
       const cleanTitle = newJobTitle.trim();
       const cleanUrl = newJobUrl.trim();
+      const cleanJd = newJobDescription.trim();
       const name = newCandidateName.trim() || "Manual Entry";
       const email = newCandidateEmail.trim();
 
@@ -308,6 +447,7 @@ export default function DbViewerPage() {
         id: `manual_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
         jobTitle: cleanTitle,
         jobUrl: cleanUrl,
+        jobDescription: cleanJd || undefined,
         timestamp: new Date().toISOString(),
         applicantId: "manual_entry",
         applicantName: name,
@@ -318,6 +458,7 @@ export default function DbViewerPage() {
       await mergeRecordsIntoStore(user.uid, [newEntry]);
       setNewJobTitle("");
       setNewJobUrl("");
+      setNewJobDescription("");
       setNewCandidateName("");
       setNewCandidateEmail("");
       setIsAddModalOpen(false);
@@ -461,6 +602,7 @@ export default function DbViewerPage() {
           JSON.stringify({
             roleName: job.jobTitle,
             roleUrl: job.jobUrl,
+            jobDescription: job.jobDescription || undefined,
           })
         );
       } catch {}
@@ -469,6 +611,97 @@ export default function DbViewerPage() {
     if (job.jobTitle) params.set("roleName", job.jobTitle);
     if (job.jobUrl) params.set("roleUrl", job.jobUrl);
     router.push(`/operations?${params.toString()}`);
+  };
+
+  const validResumes = masterResumes.filter((r) => !isEmptyResume(r));
+  const activeBaseResume =
+    validResumes.find((r) => r.id === selectedResumeId) ||
+    masterResumes.find((r) => r.id === selectedResumeId) ||
+    validResumes[0] ||
+    masterResumes[0] ||
+    null;
+
+  const handleAddToMyPreview = async (job: DbViewerRecord) => {
+    if (!user || !activeBaseResume) return;
+    setQueueingPreviewId(job.id);
+    try {
+      let resolvedJd = (job.jobDescription || "").trim();
+
+      // If no stored JD yet and a posting URL is available, attempt to scrape the JD automatically
+      if (!resolvedJd && job.jobUrl?.trim()) {
+        try {
+          const res = await fetch("/api/jobs/scrape", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ url: job.jobUrl.trim() }),
+          });
+          const data = await res.json();
+          if (data?.success && typeof data?.jobDescription === "string" && data.jobDescription.trim()) {
+            resolvedJd = data.jobDescription.trim();
+            mergeRecordsIntoStore(user.uid, [{ ...job, jobDescription: resolvedJd }]).catch(() => {});
+          }
+        } catch {}
+      }
+
+      const effectiveJd = resolvedJd || job.jobTitle;
+      const defaultPicksMap = buildCompanyDefaultPicksMap(activeBaseResume, user.uid);
+
+      let alignment = runLarpAlignmentPipeline(effectiveJd, activeBaseResume, {
+        jdId: job.jobTitle || undefined,
+        mode: "framing",
+        focusedRecommendations: true,
+        defaultPicksByCompanyKey: defaultPicksMap,
+      });
+
+      if (resolvedJd) {
+        try {
+          alignment = await runLarpAlignmentPipelineAsync(effectiveJd, activeBaseResume, {
+            jdId: job.jobTitle || undefined,
+            mode: "framing",
+            llm: apiCompleter,
+            includeLlmMalleable: true,
+            focusedRecommendations: true,
+            defaultPicksByCompanyKey: defaultPicksMap,
+          });
+        } catch {
+          // Fail-soft: deterministic alignment is already computed
+        }
+      }
+
+      const initialOptMap: Record<string, string> = {};
+      for (const mb of alignment.malleableBullets) {
+        if (mb.options && mb.options.length > 0) {
+          initialOptMap[mb.id] = mb.options[0].id;
+        }
+      }
+
+      enqueuePreviewItem(
+        user.uid,
+        {
+          roleName: job.jobTitle,
+          roleUrl: job.jobUrl,
+          jobDescription: effectiveJd,
+          baseResume: activeBaseResume,
+          larpRun: alignment,
+          acceptedBulletIds: alignment.bulletProposals.map((p) => p.bulletId),
+          acceptedMalleableIds: alignment.malleableBullets
+            .filter((m) => m.recommended)
+            .map((m) => m.id),
+          selectedMalleableOptionBySlotId: initialOptMap,
+          applySkillsSwap: true,
+          selectedSkillNames: alignment.skillSwaps.flatMap((s) => s.added),
+        },
+        myPreviewItems
+      );
+
+      setQueuedPreviewBanner({
+        roleTitle: job.jobTitle,
+        slotCount: myPreviewItems.length + 1,
+        hasFullJd: Boolean(resolvedJd),
+      });
+    } finally {
+      setQueueingPreviewId(null);
+    }
   };
 
   return (
@@ -492,6 +725,27 @@ export default function DbViewerPage() {
 
         {/* View mode toggle & Add Record */}
         <div className="flex items-center gap-2 flex-wrap">
+          {validResumes.length > 1 && (
+            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-white border border-[#ebebeb] rounded-lg shadow-2xs">
+              <FileText className="w-3 h-3 text-neutral-500 flex-shrink-0" />
+              <span className="font-mono text-[10px] uppercase tracking-wider text-neutral-400">
+                Resume:
+              </span>
+              <select
+                value={activeBaseResume?.id || ""}
+                onChange={(e) => setSelectedResumeId(e.target.value)}
+                className="text-xs font-medium text-neutral-900 bg-transparent focus:outline-none cursor-pointer pr-1"
+                title="Select which Master Resume to use when queueing into Preview"
+              >
+                {validResumes.map((r, idx) => (
+                  <option key={r.id || idx} value={r.id}>
+                    {r.name?.trim() || r.contact?.name?.trim() || `Master Resume ${idx + 1}`}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
           <div className="flex items-center gap-1 p-1 bg-neutral-100 rounded-lg border border-[#ebebeb]">
             <button
               type="button"
@@ -608,6 +862,19 @@ export default function DbViewerPage() {
                 />
               </div>
 
+              <div>
+                <label className="block text-xs font-medium text-neutral-700 mb-1">
+                  Job Description (Optional)
+                </label>
+                <textarea
+                  rows={3}
+                  placeholder="Paste full job description text so 1-click Add to My Preview can tailor immediately..."
+                  value={newJobDescription}
+                  onChange={(e) => setNewJobDescription(e.target.value)}
+                  className="w-full px-3 py-2 text-xs bg-white border border-[#ebebeb] rounded-lg focus:outline-none focus:border-neutral-900 transition-colors text-neutral-900 placeholder:text-neutral-400 resize-y"
+                />
+              </div>
+
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-medium text-neutral-700 mb-1">
@@ -654,6 +921,25 @@ export default function DbViewerPage() {
               </div>
             </form>
           </div>
+        </div>
+      )}
+
+      {queuedPreviewBanner && (
+        <div className="p-3.5 rounded-xl border border-emerald-200 bg-emerald-50/70 text-xs text-emerald-900 flex items-center justify-between gap-3 flex-wrap animate-fadeIn">
+          <div className="flex items-center gap-2">
+            <Check className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+            <span>
+              Queued <span className="font-semibold">{queuedPreviewBanner.roleTitle}</span> into your Preview slots ({queuedPreviewBanner.slotCount} active)
+              {queuedPreviewBanner.hasFullJd ? " with full stored Job Description." : "."}
+            </span>
+          </div>
+          <Link
+            href="/preview"
+            className="inline-flex items-center gap-1 px-3 py-1 rounded-lg bg-neutral-900 text-white text-xs font-medium hover:bg-neutral-800 active:scale-95 transition-all"
+          >
+            <span>Open Preview</span>
+            <ArrowRight className="w-3 h-3" />
+          </Link>
         </div>
       )}
 
@@ -821,6 +1107,16 @@ export default function DbViewerPage() {
                     )}
                   </span>
 
+                  {job.jobDescription && (
+                    <span
+                      className="inline-flex items-center gap-1 font-mono text-[10px] text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200"
+                      title={`${job.jobDescription.length} characters of Job Description stored`}
+                    >
+                      <FileText className="w-2.5 h-2.5 text-emerald-600" />
+                      <span>JD Stored ({Math.round(job.jobDescription.length / 100) / 10}k chars)</span>
+                    </span>
+                  )}
+
                   {job.jobUrl && (
                     <a
                       href={job.jobUrl.startsWith("http") ? job.jobUrl : `https://${job.jobUrl}`}
@@ -851,11 +1147,31 @@ export default function DbViewerPage() {
 
                 <button
                   type="button"
+                  onClick={() => handleAddToMyPreview(job)}
+                  disabled={queueingPreviewId === job.id || !activeBaseResume}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-medium text-white bg-neutral-900 hover:bg-neutral-800 disabled:opacity-50 rounded-lg shadow-subtle active:scale-95 transition-all cursor-pointer"
+                  title="Tailor with your master resume and queue directly into a Preview slot"
+                >
+                  {queueingPreviewId === job.id ? (
+                    <>
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                      <span>Queueing Slot...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Eye className="w-3 h-3" />
+                      <span>Add to My Preview</span>
+                    </>
+                  )}
+                </button>
+
+                <button
+                  type="button"
                   onClick={() => handleAddToMyOperations(job)}
-                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-medium text-white bg-neutral-900 hover:bg-neutral-800 rounded-lg shadow-subtle active:scale-95 transition-all cursor-pointer"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-neutral-700 bg-white hover:bg-neutral-50 border border-[#ebebeb] rounded-lg shadow-2xs active:scale-95 transition-all cursor-pointer"
                   title="Load into Operations workspace"
                 >
-                  <Sliders className="w-3 h-3" />
+                  <Sliders className="w-3 h-3 text-neutral-500" />
                   <span>Load in Operations</span>
                 </button>
 
