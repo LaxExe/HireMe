@@ -7,6 +7,8 @@ export default function manifest(): MetadataRoute.Manifest {
     description: "Minimalist talent discovery and recruitment platform",
     start_url: "/",
     display: "standalone",
+    orientation: "portrait-primary",
+    categories: ["productivity", "business", "developer tools"],
     background_color: "#fafafa",
     theme_color: "#171717",
     icons: [
