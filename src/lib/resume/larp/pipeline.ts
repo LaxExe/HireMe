@@ -49,6 +49,8 @@ export interface LarpPipelineOptions {
   excludePairs?: Set<string>;
   focusedRecommendations?: boolean;
   defaultPicksByCompanyKey?: Record<string, string>;
+  /** When true, only LLM-approved and LLM-written rewrites are emitted (never falls back to static regex/template injections). */
+  strictLlmOnly?: boolean;
 }
 
 function buildSlotsFromResume(
@@ -657,7 +659,8 @@ export async function runLarpAlignmentPipelineAsync(
     llmCandidates,
     keywordWeights,
     options.excludePairs,
-    Boolean(options.focusedRecommendations)
+    Boolean(options.focusedRecommendations),
+    Boolean(options.strictLlmOnly)
   );
 
   // Merge LLM rejection counts into statsOut so all_rejected diagnostics include LLM rejections
@@ -733,9 +736,28 @@ export async function runLarpAlignmentPipelineAsync(
             mb.widthNcu = llmOpts[0].widthNcu;
             mb.fit = llmOpts[0].fit;
           }
+        } else if (options.strictLlmOnly) {
+          const defaultOpts = mb.options.filter(
+            (o) => o.isDefaultPick || o.source === "default"
+          );
+          mb.options = defaultOpts;
+          if (defaultOpts[0]) {
+            mb.markup = defaultOpts[0].markup;
+            mb.latex = defaultOpts[0].latex;
+            mb.chars = defaultOpts[0].chars;
+            mb.widthNcu = defaultOpts[0].widthNcu;
+            mb.fit = defaultOpts[0].fit;
+          }
         }
       })
     );
+    if (options.strictLlmOnly) {
+      for (let idx = malleableBullets.length - 1; idx >= 0; idx--) {
+        if (malleableBullets[idx].options.length === 0) {
+          malleableBullets.splice(idx, 1);
+        }
+      }
+    }
   }
 
   const aiRecommendation = evaluateBelievabilityAndRecommend(

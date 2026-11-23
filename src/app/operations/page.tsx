@@ -236,25 +236,44 @@ export default function OperationsPage() {
       defaultPicksByCompanyKey: defaultPicksMap,
     });
     setMatchResult(kwResult);
-    setLarpRun(alignment);
     setLlmTelemetry(null);
-    setAcceptedBullets(new Set(alignment.bulletProposals.map((p) => p.bulletId)));
-    setAcceptedMalleable(
-      new Set(alignment.malleableBullets.filter((m) => m.recommended).map((m) => m.id))
-    );
-    const initialOptMap: Record<string, string> = {};
-    for (const mb of alignment.malleableBullets) {
-      if (mb.options && mb.options.length > 0) {
-        initialOptMap[mb.id] = mb.options[0].id;
-      }
-    }
-    setSelectedMalleableOption(initialOptMap);
     setEditingBulletId(null);
     setEditingMalleableOptId(null);
     setApplySkillsSwap(true);
     setQueuedSlotBanner(null);
 
     if (useAiProposer) {
+      // While the LLM evaluates whether each injection makes sense and writes all points itself,
+      // do not pre-populate rule-based bullet injections or static template malleable options.
+      const pendingLlmRun: LarpAlignmentRun = {
+        ...alignment,
+        bulletProposals: [],
+        malleableBullets: alignment.malleableBullets
+          .map((mb) => {
+            const defaultOpts = mb.options.filter(
+              (o) => o.isDefaultPick || o.source === "default"
+            );
+            return {
+              ...mb,
+              options: defaultOpts,
+              markup: defaultOpts[0]?.markup ?? mb.markup,
+              latex: defaultOpts[0]?.latex ?? mb.latex,
+              chars: defaultOpts[0]?.chars ?? mb.chars,
+              widthNcu: defaultOpts[0]?.widthNcu ?? mb.widthNcu,
+              fit: defaultOpts[0]?.fit ?? mb.fit,
+            };
+          })
+          .filter((mb) => mb.options.length > 0),
+      };
+      setLarpRun(pendingLlmRun);
+      setAcceptedBullets(new Set());
+      setAcceptedMalleable(new Set(pendingLlmRun.malleableBullets.map((m) => m.id)));
+      const pendingOptMap: Record<string, string> = {};
+      for (const mb of pendingLlmRun.malleableBullets) {
+        if (mb.options[0]) pendingOptMap[mb.id] = mb.options[0].id;
+      }
+      setSelectedMalleableOption(pendingOptMap);
+
       setAiProposing(true);
       runLarpAlignmentPipelineAsync(targetJd, currentResume, {
         jdId: roleName || undefined,
@@ -264,6 +283,7 @@ export default function OperationsPage() {
         llm: apiCompleter,
         includeLlmMalleable: true,
         focusedRecommendations: true,
+        strictLlmOnly: true,
         defaultPicksByCompanyKey: defaultPicksMap,
       })
         .then((asyncRun) => {
@@ -272,6 +292,9 @@ export default function OperationsPage() {
             setLlmTelemetry(asyncRun.llmTelemetry);
           }
           setAcceptedBullets(new Set(asyncRun.bulletProposals.map((p) => p.bulletId)));
+          setAcceptedMalleable(
+            new Set(asyncRun.malleableBullets.filter((m) => m.recommended).map((m) => m.id))
+          );
           const nextOptMap: Record<string, string> = {};
           for (const mb of asyncRun.malleableBullets) {
             if (mb.options && mb.options.length > 0) {
@@ -281,11 +304,24 @@ export default function OperationsPage() {
           setSelectedMalleableOption(nextOptMap);
         })
         .catch(() => {
-          // Fail-soft: deterministic run is already rendered
+          // Keep clean LLM-only state on error
         })
         .finally(() => {
           setAiProposing(false);
         });
+    } else {
+      setLarpRun(alignment);
+      setAcceptedBullets(new Set(alignment.bulletProposals.map((p) => p.bulletId)));
+      setAcceptedMalleable(
+        new Set(alignment.malleableBullets.filter((m) => m.recommended).map((m) => m.id))
+      );
+      const initialOptMap: Record<string, string> = {};
+      for (const mb of alignment.malleableBullets) {
+        if (mb.options && mb.options.length > 0) {
+          initialOptMap[mb.id] = mb.options[0].id;
+        }
+      }
+      setSelectedMalleableOption(initialOptMap);
     }
   };
 
@@ -1003,7 +1039,9 @@ export default function OperationsPage() {
 
                 {larpRun.bulletProposals.length === 0 ? (
                   <p className="text-xs font-mono text-neutral-400 py-4 text-center">
-                    All experience and project bullets already contain the compatible technical tools or have no remaining line slack.
+                    {aiProposing
+                      ? "LLM is evaluating role context and rewriting bullets where injections genuinely make sense..."
+                      : "No bullet injections passed the LLM sense check or remaining line slack constraints."}
                   </p>
                 ) : (
                   <div className="space-y-3">

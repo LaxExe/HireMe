@@ -138,7 +138,8 @@ export function selectBulletMutations(
   llmCandidates?: LlmValidatedCandidate[],
   keywordWeights?: Map<string, number>,
   excludePairs?: Set<string>,
-  focusedRecommendations = false
+  focusedRecommendations = false,
+  strictLlmOnly = false
 ): BulletMutationProposal[] {
   const m = centralizedTargetKeywords.length;
   const n = slots.length;
@@ -159,7 +160,8 @@ export function selectBulletMutations(
   );
 
   const statsByRow: KeywordCandidateStats[] = [];
-  const hasAnyLlmCandidates = Boolean(llmCandidates && llmCandidates.length > 0);
+  const hasAnyLlmCandidates =
+    strictLlmOnly || Boolean(llmCandidates && llmCandidates.length > 0);
 
   for (let i = 0; i < m; i++) {
     const keyword = centralizedTargetKeywords[i];

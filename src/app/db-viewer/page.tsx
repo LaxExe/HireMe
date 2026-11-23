@@ -653,19 +653,18 @@ export default function DbViewerPage() {
         defaultPicksByCompanyKey: defaultPicksMap,
       });
 
-      if (resolvedJd) {
-        try {
-          alignment = await runLarpAlignmentPipelineAsync(effectiveJd, activeBaseResume, {
-            jdId: job.jobTitle || undefined,
-            mode: "framing",
-            llm: apiCompleter,
-            includeLlmMalleable: true,
-            focusedRecommendations: true,
-            defaultPicksByCompanyKey: defaultPicksMap,
-          });
-        } catch {
-          // Fail-soft: deterministic alignment is already computed
-        }
+      try {
+        alignment = await runLarpAlignmentPipelineAsync(effectiveJd, activeBaseResume, {
+          jdId: job.jobTitle || undefined,
+          mode: "framing",
+          llm: apiCompleter,
+          includeLlmMalleable: true,
+          focusedRecommendations: true,
+          strictLlmOnly: true,
+          defaultPicksByCompanyKey: defaultPicksMap,
+        });
+      } catch {
+        // Keep clean alignment if API call is unreachable
       }
 
       const initialOptMap: Record<string, string> = {};
