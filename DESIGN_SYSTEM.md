@@ -82,3 +82,10 @@ Border Radii:
 - Inner Panels / Inputs: `rounded-lg` (`8px`) or `rounded-md` (`6px`)
 - Buttons & Pills: `rounded-full` (`9999px`)
 - Hairline Border: `1px solid #ebebeb`
+
+---
+
+## 5. Accessibility & Motion Standards
+- **Keyboard Focus**: Interactive controls maintain crisp focus outlines (`focus:outline-none focus:border-neutral-900`) without glowing halo artifacts.
+- **Reduced Motion**: Animations (`animate-fadeIn`, `animate-scaleIn`) are kept under `150ms` to prevent motion fatigue during rapid keyboard/mouse workflows.
+- **Contrast Ratios**: Primary (`#171717`) and secondary (`#525252`) ink on `#fafafa` and `#ffffff` surfaces exceed WCAG AA contrast requirements.
