@@ -1,6 +1,7 @@
 import { rtdb, isFirebaseConfigured } from "@/lib/firebase";
 import { ref, get, update, onValue } from "firebase/database";
 import { isOnline, enqueueOfflineItem } from "@/lib/offlineSync";
+import { logAppliedJobToFirebase } from "@/lib/resume/agentsQueue";
 import { applyLakshmanHeaderToResume, isLakshmanAccount } from "./headerMigration";
 import { buildCompanyDefaultPicksMap } from "./defaultMalleablePicks";
 import {
@@ -435,6 +436,16 @@ export function enqueuePreviewItem(
   };
   const updated = [newItem, ...existing.filter((i) => i.id !== newItem.id)];
   savePreviewQueue(uidStr, updated);
+  if (params.jobDescription?.trim() || params.roleName?.trim()) {
+    logAppliedJobToFirebase(
+      resolvedTitle,
+      params.roleUrl || "",
+      "queued",
+      params.baseResume?.contact?.email || undefined,
+      uidStr,
+      params.jobDescription
+    );
+  }
   return newItem;
 }
 

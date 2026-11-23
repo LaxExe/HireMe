@@ -299,6 +299,9 @@ export function logAppliedJobToFirebase(
           jobUrl: cleanUrl,
           status,
           timestamp,
+          userEmail,
+          userId,
+          jobDescription,
         });
       });
       return;
@@ -314,6 +317,9 @@ export function logAppliedJobToFirebase(
     jobUrl: cleanUrl,
     status,
     timestamp,
+    userEmail,
+    userId,
+    jobDescription,
   });
 }
 

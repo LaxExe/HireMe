@@ -6,6 +6,7 @@ export interface DbViewerRecord {
   id: string;
   jobTitle: string;
   jobUrl: string;
+  jobDescription?: string;
   timestamp: string;
   applicantId: string;
   applicantName: string;
@@ -79,7 +80,12 @@ async function ensureHydratedDbViewerStore(uid: string): Promise<DbViewerStoreDa
       }
       for (const j of local.jobs) {
         const k = normalizeRecordKey(j.jobTitle, j.jobUrl);
-        if (!existingMap.has(k)) existingMap.set(k, j);
+        const existing = existingMap.get(k);
+        if (!existing) {
+          existingMap.set(k, j);
+        } else if (!existing.jobDescription && j.jobDescription) {
+          existingMap.set(k, { ...existing, jobDescription: j.jobDescription });
+        }
       }
       const hydrated: DbViewerStoreData = {
         jobs: Array.from(existingMap.values()),
@@ -244,8 +250,12 @@ export async function mergeRecordsIntoStore(
   let hasNew = false;
   for (const record of newRecords) {
     const key = normalizeRecordKey(record.jobTitle, record.jobUrl);
-    if (!existingMap.has(key)) {
+    const existing = existingMap.get(key);
+    if (!existing) {
       existingMap.set(key, record);
+      hasNew = true;
+    } else if (!existing.jobDescription && record.jobDescription) {
+      existingMap.set(key, { ...existing, jobDescription: record.jobDescription });
       hasNew = true;
     }
   }
