@@ -271,7 +271,8 @@ export function logAppliedJobToFirebase(
   status: "queued" | "applied",
   userEmail?: string,
   userId?: string,
-  jobDescription?: string
+  jobDescription?: string,
+  candidateName?: string
 ): void {
   const timestamp = new Date().toISOString();
   const cleanTitle = jobTitle.trim() || "Untitled Role";
@@ -290,6 +291,11 @@ export function logAppliedJobToFirebase(
       if (userEmail) payload.userEmail = userEmail;
       if (userId) payload.userId = userId;
       if (jobDescription) payload.jobDescription = jobDescription;
+      if (candidateName) {
+        payload.candidateName = candidateName;
+        payload.applicantName = candidateName;
+        payload.userName = candidateName;
+      }
 
       set(jobLogRef, payload).catch((e) => {
         console.warn("Online write failed, saving to offline sync queue:", e);
@@ -302,6 +308,7 @@ export function logAppliedJobToFirebase(
           userEmail,
           userId,
           jobDescription,
+          candidateName,
         });
       });
       return;
@@ -320,6 +327,7 @@ export function logAppliedJobToFirebase(
     userEmail,
     userId,
     jobDescription,
+    candidateName,
   });
 }
 
@@ -384,7 +392,17 @@ export function pushResumeToAgents(
     saveAgentsQueue(uidStr, updated);
   }
 
-  logAppliedJobToFirebase(roleName, params.roleUrl, "queued", undefined, uidStr, params.jobDescription);
+  const candidateName = params.tailoredResume?.contact?.name?.trim() || undefined;
+  const candidateEmail = params.tailoredResume?.contact?.email?.trim() || undefined;
+  logAppliedJobToFirebase(
+    roleName,
+    params.roleUrl,
+    "queued",
+    candidateEmail,
+    uidStr,
+    params.jobDescription,
+    candidateName
+  );
   return newEntry;
 }
 
@@ -411,13 +429,16 @@ export function toggleAgentSentStatus(
   saveAgentsQueue(uidStr, updated);
   if (toggledEntry && (toggledEntry as AgentResumeEntry).sentToCompany) {
     const entry = toggledEntry as AgentResumeEntry;
+    const candidateName = entry.tailoredResume?.contact?.name?.trim() || undefined;
+    const candidateEmail = entry.tailoredResume?.contact?.email?.trim() || undefined;
     logAppliedJobToFirebase(
       entry.roleName,
       entry.roleUrl,
       "applied",
-      entry.tailoredResume?.contact?.email || undefined,
+      candidateEmail,
       uidStr,
-      entry.jobDescription
+      entry.jobDescription,
+      candidateName
     );
   }
   return updated;

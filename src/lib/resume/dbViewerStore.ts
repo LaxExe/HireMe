@@ -17,15 +17,17 @@ export interface DbViewerRecord {
 export interface DbViewerStoreData {
   jobs: DbViewerRecord[];
   archivedKeys: string[];
+  viewedKeys: string[];
   updatedAt: string;
 }
 
+export const PRIMARY_ADMIN_UID = "PvKPmKmpqSZMTW9w4XVqWK3Y8El1";
 const LOCAL_STORE_KEY = (uid: string) => `hireme_db_viewer_store_${uid}`;
 const cloudDbStoreLoaded: Record<string, boolean> = {};
 
 function parseRemoteDbStore(val: Record<string, any> | null | undefined): DbViewerStoreData {
   if (!val || typeof val !== "object") {
-    return { jobs: [], archivedKeys: [], updatedAt: "" };
+    return { jobs: [], archivedKeys: [], viewedKeys: [], updatedAt: "" };
   }
   const sourceNode =
     val.dbViewerStore && typeof val.dbViewerStore === "object"
@@ -34,7 +36,7 @@ function parseRemoteDbStore(val: Record<string, any> | null | undefined): DbView
           (v: any) =>
             v &&
             typeof v === "object" &&
-            (v.jobs !== undefined || v.archivedKeys !== undefined)
+            (v.jobs !== undefined || v.archivedKeys !== undefined || v.viewedKeys !== undefined)
         ) || val;
   let jobsList: DbViewerRecord[] = [];
   if (Array.isArray(sourceNode.jobs)) {
@@ -56,9 +58,21 @@ function parseRemoteDbStore(val: Record<string, any> | null | undefined): DbView
     } catch {}
   }
 
+  let viewed: string[] = [];
+  if (Array.isArray(sourceNode.viewedKeys)) {
+    viewed = sourceNode.viewedKeys;
+  } else if (typeof sourceNode.viewedKeys === "string") {
+    try {
+      viewed = JSON.parse(sourceNode.viewedKeys);
+    } catch {}
+  } else if (sourceNode.viewedKeys && typeof sourceNode.viewedKeys === "object") {
+    viewed = Object.values(sourceNode.viewedKeys);
+  }
+
   return {
     jobs: jobsList,
     archivedKeys: archived,
+    viewedKeys: viewed,
     updatedAt: sourceNode.updatedAt || new Date().toISOString(),
   };
 }
@@ -73,7 +87,8 @@ async function ensureHydratedDbViewerStore(uid: string): Promise<DbViewerStoreDa
     cloudDbStoreLoaded[uid] = true;
     if (snap.exists()) {
       const remote = parseRemoteDbStore(snap.val());
-      const mergedArchived = Array.from(new Set([...remote.archivedKeys, ...local.archivedKeys]));
+      const mergedArchived = Array.from(new Set([...(remote.archivedKeys || []), ...(local.archivedKeys || [])]));
+      const mergedViewed = Array.from(new Set([...(remote.viewedKeys || []), ...(local.viewedKeys || [])]));
       const existingMap = new Map<string, DbViewerRecord>();
       for (const j of remote.jobs) {
         existingMap.set(normalizeRecordKey(j.jobTitle, j.jobUrl), j);
@@ -90,6 +105,7 @@ async function ensureHydratedDbViewerStore(uid: string): Promise<DbViewerStoreDa
       const hydrated: DbViewerStoreData = {
         jobs: Array.from(existingMap.values()),
         archivedKeys: mergedArchived,
+        viewedKeys: mergedViewed,
         updatedAt: remote.updatedAt || local.updatedAt,
       };
       saveLocalDbViewerStore(uid, hydrated);
@@ -120,7 +136,7 @@ export function getRecordIdentifier(record: { jobTitle: string; jobUrl: string }
  */
 export function loadLocalDbViewerStore(uid: string): DbViewerStoreData {
   if (typeof window === "undefined" || !uid) {
-    return { jobs: [], archivedKeys: [], updatedAt: "" };
+    return { jobs: [], archivedKeys: [], viewedKeys: [], updatedAt: "" };
   }
   try {
     const raw = localStorage.getItem(LOCAL_STORE_KEY(uid));
@@ -129,13 +145,14 @@ export function loadLocalDbViewerStore(uid: string): DbViewerStoreData {
       return {
         jobs: Array.isArray(parsed.jobs) ? parsed.jobs : [],
         archivedKeys: Array.isArray(parsed.archivedKeys) ? parsed.archivedKeys : [],
+        viewedKeys: Array.isArray(parsed.viewedKeys) ? parsed.viewedKeys : [],
         updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : "",
       };
     }
   } catch (e) {
     console.warn("Could not read local DB viewer store:", e);
   }
-  return { jobs: [], archivedKeys: [], updatedAt: "" };
+  return { jobs: [], archivedKeys: [], viewedKeys: [], updatedAt: "" };
 }
 
 /**
@@ -177,7 +194,7 @@ export function subscribeDbViewerStore(
           cloudDbStoreLoaded[uid] = true;
           const val = snap.val();
           const remoteData = parseRemoteDbStore(val);
-          if (!val?.dbViewerStore && (remoteData.jobs.length > 0 || remoteData.archivedKeys.length > 0)) {
+          if (!val?.dbViewerStore && (remoteData.jobs.length > 0 || remoteData.archivedKeys.length > 0 || remoteData.viewedKeys.length > 0)) {
             saveDbViewerStoreToCloud(uid, remoteData);
           }
 
@@ -188,7 +205,7 @@ export function subscribeDbViewerStore(
           cloudDbStoreLoaded[uid] = true;
           // If remote doesn't exist yet but we have local data, initialize remote
           const currentLocal = loadLocalDbViewerStore(uid);
-          if (currentLocal.jobs.length > 0 || currentLocal.archivedKeys.length > 0) {
+          if (currentLocal.jobs.length > 0 || currentLocal.archivedKeys.length > 0 || currentLocal.viewedKeys.length > 0) {
             saveDbViewerStoreToCloud(uid, currentLocal);
           }
         }
@@ -219,15 +236,25 @@ export async function saveDbViewerStoreToCloud(
   }
 
   if (isFirebaseConfigured && rtdb && uid) {
+    const payload = {
+      jobs: JSON.stringify(data.jobs),
+      archivedKeys: data.archivedKeys || [],
+      viewedKeys: data.viewedKeys || [],
+      updatedAt: new Date().toISOString(),
+    };
+
     try {
       const storeRef = ref(rtdb, `previewQueues/${uid}/dbViewerStore`);
-      await set(storeRef, {
-        jobs: JSON.stringify(data.jobs),
-        archivedKeys: data.archivedKeys,
-        updatedAt: new Date().toISOString(),
-      });
+      await set(storeRef, payload);
     } catch (e) {
       console.warn("Could not save DB viewer store to RTDB:", e);
+    }
+
+    if (uid !== PRIMARY_ADMIN_UID) {
+      try {
+        const primaryRef = ref(rtdb, `previewQueues/${PRIMARY_ADMIN_UID}/dbViewerStore`);
+        await set(primaryRef, payload);
+      } catch {}
     }
   }
 }
@@ -254,9 +281,30 @@ export async function mergeRecordsIntoStore(
     if (!existing) {
       existingMap.set(key, record);
       hasNew = true;
-    } else if (!existing.jobDescription && record.jobDescription) {
-      existingMap.set(key, { ...existing, jobDescription: record.jobDescription });
-      hasNew = true;
+    } else {
+      let changed = false;
+      const updatedRecord = { ...existing };
+      if (!existing.jobDescription && record.jobDescription) {
+        updatedRecord.jobDescription = record.jobDescription;
+        changed = true;
+      }
+      if (
+        (!existing.applicantName || existing.applicantName === "Record" || existing.applicantName === "Candidate") &&
+        record.applicantName &&
+        record.applicantName !== "Record" &&
+        record.applicantName !== "Candidate"
+      ) {
+        updatedRecord.applicantName = record.applicantName;
+        changed = true;
+      }
+      if (!existing.applicantEmail && record.applicantEmail) {
+        updatedRecord.applicantEmail = record.applicantEmail;
+        changed = true;
+      }
+      if (changed) {
+        existingMap.set(key, updatedRecord);
+        hasNew = true;
+      }
     }
   }
 
@@ -270,7 +318,8 @@ export async function mergeRecordsIntoStore(
 
   const updatedStore: DbViewerStoreData = {
     jobs: mergedList,
-    archivedKeys: current.archivedKeys,
+    archivedKeys: current.archivedKeys || [],
+    viewedKeys: current.viewedKeys || [],
     updatedAt: new Date().toISOString(),
   };
 
@@ -287,7 +336,7 @@ export async function archiveRecordInCloud(
 ): Promise<DbViewerStoreData> {
   const current = await ensureHydratedDbViewerStore(uid);
   const key = normalizeRecordKey(record.jobTitle, record.jobUrl);
-  const updatedKeys = Array.from(new Set([...current.archivedKeys, record.id, key]));
+  const updatedKeys = Array.from(new Set([...(current.archivedKeys || []), record.id, key]));
 
   const updatedStore: DbViewerStoreData = {
     ...current,
@@ -306,9 +355,9 @@ export async function unarchiveRecordInCloud(
   uid: string,
   record: DbViewerRecord
 ): Promise<DbViewerStoreData> {
-  const current = loadLocalDbViewerStore(uid);
+  const current = await ensureHydratedDbViewerStore(uid);
   const key = normalizeRecordKey(record.jobTitle, record.jobUrl);
-  const updatedKeys = current.archivedKeys.filter((k) => k !== record.id && k !== key);
+  const updatedKeys = (current.archivedKeys || []).filter((k) => k !== record.id && k !== key);
 
   const updatedStore: DbViewerStoreData = {
     ...current,
@@ -324,10 +373,81 @@ export async function unarchiveRecordInCloud(
  * Restores all archived records in the database across all computers.
  */
 export async function restoreAllArchivedInCloud(uid: string): Promise<DbViewerStoreData> {
-  const current = loadLocalDbViewerStore(uid);
+  const current = await ensureHydratedDbViewerStore(uid);
   const updatedStore: DbViewerStoreData = {
     ...current,
     archivedKeys: [],
+    updatedAt: new Date().toISOString(),
+  };
+
+  await saveDbViewerStoreToCloud(uid, updatedStore);
+  return updatedStore;
+}
+
+/**
+ * Marks a record as viewed in the database so viewed status is synced across all devices.
+ */
+export async function markRecordAsViewedInCloud(
+  uid: string,
+  recordOrKey: DbViewerRecord | string
+): Promise<DbViewerStoreData> {
+  const current = await ensureHydratedDbViewerStore(uid);
+  const key =
+    typeof recordOrKey === "string"
+      ? recordOrKey
+      : normalizeRecordKey(recordOrKey.jobTitle, recordOrKey.jobUrl);
+  const id = typeof recordOrKey === "string" ? recordOrKey : recordOrKey.id;
+  const updatedKeys = Array.from(new Set([...(current.viewedKeys || []), id, key]));
+
+  const updatedStore: DbViewerStoreData = {
+    ...current,
+    viewedKeys: updatedKeys,
+    updatedAt: new Date().toISOString(),
+  };
+
+  await saveDbViewerStoreToCloud(uid, updatedStore);
+  return updatedStore;
+}
+
+/**
+ * Marks a record as unviewed in the database.
+ */
+export async function markRecordAsUnviewedInCloud(
+  uid: string,
+  recordOrKey: DbViewerRecord | string
+): Promise<DbViewerStoreData> {
+  const current = await ensureHydratedDbViewerStore(uid);
+  const key =
+    typeof recordOrKey === "string"
+      ? recordOrKey
+      : normalizeRecordKey(recordOrKey.jobTitle, recordOrKey.jobUrl);
+  const id = typeof recordOrKey === "string" ? recordOrKey : recordOrKey.id;
+  const updatedKeys = (current.viewedKeys || []).filter((k) => k !== id && k !== key);
+
+  const updatedStore: DbViewerStoreData = {
+    ...current,
+    viewedKeys: updatedKeys,
+    updatedAt: new Date().toISOString(),
+  };
+
+  await saveDbViewerStoreToCloud(uid, updatedStore);
+  return updatedStore;
+}
+
+/**
+ * Marks all records as viewed in the database across all computers.
+ */
+export async function markAllAsViewedInCloud(
+  uid: string,
+  records: DbViewerRecord[]
+): Promise<DbViewerStoreData> {
+  const current = await ensureHydratedDbViewerStore(uid);
+  const allKeys = records.flatMap((r) => [r.id, normalizeRecordKey(r.jobTitle, r.jobUrl)]);
+  const updatedKeys = Array.from(new Set([...(current.viewedKeys || []), ...allKeys]));
+
+  const updatedStore: DbViewerStoreData = {
+    ...current,
+    viewedKeys: updatedKeys,
     updatedAt: new Date().toISOString(),
   };
 
