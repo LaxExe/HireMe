@@ -10,6 +10,7 @@ export interface PendingAppliedJob {
   userEmail?: string;
   userId?: string;
   jobDescription?: string;
+  candidateName?: string;
 }
 
 export interface PendingCandidate {
@@ -132,6 +133,11 @@ export async function flushOfflineQueue(): Promise<void> {
         if (item.userEmail) payload.userEmail = item.userEmail;
         if (item.userId) payload.userId = item.userId;
         if (item.jobDescription) payload.jobDescription = item.jobDescription;
+        if (item.candidateName) {
+          payload.candidateName = item.candidateName;
+          payload.applicantName = item.candidateName;
+          payload.userName = item.candidateName;
+        }
         await set(jobRef, payload);
       } else if (item.type === "candidate") {
         await set(ref(rtdb, `candidates/${item.candidate.id}`), item.candidate);

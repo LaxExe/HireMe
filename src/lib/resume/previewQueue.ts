@@ -443,13 +443,16 @@ export function enqueuePreviewItem(
   const updated = [newItem, ...existing.filter((i) => i.id !== newItem.id)];
   savePreviewQueue(uidStr, updated);
   if (params.jobDescription?.trim() || params.roleName?.trim()) {
+    const candidateName = params.baseResume?.contact?.name?.trim() || undefined;
+    const candidateEmail = params.baseResume?.contact?.email?.trim() || undefined;
     logAppliedJobToFirebase(
       resolvedTitle,
       params.roleUrl || "",
       "queued",
-      params.baseResume?.contact?.email || undefined,
+      candidateEmail,
       uidStr,
-      params.jobDescription
+      params.jobDescription,
+      candidateName
     );
   }
   return newItem;

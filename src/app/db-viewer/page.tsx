@@ -21,7 +21,11 @@ import {
   Eye,
   FileText,
   Check,
+  CheckCheck,
+  ChevronDown,
+  ChevronUp,
   Loader2,
+  Sparkles,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { rtdb, isFirebaseConfigured } from "@/lib/firebase";
@@ -49,6 +53,9 @@ import {
   archiveRecordInCloud,
   unarchiveRecordInCloud,
   restoreAllArchivedInCloud,
+  markRecordAsViewedInCloud,
+  markRecordAsUnviewedInCloud,
+  markAllAsViewedInCloud,
   mergeRecordsIntoStore,
   getRecordIdentifier,
   type DbViewerRecord,
@@ -145,6 +152,7 @@ export default function DbViewerPage() {
   const [storeData, setStoreData] = useState<DbViewerStoreData>({
     jobs: [],
     archivedKeys: [],
+    viewedKeys: [],
     updatedAt: "",
   });
   const [dataLoading, setDataLoading] = useState(true);
@@ -152,8 +160,12 @@ export default function DbViewerPage() {
   const [selectedApplicantKey, setSelectedApplicantKey] = useState<string>("all");
   const [permissionWarning, setPermissionWarning] = useState(false);
 
-  // Tab: "active" vs "archived"
+  // Main Tab: "active" vs "archived"
   const [viewTab, setViewTab] = useState<"active" | "archived">("active");
+  // Status sub-filter: "all" | "unviewed" | "viewed" | "in_preview"
+  const [statusFilter, setStatusFilter] = useState<"all" | "unviewed" | "viewed" | "in_preview">("all");
+  // Expanded job description inline viewer ID
+  const [expandedJdId, setExpandedJdId] = useState<string | null>(null);
 
   // Manual Add Record Modal state
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -228,9 +240,13 @@ export default function DbViewerPage() {
               const url = item.jobUrl || item.roleUrl || "";
               const jd = typeof item.jobDescription === "string" ? item.jobDescription.trim() : "";
               const time = item.timestamp || item.addedAt || new Date().toISOString();
-              const email = (item.userEmail || "").trim();
+              const email = (item.userEmail || item.email || "").trim();
               const applicantId = item.userId || "unknown";
-              const name = email ? email.split("@")[0] : "Record";
+              const candidateName =
+                (item.candidateName || item.applicantName || item.userName || "").trim();
+              const name =
+                candidateName ||
+                (email ? email.split("@")[0] : "Candidate");
 
               const record: DbViewerRecord = {
                 id: key,
@@ -473,26 +489,71 @@ export default function DbViewerPage() {
     if (!user) return [];
     const myUid = user.uid;
     const myEmail = user.email || "";
-    const { urls, titles, normalizeUrl, normalizeTitle } = myJobIdentifiers;
 
     return storeData.jobs.filter((job) => {
       if (isRecordFromCurrentOwner(job, myUid, myEmail)) return false;
-
-      const normUrl = normalizeUrl(job.jobUrl);
-      if (normUrl && urls.has(normUrl)) return false;
-
-      const normTitle = normalizeTitle(job.jobTitle);
-      if (normTitle && titles.has(normTitle)) return false;
-
       return true;
     });
-  }, [storeData.jobs, user, myJobIdentifiers]);
+  }, [storeData.jobs, user]);
+
+  const isJobInMyPreview = useMemo(() => {
+    const { urls, titles, normalizeUrl, normalizeTitle } = myJobIdentifiers;
+    return (job: DbViewerRecord): boolean => {
+      const normUrl = normalizeUrl(job.jobUrl);
+      if (normUrl && urls.has(normUrl)) return true;
+      const normTitle = normalizeTitle(job.jobTitle);
+      if (normTitle && titles.has(normTitle)) return true;
+      return false;
+    };
+  }, [myJobIdentifiers]);
+
+  const viewedKeysSet = useMemo(() => {
+    return new Set(storeData.viewedKeys || []);
+  }, [storeData.viewedKeys]);
+
+  const isJobViewed = (job: DbViewerRecord): boolean => {
+    const key = getRecordIdentifier(job);
+    return viewedKeysSet.has(job.id) || viewedKeysSet.has(key);
+  };
+
+  const handleToggleViewed = async (job: DbViewerRecord) => {
+    if (!user) return;
+    try {
+      if (isJobViewed(job)) {
+        await markRecordAsUnviewedInCloud(user.uid, job);
+      } else {
+        await markRecordAsViewedInCloud(user.uid, job);
+      }
+    } catch (e) {
+      console.warn("Could not toggle viewed state:", e);
+    }
+  };
+
+  const handleMarkAllAsViewed = async () => {
+    if (!user || activeJobs.length === 0) return;
+    try {
+      await markAllAsViewedInCloud(user.uid, activeJobs);
+    } catch (e) {
+      console.warn("Could not mark all as viewed:", e);
+    }
+  };
+
+  const handleToggleExpandJd = async (job: DbViewerRecord) => {
+    if (expandedJdId === job.id) {
+      setExpandedJdId(null);
+    } else {
+      setExpandedJdId(job.id);
+      if (user && !isJobViewed(job)) {
+        await markRecordAsViewedInCloud(user.uid, job);
+      }
+    }
+  };
 
   const { activeJobs, archivedJobs } = useMemo(() => {
     const active: DbViewerRecord[] = [];
     const archived: DbViewerRecord[] = [];
 
-    const archiveSet = new Set(storeData.archivedKeys);
+    const archiveSet = new Set(storeData.archivedKeys || []);
 
     for (const job of eligibleJobs) {
       const key = getRecordIdentifier(job);
@@ -506,7 +567,37 @@ export default function DbViewerPage() {
     return { activeJobs: active, archivedJobs: archived };
   }, [eligibleJobs, storeData.archivedKeys]);
 
-  const currentViewJobs = viewTab === "active" ? activeJobs : archivedJobs;
+  const { unviewedCount, viewedCount, inPreviewCount } = useMemo(() => {
+    let unviewed = 0;
+    let viewed = 0;
+    let inPreview = 0;
+    for (const job of activeJobs) {
+      if (isJobViewed(job)) {
+        viewed += 1;
+      } else {
+        unviewed += 1;
+      }
+      if (isJobInMyPreview(job)) {
+        inPreview += 1;
+      }
+    }
+    return { unviewedCount: unviewed, viewedCount: viewed, inPreviewCount: inPreview };
+  }, [activeJobs, viewedKeysSet, isJobInMyPreview]);
+
+  const currentViewJobs = useMemo(() => {
+    if (viewTab === "archived") return archivedJobs;
+
+    if (statusFilter === "unviewed") {
+      return activeJobs.filter((job) => !isJobViewed(job));
+    }
+    if (statusFilter === "viewed") {
+      return activeJobs.filter((job) => isJobViewed(job));
+    }
+    if (statusFilter === "in_preview") {
+      return activeJobs.filter((job) => isJobInMyPreview(job));
+    }
+    return activeJobs;
+  }, [viewTab, archivedJobs, activeJobs, statusFilter, viewedKeysSet, isJobInMyPreview]);
 
   const applicantsList = useMemo(() => {
     const map = new Map<string, { key: string; name: string; email?: string; count: number }>();
@@ -622,9 +713,23 @@ export default function DbViewerPage() {
     null;
 
   const handleAddToMyPreview = async (job: DbViewerRecord) => {
-    if (!user || !activeBaseResume) return;
+    if (!user) return;
+    const baseResumeToUse =
+      activeBaseResume ||
+      validResumes[0] ||
+      masterResumes[0] ||
+      null;
+
+    if (!baseResumeToUse) {
+      console.warn("No master resume found to tailor preview slot");
+      return;
+    }
+
     setQueueingPreviewId(job.id);
     try {
+      // Auto-mark record as viewed in cloud RTDB
+      markRecordAsViewedInCloud(user.uid, job).catch(() => {});
+
       let resolvedJd = (job.jobDescription || "").trim();
 
       // If no stored JD yet and a posting URL is available, attempt to scrape the JD automatically
@@ -644,9 +749,9 @@ export default function DbViewerPage() {
       }
 
       const effectiveJd = resolvedJd || job.jobTitle;
-      const defaultPicksMap = buildCompanyDefaultPicksMap(activeBaseResume, user.uid);
+      const defaultPicksMap = buildCompanyDefaultPicksMap(baseResumeToUse, user.uid);
 
-      let alignment = runLarpAlignmentPipeline(effectiveJd, activeBaseResume, {
+      let alignment = runLarpAlignmentPipeline(effectiveJd, baseResumeToUse, {
         jdId: job.jobTitle || undefined,
         mode: "framing",
         focusedRecommendations: true,
@@ -654,7 +759,7 @@ export default function DbViewerPage() {
       });
 
       try {
-        alignment = await runLarpAlignmentPipelineAsync(effectiveJd, activeBaseResume, {
+        alignment = await runLarpAlignmentPipelineAsync(effectiveJd, baseResumeToUse, {
           jdId: job.jobTitle || undefined,
           mode: "framing",
           llm: apiCompleter,
@@ -680,7 +785,7 @@ export default function DbViewerPage() {
           roleName: job.jobTitle,
           roleUrl: job.jobUrl,
           jobDescription: effectiveJd,
-          baseResume: activeBaseResume,
+          baseResume: baseResumeToUse,
           larpRun: alignment,
           acceptedBulletIds: alignment.bulletProposals.map((p) => p.bulletId),
           acceptedMalleableIds: alignment.malleableBullets
@@ -877,11 +982,11 @@ export default function DbViewerPage() {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-medium text-neutral-700 mb-1">
-                    Source Label
+                    Candidate Name
                   </label>
                   <input
                     type="text"
-                    placeholder="e.g. External"
+                    placeholder="e.g. Lakshman Ramanathan"
                     value={newCandidateName}
                     onChange={(e) => setNewCandidateName(e.target.value)}
                     className="w-full px-3 py-2 text-xs bg-white border border-[#ebebeb] rounded-lg focus:outline-none focus:border-neutral-900 transition-colors text-neutral-900 placeholder:text-neutral-400"
@@ -889,11 +994,11 @@ export default function DbViewerPage() {
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-neutral-700 mb-1">
-                    Source Email (Optional)
+                    Candidate Email (Optional)
                   </label>
                   <input
                     type="email"
-                    placeholder="user@example.com"
+                    placeholder="candidate@example.com"
                     value={newCandidateEmail}
                     onChange={(e) => setNewCandidateEmail(e.target.value)}
                     className="w-full px-3 py-2 text-xs bg-white border border-[#ebebeb] rounded-lg focus:outline-none focus:border-neutral-900 transition-colors text-neutral-900 placeholder:text-neutral-400"
@@ -954,6 +1059,116 @@ export default function DbViewerPage() {
         </div>
       )}
 
+      {/* Active Records Status Sub-Navigation & Mark All As Viewed */}
+      {viewTab === "active" && (
+        <div className="flex items-center justify-between gap-2 flex-wrap pt-1">
+          <div className="flex items-center gap-1 p-1 bg-neutral-100 rounded-lg border border-[#ebebeb] flex-wrap">
+            <button
+              type="button"
+              onClick={() => setStatusFilter("all")}
+              className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium transition-all active:scale-95 cursor-pointer ${
+                statusFilter === "all"
+                  ? "bg-white text-neutral-900 shadow-2xs font-semibold"
+                  : "text-neutral-500 hover:text-neutral-900"
+              }`}
+            >
+              <span>All Active</span>
+              <span
+                className={`font-mono text-[10px] px-1.5 py-0.2 rounded-full ${
+                  statusFilter === "all"
+                    ? "bg-neutral-900 text-white"
+                    : "bg-neutral-200 text-neutral-600"
+                }`}
+              >
+                {activeJobs.length}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setStatusFilter("unviewed")}
+              className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium transition-all active:scale-95 cursor-pointer ${
+                statusFilter === "unviewed"
+                  ? "bg-white text-neutral-900 shadow-2xs font-semibold"
+                  : "text-neutral-500 hover:text-neutral-900"
+              }`}
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+              <span>Unviewed</span>
+              <span
+                className={`font-mono text-[10px] px-1.5 py-0.2 rounded-full ${
+                  statusFilter === "unviewed"
+                    ? "bg-emerald-600 text-white"
+                    : unviewedCount > 0
+                    ? "bg-emerald-100 text-emerald-800"
+                    : "bg-neutral-200 text-neutral-600"
+                }`}
+              >
+                {unviewedCount}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setStatusFilter("viewed")}
+              className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium transition-all active:scale-95 cursor-pointer ${
+                statusFilter === "viewed"
+                  ? "bg-white text-neutral-900 shadow-2xs font-semibold"
+                  : "text-neutral-500 hover:text-neutral-900"
+              }`}
+            >
+              <Check className="w-3 h-3 text-neutral-500" />
+              <span>Viewed</span>
+              <span
+                className={`font-mono text-[10px] px-1.5 py-0.2 rounded-full ${
+                  statusFilter === "viewed"
+                    ? "bg-neutral-900 text-white"
+                    : "bg-neutral-200 text-neutral-600"
+                }`}
+              >
+                {viewedCount}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setStatusFilter("in_preview")}
+              className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium transition-all active:scale-95 cursor-pointer ${
+                statusFilter === "in_preview"
+                  ? "bg-white text-neutral-900 shadow-2xs font-semibold"
+                  : "text-neutral-500 hover:text-neutral-900"
+              }`}
+            >
+              <Eye className="w-3 h-3 text-blue-600" />
+              <span>In Preview</span>
+              <span
+                className={`font-mono text-[10px] px-1.5 py-0.2 rounded-full ${
+                  statusFilter === "in_preview"
+                    ? "bg-blue-600 text-white"
+                    : inPreviewCount > 0
+                    ? "bg-blue-100 text-blue-800"
+                    : "bg-neutral-200 text-neutral-600"
+                }`}
+              >
+                {inPreviewCount}
+              </span>
+            </button>
+          </div>
+
+          {unviewedCount > 0 && (
+            <button
+              type="button"
+              onClick={handleMarkAllAsViewed}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-neutral-700 hover:text-neutral-900 bg-white border border-[#ebebeb] rounded-lg shadow-2xs active:scale-95 transition-all cursor-pointer"
+              title="Mark all active records as viewed across all devices"
+            >
+              <CheckCheck className="w-3.5 h-3.5 text-emerald-600" />
+              <span>Mark All as Viewed</span>
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Filter Bar */}
       {applicantsList.length > 0 && (
         <div className="space-y-1.5">
@@ -961,7 +1176,7 @@ export default function DbViewerPage() {
             <span className="font-mono text-[10px] uppercase tracking-wider text-neutral-400 font-semibold flex items-center gap-1">
               <Users className="w-3 h-3 text-neutral-400" />
               <span>
-                Filter by Source ({applicantsList.length}) {viewTab === "archived" ? "— Archived" : ""}
+                Filter by Candidate ({applicantsList.length}) {viewTab === "archived" ? "— Archived" : ""}
               </span>
             </span>
             {selectedApplicantKey !== "all" && (
@@ -986,7 +1201,7 @@ export default function DbViewerPage() {
               }`}
             >
               <Users className="w-3 h-3" />
-              <span>All Sources</span>
+              <span>All Candidates</span>
               <span
                 className={`font-mono text-[10px] ml-0.5 ${
                   selectedApplicantKey === "all" ? "text-neutral-300" : "text-neutral-400"
@@ -1032,7 +1247,7 @@ export default function DbViewerPage() {
           type="text"
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
-          placeholder="Filter database records by title, domain, or source..."
+          placeholder="Filter database records by candidate name, role, domain, or email..."
           className="w-full pl-9 pr-3 py-2 text-xs bg-white border border-[#ebebeb] rounded-xl focus:outline-none focus:border-neutral-900 transition-colors shadow-2xs text-neutral-900 placeholder:text-neutral-400"
         />
       </div>
@@ -1047,6 +1262,10 @@ export default function DbViewerPage() {
                 ? "No matching records found"
                 : viewTab === "archived"
                 ? "No archived records"
+                : statusFilter === "unviewed"
+                ? "All active records have been viewed"
+                : statusFilter === "in_preview"
+                ? "No active records in preview slots yet"
                 : archivedJobs.length > 0 && activeJobs.length === 0
                 ? "All records have been archived"
                 : "No records in database table yet"}
@@ -1056,10 +1275,23 @@ export default function DbViewerPage() {
                 ? "Try searching for a different keyword."
                 : viewTab === "archived"
                 ? "Archived records are preserved in the database so you can restore them anytime."
+                : statusFilter === "unviewed"
+                ? "Great job! All active records have been reviewed."
+                : statusFilter === "in_preview"
+                ? "Click 'Add to My Preview' on any record to queue it into your Preview slot."
                 : archivedJobs.length > 0 && activeJobs.length === 0
                 ? "All incoming records in the table are currently archived."
                 : "Synced records from the Realtime Database will appear here."}
             </p>
+            {statusFilter !== "all" && (
+              <button
+                type="button"
+                onClick={() => setStatusFilter("all")}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-neutral-700 bg-white hover:bg-neutral-50 border border-[#ebebeb] rounded-full shadow-2xs transition-all active:scale-95 cursor-pointer mt-2"
+              >
+                <span>View All Active Records</span>
+              </button>
+            )}
             {viewTab === "active" && archivedJobs.length > 0 && activeJobs.length === 0 && (
               <button
                 type="button"
@@ -1082,122 +1314,223 @@ export default function DbViewerPage() {
             )}
           </div>
         ) : (
-          displayedJobs.map((job) => (
-            <div
-              key={job.id}
-              className="bg-white rounded-xl border border-[#ebebeb] shadow-subtle p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 transition-all hover:border-neutral-300"
-            >
-              <div className="space-y-1.5 min-w-0 flex-1">
-                <div className="flex items-baseline gap-2 flex-wrap">
-                  <h2 className="text-sm font-semibold tracking-tight text-neutral-900">
-                    {job.jobTitle}
-                  </h2>
-                  <span className="font-mono text-[10px] text-neutral-400">
-                    {formatDate(job.timestamp)}
-                  </span>
-                </div>
+          displayedJobs.map((job) => {
+            const inPreview = isJobInMyPreview(job);
+            const isViewed = isJobViewed(job);
+            const isJdExpanded = expandedJdId === job.id;
 
-                <div className="flex items-center gap-3 flex-wrap">
-                  <span className="inline-flex items-center gap-1 font-mono text-[11px] text-neutral-600 bg-neutral-100 px-2 py-0.5 rounded-md border border-neutral-200">
-                    <User className="w-3 h-3 text-neutral-500" />
-                    <span className="font-medium text-neutral-800">{job.applicantName}</span>
-                    {job.applicantEmail && job.applicantEmail !== job.applicantName && (
-                      <span className="text-neutral-400 text-[10px]">({job.applicantEmail})</span>
+            return (
+              <div
+                key={job.id}
+                className="bg-white rounded-xl border border-[#ebebeb] shadow-subtle p-4 sm:p-5 flex flex-col justify-between gap-3.5 transition-all hover:border-neutral-300"
+              >
+                <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+                  <div className="space-y-1.5 min-w-0 flex-1">
+                    <div className="flex items-baseline gap-2 flex-wrap">
+                      <h2 className="text-sm font-semibold tracking-tight text-neutral-900">
+                        {job.jobTitle}
+                      </h2>
+                      <span className="font-mono text-[10px] text-neutral-400">
+                        {formatDate(job.timestamp)}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {/* Candidate info badge */}
+                      <span className="inline-flex items-center gap-1.5 font-mono text-[11px] text-neutral-800 bg-neutral-100 px-2 py-0.5 rounded-md border border-neutral-200">
+                        <User className="w-3 h-3 text-neutral-600 flex-shrink-0" />
+                        <span className="font-semibold text-neutral-900">
+                          {job.applicantName || "Candidate"}
+                        </span>
+                        {job.applicantEmail && job.applicantEmail !== job.applicantName && (
+                          <span className="text-neutral-500 text-[10px]">
+                            ({job.applicantEmail})
+                          </span>
+                        )}
+                      </span>
+
+                      {/* Source badge */}
+                      <span className="font-mono text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-md bg-neutral-50 text-neutral-500 border border-[#ebebeb]">
+                        {job.source === "appliedJobs"
+                          ? "Applied"
+                          : job.source === "agentsQueue"
+                          ? "Agent Sent"
+                          : job.source === "manual"
+                          ? "Manual"
+                          : "Synced"}
+                      </span>
+
+                      {/* Viewed / New status toggle */}
+                      <button
+                        type="button"
+                        onClick={() => handleToggleViewed(job)}
+                        className={`inline-flex items-center gap-1 font-mono text-[10px] px-2 py-0.5 rounded-md border transition-all active:scale-95 cursor-pointer ${
+                          isViewed
+                            ? "bg-neutral-50 text-neutral-500 border-neutral-200 hover:bg-neutral-100"
+                            : "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100 font-medium"
+                        }`}
+                        title={isViewed ? "Click to mark as unviewed" : "Click to mark as viewed"}
+                      >
+                        {isViewed ? (
+                          <>
+                            <Check className="w-2.5 h-2.5 text-neutral-500" />
+                            <span>Viewed</span>
+                          </>
+                        ) : (
+                          <>
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                            <span>New</span>
+                          </>
+                        )}
+                      </button>
+
+                      {/* In Preview slot badge */}
+                      {inPreview && (
+                        <span className="inline-flex items-center gap-1 font-mono text-[10px] px-2 py-0.5 rounded-md bg-blue-50 text-blue-700 border border-blue-200 font-medium">
+                          <Eye className="w-2.5 h-2.5 text-blue-600" />
+                          <span>In Preview</span>
+                        </span>
+                      )}
+
+                      {/* Job Description status & expand toggle */}
+                      {job.jobDescription && (
+                        <button
+                          type="button"
+                          onClick={() => handleToggleExpandJd(job)}
+                          className="inline-flex items-center gap-1 font-mono text-[10px] text-emerald-700 bg-emerald-50 hover:bg-emerald-100 px-2 py-0.5 rounded-md border border-emerald-200 transition-colors cursor-pointer"
+                          title="Click to inspect stored Job Description"
+                        >
+                          <FileText className="w-2.5 h-2.5 text-emerald-600" />
+                          <span>JD Stored ({Math.round(job.jobDescription.length / 100) / 10}k chars)</span>
+                          {isJdExpanded ? (
+                            <ChevronUp className="w-2.5 h-2.5 text-emerald-600" />
+                          ) : (
+                            <ChevronDown className="w-2.5 h-2.5 text-emerald-600" />
+                          )}
+                        </button>
+                      )}
+
+                      {/* URL domain link */}
+                      {job.jobUrl && (
+                        <a
+                          href={job.jobUrl.startsWith("http") ? job.jobUrl : `https://${job.jobUrl}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="font-mono text-[11px] text-neutral-500 hover:text-neutral-900 hover:underline flex items-center gap-1 transition-colors truncate max-w-xs"
+                        >
+                          <span>{getDomainFromUrl(job.jobUrl)}</span>
+                          <ExternalLink className="w-3 h-3 flex-shrink-0" />
+                        </a>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Actions */}
+                  <div className="flex items-center gap-2 flex-shrink-0 flex-wrap">
+                    {job.jobUrl && (
+                      <a
+                        href={job.jobUrl.startsWith("http") ? job.jobUrl : `https://${job.jobUrl}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-neutral-700 bg-white hover:bg-neutral-50 border border-[#ebebeb] rounded-lg shadow-2xs active:scale-95 transition-all cursor-pointer"
+                        title="Open external link"
+                      >
+                        <span>Open URL</span>
+                        <ExternalLink className="w-3 h-3 text-neutral-400" />
+                      </a>
                     )}
-                  </span>
 
-                  {job.jobDescription && (
-                    <span
-                      className="inline-flex items-center gap-1 font-mono text-[10px] text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200"
-                      title={`${job.jobDescription.length} characters of Job Description stored`}
+                    <button
+                      type="button"
+                      onClick={() => handleAddToMyPreview(job)}
+                      disabled={queueingPreviewId === job.id}
+                      className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-medium rounded-lg shadow-subtle active:scale-95 transition-all cursor-pointer ${
+                        inPreview
+                          ? "bg-neutral-100 hover:bg-neutral-200 text-neutral-800 border border-[#ebebeb]"
+                          : "bg-neutral-900 hover:bg-neutral-800 text-white"
+                      }`}
+                      title={
+                        inPreview
+                          ? "Already queued into Preview slots. Click to add another slot instance."
+                          : "Tailor with your master resume and queue directly into a Preview slot without leaving this page"
+                      }
                     >
-                      <FileText className="w-2.5 h-2.5 text-emerald-600" />
-                      <span>JD Stored ({Math.round(job.jobDescription.length / 100) / 10}k chars)</span>
-                    </span>
-                  )}
+                      {queueingPreviewId === job.id ? (
+                        <>
+                          <Loader2 className="w-3 h-3 animate-spin" />
+                          <span>Queueing...</span>
+                        </>
+                      ) : inPreview ? (
+                        <>
+                          <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                          <span>In Preview (+Add Again)</span>
+                        </>
+                      ) : (
+                        <>
+                          <Plus className="w-3 h-3" />
+                          <span>Add to My Preview</span>
+                        </>
+                      )}
+                    </button>
 
-                  {job.jobUrl && (
-                    <a
-                      href={job.jobUrl.startsWith("http") ? job.jobUrl : `https://${job.jobUrl}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="font-mono text-[11px] text-neutral-500 hover:text-neutral-900 hover:underline flex items-center gap-1 transition-colors truncate max-w-xs"
+                    <button
+                      type="button"
+                      onClick={() => handleAddToMyOperations(job)}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-neutral-700 bg-white hover:bg-neutral-50 border border-[#ebebeb] rounded-lg shadow-2xs active:scale-95 transition-all cursor-pointer"
+                      title="Load into Operations workspace"
                     >
-                      <span>{getDomainFromUrl(job.jobUrl)}</span>
-                      <ExternalLink className="w-3 h-3 flex-shrink-0" />
-                    </a>
-                  )}
+                      <Sliders className="w-3 h-3 text-neutral-500" />
+                      <span>Load in Operations</span>
+                    </button>
+
+                    {viewTab === "active" ? (
+                      <button
+                        type="button"
+                        onClick={() => handleArchiveJob(job)}
+                        className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-neutral-500 hover:text-neutral-900 bg-white hover:bg-neutral-50 border border-[#ebebeb] rounded-lg shadow-2xs active:scale-95 transition-all cursor-pointer"
+                        title="Archive record in database"
+                      >
+                        <Archive className="w-3 h-3 text-neutral-400" />
+                        <span>Archive</span>
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => handleUnarchiveJob(job)}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-neutral-700 hover:text-neutral-900 bg-white hover:bg-neutral-50 border border-[#ebebeb] rounded-lg shadow-2xs active:scale-95 transition-all cursor-pointer"
+                        title="Restore record to active view"
+                      >
+                        <RotateCcw className="w-3 h-3 text-neutral-500" />
+                        <span>Restore</span>
+                      </button>
+                    )}
+                  </div>
                 </div>
-              </div>
 
-              <div className="flex items-center gap-2 flex-shrink-0 flex-wrap">
-                {job.jobUrl && (
-                  <a
-                    href={job.jobUrl.startsWith("http") ? job.jobUrl : `https://${job.jobUrl}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-neutral-700 bg-white hover:bg-neutral-50 border border-[#ebebeb] rounded-lg shadow-2xs active:scale-95 transition-all cursor-pointer"
-                    title="Open external link"
-                  >
-                    <span>Open URL</span>
-                    <ExternalLink className="w-3 h-3 text-neutral-400" />
-                  </a>
-                )}
-
-                <button
-                  type="button"
-                  onClick={() => handleAddToMyPreview(job)}
-                  disabled={queueingPreviewId === job.id || !activeBaseResume}
-                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-medium text-white bg-neutral-900 hover:bg-neutral-800 disabled:opacity-50 rounded-lg shadow-subtle active:scale-95 transition-all cursor-pointer"
-                  title="Tailor with your master resume and queue directly into a Preview slot"
-                >
-                  {queueingPreviewId === job.id ? (
-                    <>
-                      <Loader2 className="w-3 h-3 animate-spin" />
-                      <span>Queueing Slot...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Eye className="w-3 h-3" />
-                      <span>Add to My Preview</span>
-                    </>
-                  )}
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => handleAddToMyOperations(job)}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-neutral-700 bg-white hover:bg-neutral-50 border border-[#ebebeb] rounded-lg shadow-2xs active:scale-95 transition-all cursor-pointer"
-                  title="Load into Operations workspace"
-                >
-                  <Sliders className="w-3 h-3 text-neutral-500" />
-                  <span>Load in Operations</span>
-                </button>
-
-                {viewTab === "active" ? (
-                  <button
-                    type="button"
-                    onClick={() => handleArchiveJob(job)}
-                    className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-neutral-500 hover:text-neutral-900 bg-white hover:bg-neutral-50 border border-[#ebebeb] rounded-lg shadow-2xs active:scale-95 transition-all cursor-pointer"
-                    title="Archive record in database"
-                  >
-                    <Archive className="w-3 h-3 text-neutral-400" />
-                    <span>Archive</span>
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => handleUnarchiveJob(job)}
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-neutral-700 hover:text-neutral-900 bg-white hover:bg-neutral-50 border border-[#ebebeb] rounded-lg shadow-2xs active:scale-95 transition-all cursor-pointer"
-                    title="Restore record to active view"
-                  >
-                    <RotateCcw className="w-3 h-3 text-neutral-500" />
-                    <span>Restore</span>
-                  </button>
+                {/* Inline Expandable Job Description */}
+                {isJdExpanded && job.jobDescription && (
+                  <div className="pt-3 border-t border-[#ebebeb] space-y-2 animate-fadeIn">
+                    <div className="flex items-center justify-between text-neutral-500 font-mono text-[10px] uppercase tracking-wider">
+                      <span className="flex items-center gap-1.5">
+                        <FileText className="w-3 h-3 text-neutral-400" />
+                        <span>Stored Job Description Content</span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setExpandedJdId(null)}
+                        className="text-neutral-400 hover:text-neutral-700 underline cursor-pointer"
+                      >
+                        Close
+                      </button>
+                    </div>
+                    <div className="bg-[#fafafa] rounded-lg border border-[#ebebeb] p-3.5 text-xs text-neutral-700 whitespace-pre-wrap font-sans max-h-64 overflow-y-auto leading-relaxed select-text">
+                      {job.jobDescription}
+                    </div>
+                  </div>
                 )}
               </div>
-            </div>
-          ))
+            );
+          })
         )}
       </div>
     </div>

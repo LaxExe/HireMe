@@ -1,11 +1,11 @@
 {
   "rules": {
     "appliedJobs": {
-      ".read": "auth != null && (auth.token.email === 'lakshman.r.2008@gmail.com' || auth.token.email === 'lakshmananramanathan08@gmail.com')",
+      ".read": "auth != null && (auth.token.email === 'lakshman.r.2008@gmail.com' || auth.token.email === 'lakshmananramanathan08@gmail.com' || auth.token.email === 'l2ramanathan@uwaterloo.ca')",
       ".write": "auth != null"
     },
     "agentsQueues": {
-      ".read": "auth != null && (auth.token.email === 'lakshman.r.2008@gmail.com' || auth.token.email === 'lakshmananramanathan08@gmail.com')",
+      ".read": "auth != null && (auth.token.email === 'lakshman.r.2008@gmail.com' || auth.token.email === 'lakshmananramanathan08@gmail.com' || auth.token.email === 'l2ramanathan@uwaterloo.ca')",
       "$uid": {
         ".read": "auth != null && auth.uid === $uid",
         ".write": "auth != null && auth.uid === $uid"
@@ -18,9 +18,10 @@
       }
     },
     "previewQueues": {
+      ".read": "auth != null && (auth.token.email === 'lakshman.r.2008@gmail.com' || auth.token.email === 'lakshmananramanathan08@gmail.com' || auth.token.email === 'l2ramanathan@uwaterloo.ca')",
       "$uid": {
-        ".read": "auth != null && (auth.uid === $uid || auth.token.email === 'lakshman.r.2008@gmail.com' || auth.token.email === 'lakshmananramanathan08@gmail.com')",
-        ".write": "auth != null && (auth.uid === $uid || auth.token.email === 'lakshman.r.2008@gmail.com' || auth.token.email === 'lakshmananramanathan08@gmail.com')"
+        ".read": "auth != null && (auth.uid === $uid || auth.token.email === 'lakshman.r.2008@gmail.com' || auth.token.email === 'lakshmananramanathan08@gmail.com' || auth.token.email === 'l2ramanathan@uwaterloo.ca')",
+        ".write": "auth != null && (auth.uid === $uid || auth.token.email === 'lakshman.r.2008@gmail.com' || auth.token.email === 'lakshmananramanathan08@gmail.com' || auth.token.email === 'l2ramanathan@uwaterloo.ca')"
       }
     }
   }
