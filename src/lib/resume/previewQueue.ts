@@ -533,12 +533,98 @@ export function updatePreviewQueueItem(
   return updated;
 }
 
+const DELETED_RECOVERY_KEY = (uidStr: string) => `hireme_deleted_preview_keys_${uidStr}`;
+const memoryDeletedRecoveryKeys: Record<string, Set<string>> = {};
+
+function loadLocalDeletedRecoveryKeys(uidStr: string): Set<string> {
+  const set = new Set<string>(memoryDeletedRecoveryKeys[uidStr] ?? []);
+  if (typeof window !== "undefined" && uidStr) {
+    try {
+      const raw = localStorage.getItem(DELETED_RECOVERY_KEY(uidStr));
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          for (const k of parsed) {
+            if (typeof k === "string" && k) set.add(k);
+          }
+        }
+      }
+    } catch {}
+  }
+  memoryDeletedRecoveryKeys[uidStr] = set;
+  return set;
+}
+
+function saveDeletedRecoveryKeys(uidStr: string, keys: Set<string>): void {
+  if (!uidStr) return;
+  memoryDeletedRecoveryKeys[uidStr] = keys;
+  const arr = Array.from(keys);
+  if (typeof window !== "undefined") {
+    try {
+      localStorage.setItem(DELETED_RECOVERY_KEY(uidStr), JSON.stringify(arr));
+    } catch {}
+  }
+  if (isOnline() && isFirebaseConfigured && rtdb) {
+    get(ref(rtdb, `previewQueues/${uidStr}/deletedRecoveryKeys`))
+      .then((snap) => {
+        const merged = new Set<string>(arr);
+        if (snap.exists()) {
+          const val = snap.val();
+          if (Array.isArray(val)) {
+            for (const k of val) {
+              if (typeof k === "string" && k) merged.add(k);
+            }
+          }
+        }
+        memoryDeletedRecoveryKeys[uidStr] = merged;
+        const mergedArr = Array.from(merged);
+        if (typeof window !== "undefined") {
+          try {
+            localStorage.setItem(DELETED_RECOVERY_KEY(uidStr), JSON.stringify(mergedArr));
+          } catch {}
+        }
+        return update(ref(rtdb, `previewQueues/${uidStr}`), {
+          deletedRecoveryKeys: mergedArr,
+        });
+      })
+      .catch(() => {});
+  }
+}
+
+export function markJobsExcludedFromRecovery(
+  uidStr: string,
+  jobs: Array<{ jobTitle?: string; roleName?: string; title?: string; jobUrl?: string; roleUrl?: string }>
+): void {
+  if (!uidStr || jobs.length === 0) return;
+  const keys = loadLocalDeletedRecoveryKeys(uidStr);
+  let added = false;
+  for (const job of jobs) {
+    const nu = normalizeRecoveryUrl(job.jobUrl || job.roleUrl);
+    const nt = normalizeRecoveryTitle(job.jobTitle || job.roleName || job.title);
+    if (nu && !keys.has(`u:${nu}`)) {
+      keys.add(`u:${nu}`);
+      added = true;
+    }
+    if (nt && !keys.has(`t:${nt}`)) {
+      keys.add(`t:${nt}`);
+      added = true;
+    }
+  }
+  if (added) {
+    saveDeletedRecoveryKeys(uidStr, keys);
+  }
+}
+
 export function deletePreviewQueueItem(
   uidStr: string,
   itemId: string,
   currentQueue?: PreviewQueueItem[]
 ): PreviewQueueItem[] {
   const existing = currentQueue ?? getCachedPreviewQueue(uidStr);
+  const removed = existing.find((item) => item.id === itemId);
+  if (removed) {
+    markJobsExcludedFromRecovery(uidStr, [removed]);
+  }
   const updated = existing.filter((item) => item.id !== itemId);
   savePreviewQueue(uidStr, updated);
   return updated;
@@ -585,10 +671,23 @@ export async function findRecoverablePreviewJobsFromCloud(
 ): Promise<RecoverablePreviewJob[]> {
   if (!isFirebaseConfigured || !rtdb || !uidStr) return [];
   try {
-    const snap = await get(ref(rtdb, "appliedJobs"));
+    const [snap, deletedSnap] = await Promise.all([
+      get(ref(rtdb, "appliedJobs")),
+      get(ref(rtdb, `previewQueues/${uidStr}/deletedRecoveryKeys`)).catch(() => null),
+    ]);
     if (!snap.exists()) return [];
     const val = snap.val();
     if (!val || typeof val !== "object") return [];
+
+    const deletedKeys = loadLocalDeletedRecoveryKeys(uidStr);
+    if (deletedSnap && deletedSnap.exists()) {
+      const dVal = deletedSnap.val();
+      if (Array.isArray(dVal)) {
+        for (const k of dVal) {
+          if (typeof k === "string" && k) deletedKeys.add(k);
+        }
+      }
+    }
 
     const emailLower = (userEmail || "").toLowerCase().trim();
     const isLakshman =
@@ -682,6 +781,7 @@ export async function findRecoverablePreviewJobsFromCloud(
       const nt = normalizeRecoveryTitle(entry.jobTitle);
       if ((nu && existingUrls.has(nu)) || (nt && existingTitles.has(nt))) continue;
       if ((nu && appliedUrls.has(nu)) || (nt && appliedTitles.has(nt))) continue;
+      if ((nu && deletedKeys.has(`u:${nu}`)) || (nt && deletedKeys.has(`t:${nt}`))) continue;
 
       const dedupKey = nu || nt;
       if (!dedupKey) continue;

@@ -34,6 +34,7 @@ import {
   deletePreviewQueueItem,
   findRecoverablePreviewJobsFromCloud,
   restoreRecoverablePreviewJobs,
+  markJobsExcludedFromRecovery,
   type PreviewQueueItem,
   type RecoverablePreviewJob,
 } from "@/lib/resume/previewQueue";
@@ -1227,7 +1228,13 @@ export default function PreviewPage() {
             </button>
             <button
               type="button"
-              onClick={() => setRecoveryDismissed(true)}
+              onClick={() => {
+                if (user && recoverableJobs.length > 0) {
+                  markJobsExcludedFromRecovery(user.uid, recoverableJobs);
+                }
+                setRecoverableJobs([]);
+                setRecoveryDismissed(true);
+              }}
               aria-label="Dismiss recovery banner"
               className="p-1 text-amber-700/70 hover:text-amber-950 rounded-md cursor-pointer"
             >
