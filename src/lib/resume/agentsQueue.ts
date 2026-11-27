@@ -30,6 +30,19 @@ const AGENTS_QUEUE_GLOBAL_KEY = "hireme_agents_queue_global";
 const memoryAgentsQueue: Record<string, AgentResumeEntry[]> = {};
 const cloudAgentsLoaded: Record<string, boolean> = {};
 
+function writeLocalAgentsCache(uidStr: string, serialized: string): void {
+  if (typeof window === "undefined" || !uidStr) return;
+  try {
+    // Remove legacy duplicate global copy to avoid doubling localStorage footprint
+    localStorage.removeItem(AGENTS_QUEUE_GLOBAL_KEY);
+  } catch {}
+  try {
+    localStorage.setItem(AGENTS_QUEUE_KEY(uidStr), serialized);
+  } catch (e) {
+    console.warn("Agents queue exceeded localStorage quota (Firebase RTDB remains intact):", e);
+  }
+}
+
 export function getCachedAgentsQueue(uidStr: string): AgentResumeEntry[] {
   if (uidStr && memoryAgentsQueue[uidStr] && memoryAgentsQueue[uidStr].length > 0) {
     return memoryAgentsQueue[uidStr];
@@ -139,16 +152,17 @@ export async function loadAgentsQueueAsync(uidStr: string): Promise<AgentResumeE
         if (typeof data === "string") {
           const items = normalizeAgentEntries(JSON.parse(data));
           const { entries: migrated, changed } = migrateAgentEntriesIfNeeded(uidStr, items);
+          memoryAgentsQueue[uidStr] = migrated;
+          cloudAgentsLoaded[uidStr] = true;
           if (changed) {
             saveAgentsQueue(uidStr, migrated);
-          } else if (typeof window !== "undefined") {
-            const serialized = JSON.stringify(migrated);
-            localStorage.setItem(AGENTS_QUEUE_KEY(uidStr), serialized);
-            localStorage.setItem(AGENTS_QUEUE_GLOBAL_KEY, serialized);
+          } else {
+            writeLocalAgentsCache(uidStr, JSON.stringify(migrated));
           }
           return migrated;
         }
       }
+      cloudAgentsLoaded[uidStr] = true;
     } catch (e) {
       console.warn("RTDB agents queue read failed, using local copy:", e);
     }
@@ -179,38 +193,41 @@ export function subscribeAgentsQueue(
       const unsubscribe = onValue(
         qRef,
         (snap) => {
-          if (snap.exists()) {
-            const val = snap.val();
-            const data = val?.data;
-            if (typeof data === "string") {
-              const remoteItems = normalizeAgentEntries(JSON.parse(data));
-              const { entries: migrated, changed } = migrateAgentEntriesIfNeeded(
-                uidStr,
-                remoteItems
-              );
-              memoryAgentsQueue[uidStr] = migrated;
-              cloudAgentsLoaded[uidStr] = true;
-              if (changed) {
-                saveAgentsQueue(uidStr, migrated);
-              } else if (typeof window !== "undefined") {
-                const serialized = JSON.stringify(migrated);
-                localStorage.setItem(AGENTS_QUEUE_KEY(uidStr), serialized);
-                localStorage.setItem(AGENTS_QUEUE_GLOBAL_KEY, serialized);
+          try {
+            if (snap.exists()) {
+              const val = snap.val();
+              const data = val?.data;
+              if (typeof data === "string") {
+                const remoteItems = normalizeAgentEntries(JSON.parse(data));
+                const { entries: migrated, changed } = migrateAgentEntriesIfNeeded(
+                  uidStr,
+                  remoteItems
+                );
+                memoryAgentsQueue[uidStr] = migrated;
+                cloudAgentsLoaded[uidStr] = true;
+                callback(migrated);
+                if (changed) {
+                  saveAgentsQueue(uidStr, migrated);
+                } else {
+                  writeLocalAgentsCache(uidStr, JSON.stringify(migrated));
+                }
+                return;
               }
-              callback(migrated);
-              return;
             }
-          }
-          if (!snap.exists()) {
-            const currentLocal = getCachedAgentsQueue(uidStr);
-            if (currentLocal.length > 0) {
-              // Automatically sync existing local items up to the cloud database!
-              saveAgentsQueue(uidStr, currentLocal);
-              callback(currentLocal);
-            } else {
-              memoryAgentsQueue[uidStr] = [];
-              callback([]);
+            cloudAgentsLoaded[uidStr] = true;
+            if (!snap.exists()) {
+              const currentLocal = getCachedAgentsQueue(uidStr);
+              if (currentLocal.length > 0) {
+                // Automatically sync existing local items up to the cloud database!
+                saveAgentsQueue(uidStr, currentLocal);
+                callback(currentLocal);
+              } else {
+                memoryAgentsQueue[uidStr] = [];
+                callback([]);
+              }
             }
+          } catch (err) {
+            console.warn("Error processing RTDB agents queue snapshot:", err);
           }
         },
         (error) => {
@@ -232,13 +249,8 @@ export function saveAgentsQueue(uidStr: string, items: AgentResumeEntry[]): void
   const serialized = JSON.stringify(items);
   const now = new Date().toISOString();
 
-  // Fast local storage cache
-  try {
-    localStorage.setItem(AGENTS_QUEUE_KEY(uidStr), serialized);
-    localStorage.setItem(AGENTS_QUEUE_GLOBAL_KEY, serialized);
-  } catch (e) {
-    console.warn("Local storage cache warning:", e);
-  }
+  // Best-effort local storage cache (never blocks RTDB sync on quota exceeded)
+  writeLocalAgentsCache(uidStr, serialized);
 
   // If online and Firebase is configured, write directly to the database
   if (isOnline() && isFirebaseConfigured) {
