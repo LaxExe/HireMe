@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState, useMemo } from "react";
+import React, { useEffect, useState, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import {
   Eye,
@@ -22,6 +22,7 @@ import {
   AlertTriangle,
   Code,
   Copy,
+  Upload,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import {
@@ -70,8 +71,11 @@ import {
 } from "@/lib/resume/agentsQueue";
 import {
   subscribePreloadedTemplates,
+  addPreloadedTemplate,
+  deletePreloadedTemplate,
   getPreloadedTemplatePdfBlobUrl,
   downloadPreloadedTemplatePdf,
+  formatFileSize,
   type PreloadedResumeTemplate,
 } from "@/lib/resume/preloadedTemplates";
 import {
@@ -129,6 +133,9 @@ export default function PreviewPage() {
   const [agentsEntries, setAgentsEntries] = useState<AgentResumeEntry[]>([]);
   const [preloadedTemplates, setPreloadedTemplates] = useState<PreloadedResumeTemplate[]>([]);
   const [selectedPreloadedBySlot, setSelectedPreloadedBySlot] = useState<Record<string, string>>({});
+  const [uploadingQuickPdf, setUploadingQuickPdf] = useState(false);
+  const [quickPdfError, setQuickPdfError] = useState<string | null>(null);
+  const quickUsePdfInputRef = useRef<HTMLInputElement>(null);
   const [recoverableJobs, setRecoverableJobs] = useState<RecoverablePreviewJob[]>([]);
   const [restoringCloudJobs, setRestoringCloudJobs] = useState(false);
   const [recoveryDismissed, setRecoveryDismissed] = useState(false);
@@ -886,13 +893,114 @@ export default function PreviewPage() {
     setCustomSkillInput("");
   };
 
+  const quickUsePdfs = useMemo(
+    () => preloadedTemplates.filter((t) => t.fileType === "pdf" && Boolean(t.pdfDataUrl)),
+    [preloadedTemplates]
+  );
+
   const getSelectedPreloadedForSlot = (slotId: string): PreloadedResumeTemplate | null => {
     const tplId = selectedPreloadedBySlot[slotId];
     if (!tplId) return null;
-    return preloadedTemplates.find((t) => t.id === tplId) ?? null;
+    return quickUsePdfs.find((t) => t.id === tplId) ?? null;
   };
 
   const activePreloadedTemplate = activeItem ? getSelectedPreloadedForSlot(activeItem.id) : null;
+
+  const handleSelectQuickUsePdf = async (slotId: string, tpl: PreloadedResumeTemplate | null) => {
+    setSelectedPreloadedBySlot((prev) => ({
+      ...prev,
+      [slotId]: tpl ? tpl.id : "",
+    }));
+    if (tpl) {
+      setShowLatexModal(false);
+      const blobUrl = await getPreloadedTemplatePdfBlobUrl(tpl);
+      if (blobUrl) {
+        setVisualizedUrlBySlot((prev) => {
+          if (prev[slotId]) {
+            URL.revokeObjectURL(prev[slotId]);
+          }
+          return { ...prev, [slotId]: blobUrl };
+        });
+      }
+    } else {
+      setVisualizedUrlBySlot((prev) => {
+        if (prev[slotId]) {
+          URL.revokeObjectURL(prev[slotId]);
+          const next = { ...prev };
+          delete next[slotId];
+          return next;
+        }
+        return prev;
+      });
+    }
+  };
+
+  const handleUploadQuickUsePdf = async (file: File | null) => {
+    setQuickPdfError(null);
+    if (!user || !file) return;
+    if (!file.name.toLowerCase().endsWith(".pdf")) {
+      setQuickPdfError("Only .pdf files are supported for Quick Use.");
+      return;
+    }
+    if (file.size > 4 * 1024 * 1024) {
+      setQuickPdfError("PDF exceeds the 4 MB limit.");
+      return;
+    }
+    setUploadingQuickPdf(true);
+    try {
+      const pdfDataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ""));
+        reader.onerror = () => reject(new Error("Could not read PDF file."));
+        reader.readAsDataURL(file);
+      });
+      const label = file.name.replace(/\.pdf$/i, "").replace(/[_-]+/g, " ").trim() || "Resume PDF";
+      const added = addPreloadedTemplate(
+        user.uid,
+        {
+          name: label,
+          fileName: file.name,
+          fileType: "pdf",
+          pdfDataUrl,
+          fileSizeBytes: file.size,
+        },
+        preloadedTemplates
+      );
+      setPreloadedTemplates((prev) => [added, ...prev.filter((t) => t.id !== added.id)]);
+      if (activeItem) {
+        await handleSelectQuickUsePdf(activeItem.id, added);
+      }
+    } catch (err) {
+      setQuickPdfError(err instanceof Error ? err.message : "Failed to upload PDF.");
+    } finally {
+      setUploadingQuickPdf(false);
+      if (quickUsePdfInputRef.current) {
+        quickUsePdfInputRef.current.value = "";
+      }
+    }
+  };
+
+  const handleDeleteQuickUsePdf = (tplId: string) => {
+    if (!user) return;
+    const next = deletePreloadedTemplate(user.uid, tplId, preloadedTemplates);
+    setPreloadedTemplates(next);
+    setSelectedPreloadedBySlot((prev) => {
+      const updated = { ...prev };
+      for (const [slotId, selectedTplId] of Object.entries(updated)) {
+        if (selectedTplId === tplId) {
+          updated[slotId] = "";
+          setVisualizedUrlBySlot((vPrev) => {
+            if (!vPrev[slotId]) return vPrev;
+            URL.revokeObjectURL(vPrev[slotId]);
+            const vNext = { ...vPrev };
+            delete vNext[slotId];
+            return vNext;
+          });
+        }
+      }
+      return updated;
+    });
+  };
 
   const handlePushToAgents = (
     item: PreviewQueueItem,
@@ -1460,43 +1568,51 @@ export default function PreviewPage() {
                 </div>
 
                 <div className="flex items-center gap-2 flex-wrap">
-                  <button
-                    type="button"
-                    disabled={regeneratingId === activeItem.id}
-                    onClick={handleRegenerateOptions}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-neutral-700 bg-[#fafafa] hover:bg-neutral-100 border border-[#ebebeb] rounded-full active:scale-95 transition-all cursor-pointer disabled:opacity-50"
-                    title="Regenerate alternative bullet phrasings and malleable options"
-                  >
-                    <RotateCw
-                      className={`w-3.5 h-3.5 ${
-                        regeneratingId === activeItem.id
-                          ? "animate-spin text-neutral-900"
-                          : "text-neutral-500"
-                      }`}
-                    />
-                    <span>
-                      {regeneratingId === activeItem.id
-                        ? "Regenerating..."
-                        : "Regenerate Options"}
-                    </span>
-                  </button>
+                  {!activePreloadedTemplate && (
+                    <>
+                      <button
+                        type="button"
+                        disabled={regeneratingId === activeItem.id}
+                        onClick={handleRegenerateOptions}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-neutral-700 bg-[#fafafa] hover:bg-neutral-100 border border-[#ebebeb] rounded-full active:scale-95 transition-all cursor-pointer disabled:opacity-50"
+                        title="Regenerate alternative bullet phrasings and malleable options"
+                      >
+                        <RotateCw
+                          className={`w-3.5 h-3.5 ${
+                            regeneratingId === activeItem.id
+                              ? "animate-spin text-neutral-900"
+                              : "text-neutral-500"
+                          }`}
+                        />
+                        <span>
+                          {regeneratingId === activeItem.id
+                            ? "Regenerating..."
+                            : "Regenerate Options"}
+                        </span>
+                      </button>
 
-                  <button
-                    type="button"
-                    disabled={visualizingId === activeItem.id}
-                    onClick={() => handleVisualizeSlot(activeItem)}
-                    className="inline-flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium text-white bg-neutral-900 hover:bg-neutral-800 rounded-full disabled:opacity-40 shadow-subtle active:scale-95 transition-all cursor-pointer"
-                  >
-                    <Eye className="w-3.5 h-3.5" />
-                    <span>
-                      {visualizingId === activeItem.id ? "Rendering PDF..." : "Visualize PDF"}
-                    </span>
-                  </button>
+                      <button
+                        type="button"
+                        disabled={visualizingId === activeItem.id}
+                        onClick={() => handleVisualizeSlot(activeItem)}
+                        className="inline-flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium text-white bg-neutral-900 hover:bg-neutral-800 rounded-full disabled:opacity-40 shadow-subtle active:scale-95 transition-all cursor-pointer"
+                      >
+                        <Eye className="w-3.5 h-3.5" />
+                        <span>
+                          {visualizingId === activeItem.id ? "Rendering PDF..." : "Visualize PDF"}
+                        </span>
+                      </button>
+                    </>
+                  )}
 
                   <button
                     type="button"
                     onClick={() => handlePushToAgents(activeItem)}
-                    className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-medium text-neutral-900 bg-white hover:bg-neutral-100 border border-neutral-900 rounded-full shadow-2xs active:scale-95 transition-all cursor-pointer"
+                    className={`inline-flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium rounded-full active:scale-95 transition-all cursor-pointer ${
+                      activePreloadedTemplate
+                        ? "text-white bg-neutral-900 hover:bg-neutral-800 shadow-subtle"
+                        : "text-neutral-900 bg-white hover:bg-neutral-100 border border-neutral-900 shadow-2xs"
+                    }`}
                   >
                     <Send className="w-3.5 h-3.5" />
                     <span>
@@ -1511,125 +1627,222 @@ export default function PreviewPage() {
                     disabled={downloadingId === activeItem.id}
                     onClick={() => handleOptionalDownload(activeItem)}
                     className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-neutral-700 bg-white hover:bg-neutral-50 border border-[#ebebeb] rounded-full shadow-2xs active:scale-95 transition-all cursor-pointer disabled:opacity-40"
-                    title="Download tailored PDF"
+                    title={activePreloadedTemplate ? "Download selected PDF" : "Download tailored PDF"}
                   >
                     <Download className="w-3.5 h-3.5" />
                     <span>Download</span>
                   </button>
 
+                  {!activePreloadedTemplate && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => handleGetLatex(activeItem)}
+                        className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-full border shadow-2xs active:scale-95 transition-all cursor-pointer ${
+                          showLatexModal
+                            ? "bg-neutral-900 text-white border-neutral-900"
+                            : "text-neutral-700 bg-white hover:bg-neutral-50 border-[#ebebeb]"
+                        }`}
+                        title="View and copy tailored LaTeX (.tex) source"
+                      >
+                        <Code className="w-3.5 h-3.5" />
+                        <span>{showLatexModal ? "Hide LaTeX" : "Get LaTeX"}</span>
+                      </button>
+
+                      {activeItem.larpRun.ledger && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const json = exportLedgerToJson(
+                              activeItem.larpRun.ledger,
+                              activeItem.larpRun.runMetadata
+                            );
+                            const blob = new Blob([json], { type: "application/json" });
+                            const url = URL.createObjectURL(blob);
+                            const a = document.createElement("a");
+                            a.href = url;
+                            a.download = `alignment_ledger_${
+                              activeItem.larpRun.runMetadata?.jdId || activeItem.id
+                            }.json`;
+                            document.body.appendChild(a);
+                            a.click();
+                            document.body.removeChild(a);
+                            setTimeout(() => URL.revokeObjectURL(url), 1500);
+                          }}
+                          className="inline-flex items-center gap-1 px-3 py-1.5 font-mono text-[11px] text-neutral-700 bg-white hover:bg-neutral-50 border border-[#ebebeb] rounded-full shadow-2xs active:scale-95 transition-all cursor-pointer"
+                        >
+                          <Download className="w-3 h-3" />
+                          <span>Alignment JSON</span>
+                        </button>
+                      )}
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {/* Quick Use PDFs Section (Preview-Only, Non-Editable PDFs) */}
+              <div className="pt-3 border-t border-[#ebebeb] space-y-2.5">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-mono text-[10px] uppercase tracking-wider text-neutral-500 font-semibold flex items-center gap-1.5">
+                      <FileText className="w-3 h-3 text-neutral-400" />
+                      <span>Quick Use PDF ({quickUsePdfs.length})</span>
+                    </span>
+                    {activePreloadedTemplate && (
+                      <span className="font-mono text-[10px] px-2 py-0.5 rounded-full bg-neutral-100 text-neutral-700 border border-[#ebebeb]">
+                        {activePreloadedTemplate.fileName} ·{" "}
+                        {formatFileSize(activePreloadedTemplate.fileSizeBytes)}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <input
+                      ref={quickUsePdfInputRef}
+                      type="file"
+                      accept=".pdf,application/pdf"
+                      onChange={(e) => void handleUploadQuickUsePdf(e.target.files?.[0] || null)}
+                      className="hidden"
+                    />
+                    <button
+                      type="button"
+                      disabled={uploadingQuickPdf}
+                      onClick={() => quickUsePdfInputRef.current?.click()}
+                      className="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-medium text-neutral-800 bg-[#fafafa] hover:bg-neutral-100 border border-[#ebebeb] rounded-full shadow-2xs active:scale-95 transition-all cursor-pointer disabled:opacity-50"
+                    >
+                      <Upload className="w-3 h-3 text-neutral-600" />
+                      <span>{uploadingQuickPdf ? "Uploading..." : "Add PDF"}</span>
+                    </button>
+                  </div>
+                </div>
+
+                {quickPdfError && (
+                  <p className="text-xs text-red-600 font-medium">{quickPdfError}</p>
+                )}
+
+                <div className="flex items-center gap-1.5 flex-wrap">
                   <button
                     type="button"
-                    onClick={() => handleGetLatex(activeItem)}
-                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-full border shadow-2xs active:scale-95 transition-all cursor-pointer ${
-                      showLatexModal
-                        ? "bg-neutral-900 text-white border-neutral-900"
-                        : "text-neutral-700 bg-white hover:bg-neutral-50 border-[#ebebeb]"
+                    onClick={() => void handleSelectQuickUsePdf(activeItem.id, null)}
+                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all active:scale-95 cursor-pointer border ${
+                      !activePreloadedTemplate
+                        ? "bg-neutral-900 text-white border-neutral-900 shadow-2xs"
+                        : "bg-[#fafafa] text-neutral-600 border-[#ebebeb] hover:bg-neutral-100 hover:text-neutral-900"
                     }`}
-                    title="View and copy tailored LaTeX (.tex) source"
                   >
-                    <Code className="w-3.5 h-3.5" />
-                    <span>{showLatexModal ? "Hide LaTeX" : "Get LaTeX"}</span>
+                    <Sparkles className="w-3 h-3" />
+                    <span>Tailored Resume</span>
                   </button>
 
-                  {activeItem.larpRun.ledger && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const json = exportLedgerToJson(
-                          activeItem.larpRun.ledger,
-                          activeItem.larpRun.runMetadata
-                        );
-                        const blob = new Blob([json], { type: "application/json" });
-                        const url = URL.createObjectURL(blob);
-                        const a = document.createElement("a");
-                        a.href = url;
-                        a.download = `alignment_ledger_${
-                          activeItem.larpRun.runMetadata?.jdId || activeItem.id
-                        }.json`;
-                        document.body.appendChild(a);
-                        a.click();
-                        document.body.removeChild(a);
-                        setTimeout(() => URL.revokeObjectURL(url), 1500);
-                      }}
-                      className="inline-flex items-center gap-1 px-3 py-1.5 font-mono text-[11px] text-neutral-700 bg-white hover:bg-neutral-50 border border-[#ebebeb] rounded-full shadow-2xs active:scale-95 transition-all cursor-pointer"
-                    >
-                      <Download className="w-3 h-3" />
-                      <span>Alignment JSON</span>
-                    </button>
-                  )}
+                  {quickUsePdfs.map((tpl) => {
+                    const isSelected = activePreloadedTemplate?.id === tpl.id;
+                    return (
+                      <div
+                        key={tpl.id}
+                        className={`inline-flex items-center rounded-full border transition-all ${
+                          isSelected
+                            ? "bg-neutral-900 text-white border-neutral-900 shadow-2xs"
+                            : "bg-white text-neutral-700 border-[#ebebeb] hover:border-neutral-300"
+                        }`}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => void handleSelectQuickUsePdf(activeItem.id, tpl)}
+                          className="inline-flex items-center gap-1.5 pl-3 pr-2 py-1.5 text-xs font-medium active:scale-95 transition-all cursor-pointer"
+                        >
+                          <FileText
+                            className={`w-3 h-3 shrink-0 ${
+                              isSelected ? "text-neutral-200" : "text-neutral-500"
+                            }`}
+                          />
+                          <span className="truncate max-w-[180px]">{tpl.name}</span>
+                          <span
+                            className={`font-mono text-[10px] ${
+                              isSelected ? "text-neutral-300" : "text-neutral-400"
+                            }`}
+                          >
+                            PDF
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteQuickUsePdf(tpl.id)}
+                          aria-label={`Remove ${tpl.name}`}
+                          className={`p-1 mr-1 rounded-full transition-colors cursor-pointer ${
+                            isSelected
+                              ? "text-neutral-300 hover:text-white hover:bg-white/15"
+                              : "text-neutral-400 hover:text-red-600 hover:bg-red-50"
+                          }`}
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
 
-              {/* Preloaded Template Quick-Send Bar */}
-              <div className="pt-3 border-t border-[#ebebeb] flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 flex-wrap">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="font-mono text-[10px] uppercase tracking-wider text-neutral-500 font-semibold flex items-center gap-1.5">
-                    <FileText className="w-3 h-3 text-neutral-400" />
-                    <span>Preloaded Template</span>
-                  </span>
-                  <select
-                    value={selectedPreloadedBySlot[activeItem.id] || ""}
-                    onChange={(e) => {
-                      const nextVal = e.target.value;
-                      setSelectedPreloadedBySlot((prev) => ({
-                        ...prev,
-                        [activeItem.id]: nextVal,
-                      }));
-                      // Clear cached visualizer blob when switching between tailored and preloaded
-                      setVisualizedUrlBySlot((prev) => {
-                        if (prev[activeItem.id]) {
-                          URL.revokeObjectURL(prev[activeItem.id]);
-                          const next = { ...prev };
-                          delete next[activeItem.id];
-                          return next;
-                        }
-                        return prev;
-                      });
-                    }}
-                    className="px-3 py-1.5 text-xs font-medium text-neutral-900 bg-[#fafafa] border border-[#ebebeb] rounded-lg focus:outline-none focus:border-neutral-900 transition-colors cursor-pointer max-w-xs"
-                  >
-                    <option value="">Tailored Resume (Use Edits Below)</option>
-                    {preloadedTemplates.map((tpl) => (
-                      <option key={tpl.id} value={tpl.id}>
-                        {tpl.name} ({tpl.fileType.toUpperCase()})
-                      </option>
-                    ))}
-                  </select>
+              {/* Quick Use PDF Clean View: Only Job Requirements & Job Description (No Scoring / No Customization) */}
+              {activePreloadedTemplate ? (
+                <div className="space-y-3 pt-2 border-t border-[#ebebeb] animate-fadeIn">
+                  {minimumQualifications && minimumQualifications.items.length > 0 && (
+                    <div className="rounded-xl border border-[#ebebeb] bg-[#fafafa] p-4 space-y-2.5">
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <div className="flex items-center gap-1.5">
+                          <CheckCircle2 className="w-3.5 h-3.5 text-neutral-900" />
+                          <span className="font-mono text-[11px] uppercase tracking-wider text-neutral-900 font-semibold">
+                            {minimumQualifications.heading}
+                          </span>
+                        </div>
+                        <span className="font-mono text-[10px] text-neutral-500 bg-white border border-[#ebebeb] px-2 py-0.5 rounded">
+                          {minimumQualifications.items.length}{" "}
+                          {minimumQualifications.items.length === 1 ? "requirement" : "requirements"}
+                        </span>
+                      </div>
 
-                  {activePreloadedTemplate && (
-                    <span className="font-mono text-[10px] px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200">
-                      Bypassing edits · {activePreloadedTemplate.fileName}
-                    </span>
+                      <ul className="space-y-1.5 pt-0.5">
+                        {minimumQualifications.items.map((qual, idx) => (
+                          <li
+                            key={idx}
+                            className="flex items-start gap-2 text-xs text-neutral-700 leading-relaxed"
+                          >
+                            <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-neutral-900 flex-shrink-0" />
+                            <span className="flex-1">{qual}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
                   )}
-                </div>
 
-                <div className="flex items-center gap-2 flex-wrap">
-                  {activePreloadedTemplate ? (
-                    <button
-                      type="button"
-                      onClick={() => handlePushToAgents(activeItem, activePreloadedTemplate)}
-                      className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-medium text-white bg-neutral-900 hover:bg-neutral-800 rounded-full shadow-subtle active:scale-95 transition-all cursor-pointer"
-                    >
-                      <Send className="w-3 h-3" />
-                      <span>Push Template to Agents</span>
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => router.push("/experience")}
-                      className="inline-flex items-center gap-1 font-mono text-[11px] text-neutral-500 hover:text-neutral-900 bg-[#fafafa] hover:bg-neutral-100 border border-[#ebebeb] px-2.5 py-1 rounded-full active:scale-95 transition-all cursor-pointer"
-                    >
-                      <Plus className="w-3 h-3" />
-                      <span>
-                        {preloadedTemplates.length === 0
-                          ? "Add Preloaded Templates in Experience"
-                          : "Manage Templates"}
+                  <div className="rounded-xl border border-[#ebebeb] bg-[#fafafa] p-4 space-y-2">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <span className="font-mono text-[10px] uppercase tracking-wider text-neutral-500 font-semibold">
+                        Job Description
                       </span>
-                    </button>
-                  )}
+                      <button
+                        type="button"
+                        onClick={() => setShowJdDrawer((prev) => !prev)}
+                        className="inline-flex items-center gap-1 font-mono text-[11px] text-neutral-600 hover:text-neutral-900 bg-white border border-[#ebebeb] px-2.5 py-0.5 rounded-md cursor-pointer transition-colors"
+                      >
+                        <span>
+                          {showJdDrawer || !minimumQualifications?.items.length ? "Hide" : "Show"}
+                        </span>
+                        {showJdDrawer || !minimumQualifications?.items.length ? (
+                          <ChevronUp className="w-3 h-3 text-neutral-400" />
+                        ) : (
+                          <ChevronDown className="w-3 h-3 text-neutral-400" />
+                        )}
+                      </button>
+                    </div>
+                    {(showJdDrawer || !minimumQualifications?.items.length) && (
+                      <div className="max-h-72 overflow-y-auto rounded-lg border border-[#ebebeb] bg-white p-3 font-mono text-[11px] text-neutral-700 leading-relaxed whitespace-pre-wrap selection:bg-neutral-200">
+                        {activeItem.jobDescription || "No job description text provided."}
+                      </div>
+                    )}
+                  </div>
                 </div>
-              </div>
-
+              ) : (
+                <>
               {showLatexModal &&
                 (() => {
                   const tailoredResume = buildTailoredResumeForSlot(activeItem);
@@ -2623,6 +2836,8 @@ export default function PreviewPage() {
                     </div>
                   </CalibrationProvider>
                 </div>
+              )}
+                </>
               )}
             </div>
           </div>
