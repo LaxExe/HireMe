@@ -158,7 +158,7 @@ export async function flushOfflineQueue(): Promise<void> {
         if (item.activeResumeId) {
           payload.activeResumeId = item.activeResumeId;
         }
-        await set(ref(rtdb, `masterResumes/${item.uid}`), payload);
+        await update(ref(rtdb, `masterResumes/${item.uid}`), payload);
       }
     } catch (e) {
       console.warn("Could not sync offline item to Firebase, will retry when network restores:", e);

@@ -22,6 +22,11 @@ export interface AgentResumeEntry {
   archivedAt?: string;
   createdAt: string;
   jobDescription?: string;
+  preloadedTemplateId?: string;
+  preloadedTemplateName?: string;
+  preloadedFileType?: "pdf" | "tex";
+  preloadedPdfDataUrl?: string;
+  preloadedTexSource?: string;
 }
 
 const AGENTS_QUEUE_KEY = (uidStr: string) => `hireme_agents_queue_${uidStr}`;
@@ -83,6 +88,12 @@ function normalizeAgentEntries(parsed: unknown): AgentResumeEntry[] {
       archived: sentToCompany ? Boolean(item.archived) : false,
       archivedAt: sentToCompany && item.archived ? item.archivedAt : undefined,
       createdAt: item.createdAt || new Date().toISOString(),
+      jobDescription: item.jobDescription,
+      preloadedTemplateId: item.preloadedTemplateId,
+      preloadedTemplateName: item.preloadedTemplateName,
+      preloadedFileType: item.preloadedFileType,
+      preloadedPdfDataUrl: item.preloadedPdfDataUrl,
+      preloadedTexSource: item.preloadedTexSource,
     };
   });
 }
@@ -96,7 +107,7 @@ function migrateAgentEntriesIfNeeded(
   }
   let changed = false;
   const migrated = entries.map((entry) => {
-    if (!entry?.tailoredResume) return entry;
+    if (entry.preloadedTemplateId || !entry?.tailoredResume) return entry;
     const res = applyLakshmanHeaderToResume(entry.tailoredResume);
     const nextFileName = migrateAgentEntryFileName(entry.fileName);
     const fileNameChanged = nextFileName !== entry.fileName;
@@ -344,6 +355,11 @@ export function pushResumeToAgents(
     tailoredResume: MasterResume;
     fileName?: string;
     jobDescription?: string;
+    preloadedTemplateId?: string;
+    preloadedTemplateName?: string;
+    preloadedFileType?: "pdf" | "tex";
+    preloadedPdfDataUrl?: string;
+    preloadedTexSource?: string;
   },
   currentEntries?: AgentResumeEntry[]
 ): AgentResumeEntry {
@@ -366,6 +382,11 @@ export function pushResumeToAgents(
     archived: false,
     createdAt: new Date().toISOString(),
     jobDescription: params.jobDescription,
+    preloadedTemplateId: params.preloadedTemplateId,
+    preloadedTemplateName: params.preloadedTemplateName,
+    preloadedFileType: params.preloadedFileType,
+    preloadedPdfDataUrl: params.preloadedPdfDataUrl,
+    preloadedTexSource: params.preloadedTexSource,
   };
 
   const updated = [newEntry, ...existing.filter((e) => e.id !== newEntry.id)];

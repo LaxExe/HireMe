@@ -23,6 +23,7 @@ import {
   type AgentResumeEntry,
 } from "@/lib/resume/agentsQueue";
 import { downloadResumePdf } from "@/lib/resume/exportPdf";
+import { downloadPreloadedTemplatePdf } from "@/lib/resume/preloadedTemplates";
 
 function safeExternalUrl(raw: string): string {
   const trimmed = raw.trim();
@@ -70,7 +71,20 @@ export default function AgentsPage() {
     setDownloadingId(entry.id);
     try {
       const baseName = entry.fileName.replace(/\.pdf$/i, "");
-      await downloadResumePdf(entry.tailoredResume, baseName);
+      if (entry.preloadedPdfDataUrl || entry.preloadedTexSource) {
+        await downloadPreloadedTemplatePdf(
+          {
+            fileType: entry.preloadedFileType || (entry.preloadedPdfDataUrl ? "pdf" : "tex"),
+            pdfDataUrl: entry.preloadedPdfDataUrl,
+            texSource: entry.preloadedTexSource,
+            parsedResume: entry.tailoredResume,
+            fileName: entry.fileName,
+          },
+          baseName
+        );
+      } else {
+        await downloadResumePdf(entry.tailoredResume, baseName);
+      }
     } finally {
       setDownloadingId(null);
     }
@@ -172,6 +186,12 @@ export default function AgentsPage() {
                           <h2 className="text-sm font-semibold text-neutral-900">
                             {entry.roleName}
                           </h2>
+                          {entry.preloadedTemplateName && (
+                            <span className="inline-flex items-center gap-1 font-mono text-[10px] px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200">
+                              <FileText className="w-2.5 h-2.5 text-blue-600" />
+                              <span>{entry.preloadedTemplateName}</span>
+                            </span>
+                          )}
                           <span
                             className={`inline-flex items-center gap-1.5 font-mono text-[11px] px-2.5 py-0.5 rounded-full border ${
                               entry.sentToCompany

@@ -1,5 +1,5 @@
 import { rtdb, isFirebaseConfigured } from "@/lib/firebase";
-import { ref, get, set, onValue } from "firebase/database";
+import { ref, get, update, onValue } from "firebase/database";
 import { isOnline, enqueueOfflineItem } from "@/lib/offlineSync";
 import { applyLakshmanHeaderToResume, isLakshmanAccount } from "./headerMigration";
 import type { MasterResume } from "./types";
@@ -304,7 +304,7 @@ export async function saveMasterResumes(
 
   if (isOnline() && isFirebaseConfigured && uid) {
     try {
-      await set(ref(rtdb, `masterResumes/${uid}`), {
+      await update(ref(rtdb, `masterResumes/${uid}`), {
         data: singlePayload,
         resumesData: listPayload,
         activeResumeId,

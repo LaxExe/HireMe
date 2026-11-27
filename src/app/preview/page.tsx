@@ -66,6 +66,12 @@ import {
   type AgentResumeEntry,
 } from "@/lib/resume/agentsQueue";
 import {
+  subscribePreloadedTemplates,
+  getPreloadedTemplatePdfBlobUrl,
+  downloadPreloadedTemplatePdf,
+  type PreloadedResumeTemplate,
+} from "@/lib/resume/preloadedTemplates";
+import {
   compileResumePdfBlobUrl,
   downloadResumePdf,
   downloadResumeTex,
@@ -118,6 +124,8 @@ export default function PreviewPage() {
   const [showLatexModal, setShowLatexModal] = useState(false);
   const [copiedLatex, setCopiedLatex] = useState(false);
   const [agentsEntries, setAgentsEntries] = useState<AgentResumeEntry[]>([]);
+  const [preloadedTemplates, setPreloadedTemplates] = useState<PreloadedResumeTemplate[]>([]);
+  const [selectedPreloadedBySlot, setSelectedPreloadedBySlot] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (!loading && !user) {
@@ -136,9 +144,13 @@ export default function PreviewPage() {
     const unsubAgents = subscribeAgentsQueue(user.uid, (entries) => {
       setAgentsEntries(entries);
     });
+    const unsubTemplates = subscribePreloadedTemplates(user.uid, (templates) => {
+      setPreloadedTemplates(templates);
+    });
     return () => {
       unsubscribe();
       unsubAgents();
+      unsubTemplates();
     };
   }, [user]);
 
@@ -850,7 +862,44 @@ export default function PreviewPage() {
     setCustomSkillInput("");
   };
 
-  const handlePushToAgents = (item: PreviewQueueItem) => {
+  const getSelectedPreloadedForSlot = (slotId: string): PreloadedResumeTemplate | null => {
+    const tplId = selectedPreloadedBySlot[slotId];
+    if (!tplId) return null;
+    return preloadedTemplates.find((t) => t.id === tplId) ?? null;
+  };
+
+  const activePreloadedTemplate = activeItem ? getSelectedPreloadedForSlot(activeItem.id) : null;
+
+  const handlePushToAgents = (
+    item: PreviewQueueItem,
+    overrideTemplate?: PreloadedResumeTemplate | null
+  ) => {
+    const chosenTemplate =
+      overrideTemplate !== undefined ? overrideTemplate : getSelectedPreloadedForSlot(item.id);
+
+    if (chosenTemplate) {
+      pushResumeToAgents(
+        user.uid,
+        {
+          sourcePreviewId: item.id,
+          roleName: item.roleName || item.title,
+          roleUrl: item.roleUrl,
+          tailoredResume: chosenTemplate.parsedResume || item.baseResume,
+          fileName: chosenTemplate.fileName.replace(/\.tex$/i, ".pdf"),
+          jobDescription: item.jobDescription,
+          preloadedTemplateId: chosenTemplate.id,
+          preloadedTemplateName: chosenTemplate.name,
+          preloadedFileType: chosenTemplate.fileType,
+          preloadedPdfDataUrl: chosenTemplate.pdfDataUrl,
+          preloadedTexSource: chosenTemplate.texSource,
+        },
+        agentsEntries.length > 0 ? agentsEntries : undefined
+      );
+      handleDeleteSlot(item.id);
+      router.push("/agents");
+      return;
+    }
+
     const tailored = buildTailoredResumeForSlot(item);
     pushResumeToAgents(
       user.uid,
@@ -871,14 +920,22 @@ export default function PreviewPage() {
     if (visualizingId) return;
     setVisualizingId(item.id);
     try {
-      const tailored = buildTailoredResumeForSlot(item);
-      const blobUrl = await compileResumePdfBlobUrl(tailored);
-      setVisualizedUrlBySlot((prev) => {
-        if (prev[item.id]) {
-          URL.revokeObjectURL(prev[item.id]);
-        }
-        return { ...prev, [item.id]: blobUrl };
-      });
+      const chosenTemplate = getSelectedPreloadedForSlot(item.id);
+      let blobUrl: string | null = null;
+      if (chosenTemplate) {
+        blobUrl = await getPreloadedTemplatePdfBlobUrl(chosenTemplate);
+      } else {
+        const tailored = buildTailoredResumeForSlot(item);
+        blobUrl = await compileResumePdfBlobUrl(tailored);
+      }
+      if (blobUrl) {
+        setVisualizedUrlBySlot((prev) => {
+          if (prev[item.id]) {
+            URL.revokeObjectURL(prev[item.id]);
+          }
+          return { ...prev, [item.id]: blobUrl! };
+        });
+      }
     } finally {
       setVisualizingId(null);
     }
@@ -905,8 +962,16 @@ export default function PreviewPage() {
     if (downloadingId) return;
     setDownloadingId(item.id);
     try {
-      const tailored = buildTailoredResumeForSlot(item);
-      await downloadResumePdf(tailored, getDownloadBaseName(item, tailored));
+      const chosenTemplate = getSelectedPreloadedForSlot(item.id);
+      if (chosenTemplate) {
+        await downloadPreloadedTemplatePdf(
+          chosenTemplate,
+          chosenTemplate.fileName.replace(/\.(pdf|tex)$/i, "")
+        );
+      } else {
+        const tailored = buildTailoredResumeForSlot(item);
+        await downloadResumePdf(tailored, getDownloadBaseName(item, tailored));
+      }
     } finally {
       setDownloadingId(null);
     }
@@ -1345,7 +1410,11 @@ export default function PreviewPage() {
                     className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-medium text-neutral-900 bg-white hover:bg-neutral-100 border border-neutral-900 rounded-full shadow-2xs active:scale-95 transition-all cursor-pointer"
                   >
                     <Send className="w-3.5 h-3.5" />
-                    <span>Push to Agents</span>
+                    <span>
+                      {activePreloadedTemplate
+                        ? `Push "${activePreloadedTemplate.name}" to Agents`
+                        : "Push to Agents"}
+                    </span>
                   </button>
 
                   <button
@@ -1397,6 +1466,76 @@ export default function PreviewPage() {
                     >
                       <Download className="w-3 h-3" />
                       <span>Alignment JSON</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Preloaded Template Quick-Send Bar */}
+              <div className="pt-3 border-t border-[#ebebeb] flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 flex-wrap">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="font-mono text-[10px] uppercase tracking-wider text-neutral-500 font-semibold flex items-center gap-1.5">
+                    <FileText className="w-3 h-3 text-neutral-400" />
+                    <span>Preloaded Template</span>
+                  </span>
+                  <select
+                    value={selectedPreloadedBySlot[activeItem.id] || ""}
+                    onChange={(e) => {
+                      const nextVal = e.target.value;
+                      setSelectedPreloadedBySlot((prev) => ({
+                        ...prev,
+                        [activeItem.id]: nextVal,
+                      }));
+                      // Clear cached visualizer blob when switching between tailored and preloaded
+                      setVisualizedUrlBySlot((prev) => {
+                        if (prev[activeItem.id]) {
+                          URL.revokeObjectURL(prev[activeItem.id]);
+                          const next = { ...prev };
+                          delete next[activeItem.id];
+                          return next;
+                        }
+                        return prev;
+                      });
+                    }}
+                    className="px-3 py-1.5 text-xs font-medium text-neutral-900 bg-[#fafafa] border border-[#ebebeb] rounded-lg focus:outline-none focus:border-neutral-900 transition-colors cursor-pointer max-w-xs"
+                  >
+                    <option value="">Tailored Resume (Use Edits Below)</option>
+                    {preloadedTemplates.map((tpl) => (
+                      <option key={tpl.id} value={tpl.id}>
+                        {tpl.name} ({tpl.fileType.toUpperCase()})
+                      </option>
+                    ))}
+                  </select>
+
+                  {activePreloadedTemplate && (
+                    <span className="font-mono text-[10px] px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200">
+                      Bypassing edits · {activePreloadedTemplate.fileName}
+                    </span>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2 flex-wrap">
+                  {activePreloadedTemplate ? (
+                    <button
+                      type="button"
+                      onClick={() => handlePushToAgents(activeItem, activePreloadedTemplate)}
+                      className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-medium text-white bg-neutral-900 hover:bg-neutral-800 rounded-full shadow-subtle active:scale-95 transition-all cursor-pointer"
+                    >
+                      <Send className="w-3 h-3" />
+                      <span>Push Template to Agents</span>
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => router.push("/experience")}
+                      className="inline-flex items-center gap-1 font-mono text-[11px] text-neutral-500 hover:text-neutral-900 bg-[#fafafa] hover:bg-neutral-100 border border-[#ebebeb] px-2.5 py-1 rounded-full active:scale-95 transition-all cursor-pointer"
+                    >
+                      <Plus className="w-3 h-3" />
+                      <span>
+                        {preloadedTemplates.length === 0
+                          ? "Add Preloaded Templates in Experience"
+                          : "Manage Templates"}
+                      </span>
                     </button>
                   )}
                 </div>
