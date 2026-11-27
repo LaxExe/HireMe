@@ -31,7 +31,10 @@ import {
   savePreviewQueue,
   updatePreviewQueueItem,
   deletePreviewQueueItem,
+  findRecoverablePreviewJobsFromCloud,
+  restoreRecoverablePreviewJobs,
   type PreviewQueueItem,
+  type RecoverablePreviewJob,
 } from "@/lib/resume/previewQueue";
 import {
   loadMasterResume,
@@ -126,6 +129,9 @@ export default function PreviewPage() {
   const [agentsEntries, setAgentsEntries] = useState<AgentResumeEntry[]>([]);
   const [preloadedTemplates, setPreloadedTemplates] = useState<PreloadedResumeTemplate[]>([]);
   const [selectedPreloadedBySlot, setSelectedPreloadedBySlot] = useState<Record<string, string>>({});
+  const [recoverableJobs, setRecoverableJobs] = useState<RecoverablePreviewJob[]>([]);
+  const [restoringCloudJobs, setRestoringCloudJobs] = useState(false);
+  const [recoveryDismissed, setRecoveryDismissed] = useState(false);
 
   useEffect(() => {
     if (!loading && !user) {
@@ -153,6 +159,24 @@ export default function PreviewPage() {
       unsubTemplates();
     };
   }, [user]);
+
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+    void findRecoverablePreviewJobsFromCloud(
+      user.uid,
+      user.email,
+      queue,
+      agentsEntries
+    ).then((found) => {
+      if (!cancelled) {
+        setRecoverableJobs(found);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [user, queue, agentsEntries]);
 
   const activeItem = queue.find((item) => item.id === selectedId) ?? queue[0] ?? null;
 
@@ -1000,6 +1024,33 @@ export default function PreviewPage() {
     downloadResumeTex(tailored, getDownloadBaseName(item, tailored));
   };
 
+  const handleRestoreCloudJobs = async () => {
+    if (!user || recoverableJobs.length === 0 || restoringCloudJobs) return;
+    setRestoringCloudJobs(true);
+    try {
+      const masterCollection = await loadMasterResumes(user.uid);
+      const baseResume =
+        getMasterResumeById(masterCollection, masterCollection.activeResumeId) ||
+        masterCollection.resumes[0] ||
+        queue[0]?.baseResume;
+      if (!baseResume) {
+        alert("Please save a Master Resume in Experience first before restoring jobs.");
+        return;
+      }
+      const restoredCount = recoverableJobs.length;
+      const merged = restoreRecoverablePreviewJobs(user.uid, recoverableJobs, baseResume, queue);
+      setQueue(merged);
+      setRecoverableJobs([]);
+      setPushedAgentBanner({
+        slotId: "cloud-restore-banner",
+        fileName: `${restoredCount} ${restoredCount === 1 ? "job" : "jobs"}`,
+        roleName: "Restored from cloud history into Preview",
+      });
+    } finally {
+      setRestoringCloudJobs(false);
+    }
+  };
+
   return (
     <div className="flex-1 py-8 sm:py-12 space-y-6 pb-24 sm:pb-12 animate-fadeIn">
       {/* Header */}
@@ -1039,6 +1090,44 @@ export default function PreviewPage() {
           </button>
         </div>
       </div>
+
+      {/* Cloud History Recovery Banner */}
+      {!recoveryDismissed && recoverableJobs.length > 0 && (
+        <div className="p-3.5 rounded-xl border border-amber-200 bg-amber-50/70 text-xs text-amber-950 flex items-center justify-between gap-3 flex-wrap animate-fadeIn">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+            <span>
+              Found{" "}
+              <span className="font-mono font-semibold">{recoverableJobs.length}</span>{" "}
+              previously queued {recoverableJobs.length === 1 ? "job" : "jobs"} in your cloud
+              history that {recoverableJobs.length === 1 ? "is" : "are"} missing from Preview.
+            </span>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              disabled={restoringCloudJobs}
+              onClick={handleRestoreCloudJobs}
+              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-medium text-white bg-neutral-900 hover:bg-neutral-800 rounded-full shadow-subtle active:scale-95 transition-all cursor-pointer disabled:opacity-50"
+            >
+              <RotateCw className={`w-3 h-3 ${restoringCloudJobs ? "animate-spin" : ""}`} />
+              <span>
+                {restoringCloudJobs
+                  ? "Restoring..."
+                  : `Restore ${recoverableJobs.length} ${recoverableJobs.length === 1 ? "Job" : "Jobs"}`}
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setRecoveryDismissed(true)}
+              aria-label="Dismiss recovery banner"
+              className="p-1 text-amber-700/70 hover:text-amber-950 rounded-md cursor-pointer"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Double-Confirmation Modal for Refreshing Previews */}
       {refreshModalStep && (

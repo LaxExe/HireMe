@@ -543,3 +543,235 @@ export function deletePreviewQueueItem(
   savePreviewQueue(uidStr, updated);
   return updated;
 }
+
+export interface RecoverablePreviewJob {
+  id: string;
+  jobTitle: string;
+  jobUrl: string;
+  jobDescription: string;
+  timestamp: string;
+}
+
+const LAKSHMAN_OWNER_UIDS = new Set([
+  "PvKPmKmpqSZMTW9w4XVqWK3Y8El1",
+  "CtF9N7qVfcQse3DsZcPvkQ4dwCT2",
+]);
+
+const LAKSHMAN_OWNER_EMAILS = new Set([
+  "lakshman.r.2008@gmail.com",
+  "lakshmananramanathan08@gmail.com",
+  "lakshmananramanthan08@gmail.com",
+  "l2ramanathan@uwaterloo.ca",
+]);
+
+function normalizeRecoveryUrl(u?: string): string {
+  return u ? u.toLowerCase().replace(/^https?:\/\//, "").replace(/\/+$/, "").trim() : "";
+}
+
+function normalizeRecoveryTitle(t?: string): string {
+  return t ? t.toLowerCase().replace(/[^a-z0-9]/g, "").trim() : "";
+}
+
+/**
+ * Scans the append-only `appliedJobs` log in Firebase RTDB to find previously queued
+ * jobs belonging to the current user that are missing from `previewQueues` and not
+ * already in `agentsQueues` or marked `"applied"`.
+ */
+export async function findRecoverablePreviewJobsFromCloud(
+  uidStr: string,
+  userEmail: string | null | undefined,
+  currentPreviewQueue: PreviewQueueItem[],
+  currentAgentsQueue: Array<{ roleName?: string; roleUrl?: string }>
+): Promise<RecoverablePreviewJob[]> {
+  if (!isFirebaseConfigured || !rtdb || !uidStr) return [];
+  try {
+    const snap = await get(ref(rtdb, "appliedJobs"));
+    if (!snap.exists()) return [];
+    const val = snap.val();
+    if (!val || typeof val !== "object") return [];
+
+    const emailLower = (userEmail || "").toLowerCase().trim();
+    const isLakshman =
+      isLakshmanAccount(uidStr) ||
+      LAKSHMAN_OWNER_UIDS.has(uidStr) ||
+      LAKSHMAN_OWNER_EMAILS.has(emailLower);
+
+    const existingUrls = new Set<string>();
+    const existingTitles = new Set<string>();
+
+    for (const p of currentPreviewQueue) {
+      const nu = normalizeRecoveryUrl(p.roleUrl);
+      const nt = normalizeRecoveryTitle(p.roleName || p.title);
+      if (nu) existingUrls.add(nu);
+      if (nt) existingTitles.add(nt);
+    }
+    for (const a of currentAgentsQueue) {
+      const nu = normalizeRecoveryUrl(a.roleUrl);
+      const nt = normalizeRecoveryTitle(a.roleName);
+      if (nu) existingUrls.add(nu);
+      if (nt) existingTitles.add(nt);
+    }
+
+    const appliedUrls = new Set<string>();
+    const appliedTitles = new Set<string>();
+    const ownEntries: Array<{
+      id: string;
+      jobTitle: string;
+      jobUrl: string;
+      jobDescription: string;
+      status: string;
+      timestamp: string;
+    }> = [];
+
+    for (const [key, raw] of Object.entries(val)) {
+      if (!raw || typeof raw !== "object") continue;
+      const item = raw as Record<string, unknown>;
+      const itemUid = typeof item.userId === "string" ? item.userId.trim() : "";
+      const itemEmail =
+        typeof item.userEmail === "string" ? item.userEmail.toLowerCase().trim() : "";
+
+      const belongsToUser =
+        itemUid === uidStr ||
+        (emailLower.length > 0 && itemEmail === emailLower) ||
+        (isLakshman &&
+          (LAKSHMAN_OWNER_UIDS.has(itemUid) ||
+            LAKSHMAN_OWNER_EMAILS.has(itemEmail) ||
+            itemEmail.includes("lakshman") ||
+            itemEmail.includes("ramanathan")));
+
+      if (!belongsToUser) continue;
+
+      const jobTitle =
+        (typeof item.jobTitle === "string" && item.jobTitle.trim()) ||
+        (typeof item.roleName === "string" && item.roleName.trim()) ||
+        "";
+      if (!jobTitle) continue;
+
+      const jobUrl =
+        (typeof item.jobUrl === "string" && item.jobUrl.trim()) ||
+        (typeof item.roleUrl === "string" && item.roleUrl.trim()) ||
+        "";
+      const jobDescription =
+        typeof item.jobDescription === "string" ? item.jobDescription.trim() : "";
+      const status = typeof item.status === "string" ? item.status : "queued";
+      const timestamp =
+        typeof item.timestamp === "string" ? item.timestamp : new Date().toISOString();
+
+      if (status === "applied") {
+        const nu = normalizeRecoveryUrl(jobUrl);
+        const nt = normalizeRecoveryTitle(jobTitle);
+        if (nu) appliedUrls.add(nu);
+        if (nt) appliedTitles.add(nt);
+        continue;
+      }
+
+      ownEntries.push({
+        id: key,
+        jobTitle,
+        jobUrl,
+        jobDescription,
+        status,
+        timestamp,
+      });
+    }
+
+    // Deduplicate queued entries by normalized URL or title, keeping richest JD & latest timestamp
+    const dedupMap = new Map<string, RecoverablePreviewJob>();
+    for (const entry of ownEntries) {
+      const nu = normalizeRecoveryUrl(entry.jobUrl);
+      const nt = normalizeRecoveryTitle(entry.jobTitle);
+      if ((nu && existingUrls.has(nu)) || (nt && existingTitles.has(nt))) continue;
+      if ((nu && appliedUrls.has(nu)) || (nt && appliedTitles.has(nt))) continue;
+
+      const dedupKey = nu || nt;
+      if (!dedupKey) continue;
+
+      const prev = dedupMap.get(dedupKey);
+      if (!prev) {
+        dedupMap.set(dedupKey, {
+          id: entry.id,
+          jobTitle: entry.jobTitle,
+          jobUrl: entry.jobUrl,
+          jobDescription: entry.jobDescription,
+          timestamp: entry.timestamp,
+        });
+      } else {
+        const prevTime = new Date(prev.timestamp).getTime() || 0;
+        const currTime = new Date(entry.timestamp).getTime() || 0;
+        dedupMap.set(dedupKey, {
+          id: currTime >= prevTime ? entry.id : prev.id,
+          jobTitle: entry.jobTitle.length > prev.jobTitle.length ? entry.jobTitle : prev.jobTitle,
+          jobUrl: entry.jobUrl || prev.jobUrl,
+          jobDescription:
+            entry.jobDescription.length > prev.jobDescription.length
+              ? entry.jobDescription
+              : prev.jobDescription,
+          timestamp: currTime >= prevTime ? entry.timestamp : prev.timestamp,
+        });
+      }
+    }
+
+    return Array.from(dedupMap.values()).sort(
+      (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+    );
+  } catch (e) {
+    console.warn("Could not scan appliedJobs for recoverable preview slots:", e);
+    return [];
+  }
+}
+
+/**
+ * Rebuilds PreviewQueueItems from recovered `appliedJobs` records using the user's
+ * active Master Resume and merges them into `previewQueues/${uidStr}` without
+ * touching any currently queued items.
+ */
+export function restoreRecoverablePreviewJobs(
+  uidStr: string,
+  jobsToRestore: RecoverablePreviewJob[],
+  baseResume: MasterResume,
+  currentPreviewQueue: PreviewQueueItem[]
+): PreviewQueueItem[] {
+  if (!uidStr || jobsToRestore.length === 0) return currentPreviewQueue;
+
+  const defaultPicksMap = buildCompanyDefaultPicksMap(baseResume, uidStr);
+  const restoredItems: PreviewQueueItem[] = jobsToRestore.map((job) => {
+    const effectiveJd = job.jobDescription || job.jobTitle;
+    const alignment = runLarpAlignmentPipeline(effectiveJd, baseResume, {
+      jdId: job.jobTitle || job.id,
+      mode: "framing",
+      focusedRecommendations: true,
+      defaultPicksByCompanyKey: defaultPicksMap,
+    });
+
+    const initialOptMap: Record<string, string> = {};
+    for (const mb of alignment.malleableBullets) {
+      if (mb.options && mb.options.length > 0) {
+        initialOptMap[mb.id] = mb.options[0].id;
+      }
+    }
+
+    return {
+      id: uid("pv"),
+      roleName: job.jobTitle,
+      roleUrl: job.jobUrl,
+      title: job.jobTitle,
+      createdAt: job.timestamp || new Date().toISOString(),
+      jobDescription: effectiveJd,
+      baseResume: structuredClone(baseResume),
+      larpRun: alignment,
+      acceptedBulletIds: alignment.bulletProposals.map((p) => p.bulletId),
+      acceptedMalleableIds: alignment.malleableBullets
+        .filter((m) => m.recommended)
+        .map((m) => m.id),
+      selectedMalleableOptionBySlotId: initialOptMap,
+      applySkillsSwap: true,
+      selectedSkillNames: alignment.skillSwaps.flatMap((s) => s.added),
+      customSkillCategoryByName: {},
+    };
+  });
+
+  const merged = [...currentPreviewQueue, ...restoredItems];
+  cloudPreviewLoaded[uidStr] = true;
+  savePreviewQueue(uidStr, merged);
+  return merged;
+}
