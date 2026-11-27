@@ -2,22 +2,13 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { FileText, Plus, Trash2, Pencil, Check, Upload, Download, X } from "lucide-react";
+import { FileText, Plus, Trash2, Pencil, Check } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import {
   saveMasterResumes,
   subscribeMasterResumes,
   ensureResumeMeta,
 } from "@/lib/resume/store";
-import {
-  subscribePreloadedTemplates,
-  addPreloadedTemplate,
-  renamePreloadedTemplate,
-  deletePreloadedTemplate,
-  downloadPreloadedTemplatePdf,
-  formatFileSize,
-  type PreloadedResumeTemplate,
-} from "@/lib/resume/preloadedTemplates";
 import { isEmptyResume } from "@/lib/resume/latex";
 import { knownTools, uid } from "@/lib/resume/utils";
 import {
@@ -52,18 +43,6 @@ export default function ExperiencePage() {
   const nameInputRef = useRef<HTMLInputElement>(null);
   const skipSave = useRef(true);
 
-  // Preloaded Resume Templates state
-  const [preloadedTemplates, setPreloadedTemplates] = useState<PreloadedResumeTemplate[]>([]);
-  const [preloadedModalOpen, setPreloadedModalOpen] = useState(false);
-  const [uploadLabel, setUploadLabel] = useState("");
-  const [uploadFile, setUploadFile] = useState<File | null>(null);
-  const [uploadError, setUploadError] = useState<string | null>(null);
-  const [uploadingTemplate, setUploadingTemplate] = useState(false);
-  const [downloadingTplId, setDownloadingTplId] = useState<string | null>(null);
-  const [renamingTplId, setRenamingTplId] = useState<string | null>(null);
-  const [renamingTplValue, setRenamingTplValue] = useState("");
-  const preloadedFileInputRef = useRef<HTMLInputElement>(null);
-
   useEffect(() => {
     if (!loading && !user) router.push("/login");
   }, [user, loading, router]);
@@ -88,12 +67,8 @@ export default function ExperiencePage() {
       }
       setReady(true);
     });
-    const unsubTemplates = subscribePreloadedTemplates(user.uid, (templates) => {
-      setPreloadedTemplates(templates);
-    });
     return () => {
       unsubscribe();
-      unsubTemplates();
     };
   }, [user]);
 
@@ -288,113 +263,6 @@ export default function ExperiencePage() {
     }
   };
 
-  const openPreloadedModal = () => {
-    setUploadFile(null);
-    setUploadLabel("");
-    setUploadError(null);
-    setPreloadedModalOpen(true);
-  };
-
-  const handlePreloadedFileSelect = (file: File | null) => {
-    setUploadError(null);
-    if (!file) {
-      setUploadFile(null);
-      return;
-    }
-    const lower = file.name.toLowerCase();
-    if (!lower.endsWith(".pdf") && !lower.endsWith(".tex")) {
-      setUploadError("Please select a .pdf or .tex resume file.");
-      setUploadFile(null);
-      return;
-    }
-    if (file.size > 4 * 1024 * 1024) {
-      setUploadError("File exceeds 4 MB limit.");
-      setUploadFile(null);
-      return;
-    }
-    setUploadFile(file);
-    if (!uploadLabel.trim()) {
-      setUploadLabel(file.name.replace(/\.(pdf|tex)$/i, "").replace(/[_-]+/g, " ").trim());
-    }
-  };
-
-  const handleConfirmUploadPreloaded = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!user || !uploadFile || uploadingTemplate) return;
-    setUploadingTemplate(true);
-    setUploadError(null);
-    try {
-      const isPdf = uploadFile.name.toLowerCase().endsWith(".pdf");
-      if (isPdf) {
-        const pdfDataUrl = await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = () => resolve(String(reader.result || ""));
-          reader.onerror = () => reject(new Error("Could not read PDF file."));
-          reader.readAsDataURL(uploadFile);
-        });
-        const added = addPreloadedTemplate(
-          user.uid,
-          {
-            name: uploadLabel.trim() || uploadFile.name.replace(/\.pdf$/i, ""),
-            fileName: uploadFile.name,
-            fileType: "pdf",
-            pdfDataUrl,
-            fileSizeBytes: uploadFile.size,
-          },
-          preloadedTemplates
-        );
-        setPreloadedTemplates((prev) => [added, ...prev.filter((t) => t.id !== added.id)]);
-      } else {
-        const texSource = await uploadFile.text();
-        const added = addPreloadedTemplate(
-          user.uid,
-          {
-            name: uploadLabel.trim() || uploadFile.name.replace(/\.tex$/i, ""),
-            fileName: uploadFile.name,
-            fileType: "tex",
-            texSource,
-            fileSizeBytes: uploadFile.size,
-          },
-          preloadedTemplates
-        );
-        setPreloadedTemplates((prev) => [added, ...prev.filter((t) => t.id !== added.id)]);
-      }
-      setPreloadedModalOpen(false);
-      setUploadFile(null);
-      setUploadLabel("");
-    } catch (err) {
-      setUploadError(err instanceof Error ? err.message : "Failed to save template.");
-    } finally {
-      setUploadingTemplate(false);
-    }
-  };
-
-  const handleDeletePreloaded = (tplId: string) => {
-    if (!user) return;
-    const next = deletePreloadedTemplate(user.uid, tplId, preloadedTemplates);
-    setPreloadedTemplates(next);
-  };
-
-  const handleCommitRenamePreloaded = (tplId: string) => {
-    if (!user) return;
-    if (renamingTplValue.trim()) {
-      const next = renamePreloadedTemplate(user.uid, tplId, renamingTplValue, preloadedTemplates);
-      setPreloadedTemplates(next);
-    }
-    setRenamingTplId(null);
-    setRenamingTplValue("");
-  };
-
-  const handleDownloadPreloaded = async (tpl: PreloadedResumeTemplate) => {
-    if (downloadingTplId) return;
-    setDownloadingTplId(tpl.id);
-    try {
-      await downloadPreloadedTemplatePdf(tpl, tpl.fileName.replace(/\.(pdf|tex)$/i, ""));
-    } finally {
-      setDownloadingTplId(null);
-    }
-  };
-
   const activeIsEmpty = !activeResume || isEmptyResume(activeResume);
   const showImporter = activeIsEmpty || importing;
   const fmt = activeResume?.format ?? DEFAULT_RESUME_FORMAT;
@@ -413,18 +281,10 @@ export default function ExperiencePage() {
               experience
             </h1>
             <p className="text-xs text-neutral-500 mt-0.5">
-              Manage multiple master resumes, preloaded ready-to-send templates, and bullet density
+              Manage multiple master resumes, upload LaTeX templates, and calibrate bullet density
             </p>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
-            <button
-              type="button"
-              onClick={openPreloadedModal}
-              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-medium text-neutral-800 bg-white hover:bg-neutral-50 border border-[#ebebeb] rounded-full shadow-2xs active:scale-95 transition-all cursor-pointer"
-            >
-              <Upload className="w-3.5 h-3.5 text-neutral-600" />
-              <span>Add Preloaded Template</span>
-            </button>
             <button
               type="button"
               onClick={handleCreateNewResume}
@@ -594,125 +454,6 @@ export default function ExperiencePage() {
                   </button>
                 )}
               </div>
-            </div>
-          )}
-        </div>
-
-        {/* Preloaded Ready-to-Send Resume Templates */}
-        <div className="bg-white rounded-xl border border-[#ebebeb] shadow-subtle p-4 space-y-3">
-          <div className="flex items-center justify-between gap-2 flex-wrap">
-            <div className="flex items-center gap-2">
-              <span className="font-mono text-[10px] uppercase tracking-wider text-neutral-500 font-semibold">
-                Preloaded Templates ({preloadedTemplates.length})
-              </span>
-              <span className="font-mono text-[10px] text-neutral-400">
-                · Ready to select &amp; push directly in Preview
-              </span>
-            </div>
-            <button
-              type="button"
-              onClick={openPreloadedModal}
-              className="inline-flex items-center gap-1 font-mono text-[11px] font-medium text-neutral-700 hover:text-neutral-900 bg-[#fafafa] hover:bg-neutral-100 border border-[#ebebeb] px-2.5 py-1 rounded-full active:scale-95 transition-all cursor-pointer"
-            >
-              <Plus className="w-3 h-3" />
-              <span>Add Preloaded File</span>
-            </button>
-          </div>
-
-          {preloadedTemplates.length === 0 ? (
-            <div className="flex items-center justify-between gap-3 px-3.5 py-2.5 rounded-lg bg-[#fafafa] border border-dashed border-[#ebebeb]">
-              <span className="text-xs text-neutral-500">
-                No preloaded resume files yet. Upload a ready-to-send <span className="font-mono text-neutral-700">.pdf</span> or <span className="font-mono text-neutral-700">.tex</span> template.
-              </span>
-              <button
-                type="button"
-                onClick={openPreloadedModal}
-                className="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-medium text-neutral-800 bg-white hover:bg-neutral-50 border border-[#ebebeb] rounded-full shadow-2xs active:scale-95 transition-all cursor-pointer shrink-0"
-              >
-                <Upload className="w-3 h-3 text-neutral-600" />
-                <span>Upload File</span>
-              </button>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
-              {preloadedTemplates.map((tpl) => {
-                const isRenaming = renamingTplId === tpl.id;
-                return (
-                  <div
-                    key={tpl.id}
-                    className="flex items-center justify-between gap-2.5 px-3 py-2.5 rounded-xl bg-[#fafafa] border border-[#ebebeb] hover:border-neutral-300 transition-colors"
-                  >
-                    <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                      <span
-                        className={`font-mono text-[10px] uppercase font-semibold px-1.5 py-0.5 rounded border shrink-0 ${
-                          tpl.fileType === "pdf"
-                            ? "bg-blue-50 text-blue-700 border-blue-200"
-                            : "bg-neutral-100 text-neutral-700 border-neutral-200"
-                        }`}
-                      >
-                        {tpl.fileType}
-                      </span>
-                      <div className="min-w-0 flex-1">
-                        {isRenaming ? (
-                          <input
-                            type="text"
-                            autoFocus
-                            value={renamingTplValue}
-                            onChange={(e) => setRenamingTplValue(e.target.value)}
-                            onBlur={() => handleCommitRenamePreloaded(tpl.id)}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter") handleCommitRenamePreloaded(tpl.id);
-                              if (e.key === "Escape") {
-                                setRenamingTplId(null);
-                                setRenamingTplValue("");
-                              }
-                            }}
-                            className="w-full px-2 py-0.5 text-xs font-semibold text-neutral-900 bg-white border border-neutral-900 rounded focus:outline-none"
-                          />
-                        ) : (
-                          <p className="text-xs font-semibold text-neutral-900 truncate">
-                            {tpl.name}
-                          </p>
-                        )}
-                        <p className="font-mono text-[10px] text-neutral-400 truncate">
-                          {tpl.fileName} · {formatFileSize(tpl.fileSizeBytes)}
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-1 shrink-0">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setRenamingTplId(tpl.id);
-                          setRenamingTplValue(tpl.name);
-                        }}
-                        title="Rename template"
-                        className="p-1.5 text-neutral-400 hover:text-neutral-800 rounded-md hover:bg-white transition-colors active:scale-95 cursor-pointer"
-                      >
-                        <Pencil className="w-3 h-3" />
-                      </button>
-                      <button
-                        type="button"
-                        disabled={downloadingTplId === tpl.id}
-                        onClick={() => handleDownloadPreloaded(tpl)}
-                        title="Download PDF"
-                        className="p-1.5 text-neutral-400 hover:text-neutral-800 rounded-md hover:bg-white transition-colors active:scale-95 cursor-pointer disabled:opacity-40"
-                      >
-                        <Download className="w-3 h-3" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleDeletePreloaded(tpl.id)}
-                        title="Delete template"
-                        className="p-1.5 text-neutral-400 hover:text-red-600 rounded-md hover:bg-red-50 transition-colors active:scale-95 cursor-pointer"
-                      >
-                        <Trash2 className="w-3 h-3" />
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
             </div>
           )}
         </div>
@@ -887,118 +628,6 @@ export default function ExperiencePage() {
                     {exporting ? "Compiling PDF..." : "Download PDF"}
                   </button>
                 </div>
-              </div>
-            </form>
-          </div>
-        )}
-
-        {/* Preloaded Resume Template Upload Modal */}
-        {preloadedModalOpen && (
-          <div
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-[2px] p-4 animate-fadeIn"
-            onClick={() => !uploadingTemplate && setPreloadedModalOpen(false)}
-          >
-            <form
-              onSubmit={handleConfirmUploadPreloaded}
-              onClick={(e) => e.stopPropagation()}
-              className="w-full max-w-md bg-white rounded-2xl border border-[#ebebeb] shadow-modal p-6 space-y-4"
-            >
-              <div className="flex items-start justify-between gap-2">
-                <div className="space-y-1">
-                  <h2 className="text-sm font-semibold text-neutral-900 tracking-tight">
-                    Add Preloaded Resume Template
-                  </h2>
-                  <p className="text-xs text-neutral-500">
-                    Upload a ready-to-send <span className="font-mono">.pdf</span> or{" "}
-                    <span className="font-mono">.tex</span> resume to select and push directly to Agents from Preview.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  disabled={uploadingTemplate}
-                  onClick={() => setPreloadedModalOpen(false)}
-                  className="p-1 text-neutral-400 hover:text-neutral-700 rounded-md cursor-pointer"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-
-              <div className="space-y-3">
-                <div>
-                  <label className="block font-mono text-[10px] uppercase tracking-wider text-neutral-500 mb-1.5">
-                    Resume File (.pdf or .tex)
-                  </label>
-                  <input
-                    ref={preloadedFileInputRef}
-                    type="file"
-                    accept=".pdf,.tex,application/pdf,application/x-tex"
-                    onChange={(e) => handlePreloadedFileSelect(e.target.files?.[0] || null)}
-                    className="hidden"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => preloadedFileInputRef.current?.click()}
-                    className="w-full flex flex-col items-center justify-center gap-1.5 px-4 py-5 rounded-xl border border-dashed border-neutral-300 bg-[#fafafa] hover:bg-neutral-100/70 transition-colors cursor-pointer"
-                  >
-                    <Upload className="w-4 h-4 text-neutral-500" />
-                    {uploadFile ? (
-                      <div className="text-center">
-                        <p className="text-xs font-semibold text-neutral-900">{uploadFile.name}</p>
-                        <p className="font-mono text-[10px] text-neutral-500">
-                          {formatFileSize(uploadFile.size)}
-                        </p>
-                      </div>
-                    ) : (
-                      <div className="text-center">
-                        <p className="text-xs font-medium text-neutral-700">
-                          Choose a PDF or LaTeX (.tex) file
-                        </p>
-                        <p className="font-mono text-[10px] text-neutral-400">Max 4 MB</p>
-                      </div>
-                    )}
-                  </button>
-                </div>
-
-                <div>
-                  <label
-                    htmlFor="preloaded-template-label"
-                    className="block font-mono text-[10px] uppercase tracking-wider text-neutral-500 mb-1.5"
-                  >
-                    Template Name
-                  </label>
-                  <input
-                    id="preloaded-template-label"
-                    type="text"
-                    required
-                    value={uploadLabel}
-                    onChange={(e) => setUploadLabel(e.target.value)}
-                    placeholder="e.g. Backend SWE General, ML Research v2"
-                    className="w-full px-3 py-2 text-xs text-neutral-900 bg-white border border-[#ebebeb] rounded-lg focus:outline-none focus:border-neutral-900 transition-colors"
-                  />
-                </div>
-
-                {uploadError && (
-                  <p className="text-xs text-red-600 font-medium">{uploadError}</p>
-                )}
-              </div>
-
-              <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#ebebeb]">
-                <button
-                  type="button"
-                  disabled={uploadingTemplate}
-                  onClick={() => setPreloadedModalOpen(false)}
-                  className="px-3.5 py-1.5 text-xs font-medium text-neutral-600 hover:text-neutral-900 transition-colors active:scale-95 cursor-pointer disabled:opacity-40"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={!uploadFile || !uploadLabel.trim() || uploadingTemplate}
-                  className="inline-flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium text-white bg-neutral-900 hover:bg-neutral-800 rounded-full disabled:opacity-40 shadow-subtle active:scale-95 transition-all cursor-pointer"
-                >
-                  <Upload className="w-3.5 h-3.5" />
-                  <span>{uploadingTemplate ? "Saving..." : "Save Template"}</span>
-                </button>
               </div>
             </form>
           </div>
