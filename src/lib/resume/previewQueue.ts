@@ -35,6 +35,20 @@ const PREVIEW_QUEUE_KEY = (uidStr: string) => `hireme_preview_queue_${uidStr}`;
 const PREVIEW_QUEUE_GLOBAL_KEY = "hireme_preview_queue_global";
 
 const memoryPreviewQueue: Record<string, PreviewQueueItem[]> = {};
+const cloudPreviewLoaded: Record<string, boolean> = {};
+
+function writeLocalPreviewCache(uidStr: string, serialized: string): void {
+  if (typeof window === "undefined" || !uidStr) return;
+  try {
+    // Remove legacy duplicate global copy to avoid doubling localStorage footprint
+    localStorage.removeItem(PREVIEW_QUEUE_GLOBAL_KEY);
+  } catch {}
+  try {
+    localStorage.setItem(PREVIEW_QUEUE_KEY(uidStr), serialized);
+  } catch (e) {
+    console.warn("Preview queue exceeded localStorage quota (Firebase RTDB remains intact):", e);
+  }
+}
 
 export function getCachedPreviewQueue(uidStr: string): PreviewQueueItem[] {
   if (uidStr && memoryPreviewQueue[uidStr] && memoryPreviewQueue[uidStr].length > 0) {
@@ -223,11 +237,7 @@ export function loadPreviewQueue(uidStr: string): PreviewQueueItem[] {
     if (unpushed.length !== items.length) {
       savePreviewQueue(uidStr, migrated);
     } else if (changed && uidStr) {
-      try {
-        const serialized = JSON.stringify(migrated);
-        localStorage.setItem(PREVIEW_QUEUE_KEY(uidStr), serialized);
-        localStorage.setItem(PREVIEW_QUEUE_GLOBAL_KEY, serialized);
-      } catch {}
+      writeLocalPreviewCache(uidStr, JSON.stringify(migrated));
     }
 
     return migrated;
@@ -254,15 +264,17 @@ export async function loadPreviewQueueAsync(uidStr: string): Promise<PreviewQueu
             (item) => !item.pushedToAgentsAt && !pushedIds.has(item.id)
           );
           const { items: migrated, changed } = migratePreviewItemsIfNeeded(uidStr, unpushed);
+          memoryPreviewQueue[uidStr] = migrated;
+          cloudPreviewLoaded[uidStr] = true;
           if (changed) {
             savePreviewQueue(uidStr, migrated);
-          } else if (typeof window !== "undefined") {
-            localStorage.setItem(PREVIEW_QUEUE_KEY(uidStr), JSON.stringify(migrated));
-            localStorage.setItem(PREVIEW_QUEUE_GLOBAL_KEY, JSON.stringify(migrated));
+          } else {
+            writeLocalPreviewCache(uidStr, JSON.stringify(migrated));
           }
           return migrated;
         }
       }
+      cloudPreviewLoaded[uidStr] = true;
     } catch (e) {
       console.warn("RTDB preview queue read failed, using local copy:", e);
     }
@@ -292,41 +304,46 @@ export function subscribePreviewQueue(
       const unsubscribe = onValue(
         qRef,
         (snap) => {
-          if (snap.exists()) {
-            const val = snap.val();
-            const data = val?.data;
-            if (typeof data === "string") {
-              const remoteItems = normalizeQueueItems(JSON.parse(data));
-              const pushedIds = new Set(
-                loadAgentsQueue(uidStr)
-                  .map((a) => a.sourcePreviewId)
-                  .filter(Boolean)
-              );
-              const unpushed = remoteItems.filter(
-                (item) => !item.pushedToAgentsAt && !pushedIds.has(item.id)
-              );
-              const { items: migrated, changed } = migratePreviewItemsIfNeeded(uidStr, unpushed);
-              memoryPreviewQueue[uidStr] = migrated;
-              if (changed) {
-                savePreviewQueue(uidStr, migrated);
-              } else if (typeof window !== "undefined") {
-                localStorage.setItem(PREVIEW_QUEUE_KEY(uidStr), JSON.stringify(migrated));
-                localStorage.setItem(PREVIEW_QUEUE_GLOBAL_KEY, JSON.stringify(migrated));
+          try {
+            if (snap.exists()) {
+              const val = snap.val();
+              const data = val?.data;
+              if (typeof data === "string") {
+                const remoteItems = normalizeQueueItems(JSON.parse(data));
+                const pushedIds = new Set(
+                  loadAgentsQueue(uidStr)
+                    .map((a) => a.sourcePreviewId)
+                    .filter(Boolean)
+                );
+                const unpushed = remoteItems.filter(
+                  (item) => !item.pushedToAgentsAt && !pushedIds.has(item.id)
+                );
+                const { items: migrated, changed } = migratePreviewItemsIfNeeded(uidStr, unpushed);
+                memoryPreviewQueue[uidStr] = migrated;
+                cloudPreviewLoaded[uidStr] = true;
+                callback(migrated);
+                if (changed) {
+                  savePreviewQueue(uidStr, migrated);
+                } else {
+                  writeLocalPreviewCache(uidStr, JSON.stringify(migrated));
+                }
+                return;
               }
-              callback(migrated);
-              return;
             }
-          }
-          if (!snap.exists()) {
-            const currentLocal = getCachedPreviewQueue(uidStr);
-            if (currentLocal.length > 0) {
-              // Automatically sync existing local items up to the cloud database!
-              savePreviewQueue(uidStr, currentLocal);
-              callback(currentLocal);
-            } else {
-              memoryPreviewQueue[uidStr] = [];
-              callback([]);
+            cloudPreviewLoaded[uidStr] = true;
+            if (!snap.exists()) {
+              const currentLocal = getCachedPreviewQueue(uidStr);
+              if (currentLocal.length > 0) {
+                // Automatically sync existing local items up to the cloud database!
+                savePreviewQueue(uidStr, currentLocal);
+                callback(currentLocal);
+              } else {
+                memoryPreviewQueue[uidStr] = [];
+                callback([]);
+              }
             }
+          } catch (err) {
+            console.warn("Error processing RTDB preview queue snapshot:", err);
           }
         },
         (error) => {
@@ -348,13 +365,8 @@ export function savePreviewQueue(uidStr: string, items: PreviewQueueItem[]): voi
   const serialized = JSON.stringify(items);
   const now = new Date().toISOString();
 
-  // Fast local storage cache
-  try {
-    localStorage.setItem(PREVIEW_QUEUE_KEY(uidStr), serialized);
-    localStorage.setItem(PREVIEW_QUEUE_GLOBAL_KEY, serialized);
-  } catch (e) {
-    console.warn("Failed to save preview queue to localStorage:", e);
-  }
+  // Best-effort local storage cache (never blocks RTDB sync on quota exceeded)
+  writeLocalPreviewCache(uidStr, serialized);
 
   // If online and Firebase is configured, update only data/updatedAt so dbViewerStore is preserved
   if (isOnline() && isFirebaseConfigured) {
@@ -413,7 +425,13 @@ export function enqueuePreviewItem(
   },
   currentQueue?: PreviewQueueItem[]
 ): PreviewQueueItem {
-  const existing = currentQueue ?? getCachedPreviewQueue(uidStr);
+  const cached = getCachedPreviewQueue(uidStr);
+  const existing =
+    currentQueue && currentQueue.length > 0
+      ? currentQueue
+      : cached.length > 0
+        ? cached
+        : currentQueue ?? [];
   const resolvedTitle = inferJdTitle(
     params.roleName || "",
     params.jobDescription,
@@ -441,7 +459,32 @@ export function enqueuePreviewItem(
     customSkillCategoryByName: { ...(params.customSkillCategoryByName || {}) },
   };
   const updated = [newItem, ...existing.filter((i) => i.id !== newItem.id)];
-  savePreviewQueue(uidStr, updated);
+
+  if (!cloudPreviewLoaded[uidStr] && isOnline() && isFirebaseConfigured && uidStr) {
+    memoryPreviewQueue[uidStr] = updated;
+    get(ref(rtdb, `previewQueues/${uidStr}`))
+      .then((snap) => {
+        let remoteItems: PreviewQueueItem[] = [];
+        if (snap.exists()) {
+          const val = snap.val();
+          if (typeof val?.data === "string") {
+            remoteItems = normalizeQueueItems(JSON.parse(val.data));
+          }
+        }
+        const seenIds = new Set(updated.map((i) => i.id));
+        const merged = [
+          ...updated,
+          ...remoteItems.filter((r) => !seenIds.has(r.id)),
+        ];
+        cloudPreviewLoaded[uidStr] = true;
+        savePreviewQueue(uidStr, merged);
+      })
+      .catch(() => {
+        savePreviewQueue(uidStr, updated);
+      });
+  } else {
+    savePreviewQueue(uidStr, updated);
+  }
   if (params.jobDescription?.trim() || params.roleName?.trim()) {
     logAppliedJobToFirebase(
       resolvedTitle,
